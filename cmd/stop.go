@@ -99,25 +99,104 @@ environment, including:
 		if stopDaprDashboard && isCommandAvailable("dapr") && isDaprDashboardAvailable() {
 			fmt.Println("Stopping Dapr Dashboard...")
 
-			// Try to find the dashboard process
+			// Try multiple methods to find dashboard processes
+			dashboardPids := []string{}
 			found := false
 
-			// Try using pgrep first (more reliable on macOS and Linux)
+			// Method 1: Try using pgrep first (more reliable on macOS and Linux)
 			pgrepCmd := exec.Command("pgrep", "-f", "dapr dashboard")
 			pgrepOutput, pgrepErr := pgrepCmd.Output()
 
 			if pgrepErr == nil && len(pgrepOutput) > 0 {
 				// Process found with pgrep
 				pids := strings.Split(strings.TrimSpace(string(pgrepOutput)), "\n")
-				allKilled := true
-				found = true
-
 				for _, pid := range pids {
+					if pid != "" {
+						dashboardPids = append(dashboardPids, pid)
+						found = true
+					}
+				}
+			}
+
+			// Method 2: Try using ps (works on most Unix systems)
+			psCmd := exec.Command("ps", "-ef")
+			psOutput, psErr := psCmd.Output()
+
+			if psErr == nil {
+				lines := strings.Split(string(psOutput), "\n")
+				for _, line := range lines {
+					if strings.Contains(line, "dapr dashboard") && !strings.Contains(line, "grep") {
+						// Parse the line to extract PID
+						fields := strings.Fields(line)
+						if len(fields) > 1 {
+							// Check if we already have this PID
+							pidExists := false
+							for _, existingPid := range dashboardPids {
+								if existingPid == fields[1] {
+									pidExists = true
+									break
+								}
+							}
+							if !pidExists {
+								dashboardPids = append(dashboardPids, fields[1])
+								found = true
+							}
+						}
+					}
+				}
+			}
+
+			// Method 3: Try using lsof to find processes using the dashboard port
+			if configLoaded && config.Dapr.DashboardPort > 0 {
+				portStr := fmt.Sprintf("%d", config.Dapr.DashboardPort)
+				lsofCmd := exec.Command("lsof", "-i", fmt.Sprintf(":%s", portStr))
+				lsofOutput, lsofErr := lsofCmd.Output()
+
+				if lsofErr == nil && len(lsofOutput) > 0 {
+					lines := strings.Split(string(lsofOutput), "\n")
+					for _, line := range lines {
+						if strings.Contains(line, "LISTEN") {
+							fields := strings.Fields(line)
+							if len(fields) > 1 {
+								pidExists := false
+								for _, existingPid := range dashboardPids {
+									if existingPid == fields[1] {
+										pidExists = true
+										break
+									}
+								}
+								if !pidExists {
+									dashboardPids = append(dashboardPids, fields[1])
+									found = true
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if found && len(dashboardPids) > 0 {
+				allKilled := true
+
+				if verbose {
+					fmt.Printf("Found %d Dapr Dashboard processes: %s\n", len(dashboardPids), strings.Join(dashboardPids, ", "))
+				}
+
+				for _, pid := range dashboardPids {
+					// First try a gentle termination with SIGTERM
 					killCmd := exec.Command("kill", pid)
-					if err := killCmd.Run(); err != nil {
+					killErr := killCmd.Run()
+
+					if killErr != nil && force {
+						// If that fails and we're forcing, try SIGKILL
+						killCmd = exec.Command("kill", "-9", pid)
+						killErr = killCmd.Run()
+					}
+
+					if killErr != nil {
 						allKilled = false
 						if verbose {
-							fmt.Printf("Failed to kill Dapr Dashboard process %s: %v\n", pid, err)
+							fmt.Printf("Failed to kill Dapr Dashboard process %s: %v\n", pid, killErr)
 						}
 					} else if verbose {
 						fmt.Printf("Killed Dapr Dashboard process with PID %s\n", pid)
@@ -134,54 +213,6 @@ environment, including:
 					}
 				}
 			} else {
-				// Try using ps as fallback
-				psCmd := exec.Command("ps", "-ef")
-				psOutput, psErr := psCmd.Output()
-
-				if psErr == nil {
-					lines := strings.Split(string(psOutput), "\n")
-					var dashboardPids []string
-
-					for _, line := range lines {
-						if strings.Contains(line, "dapr dashboard") && !strings.Contains(line, "grep") {
-							// Parse the line to extract PID
-							fields := strings.Fields(line)
-							if len(fields) > 1 {
-								dashboardPids = append(dashboardPids, fields[1])
-							}
-						}
-					}
-
-					if len(dashboardPids) > 0 {
-						found = true
-						allKilled := true
-
-						for _, pid := range dashboardPids {
-							killCmd := exec.Command("kill", pid)
-							if err := killCmd.Run(); err != nil {
-								allKilled = false
-								if verbose {
-									fmt.Printf("Failed to kill Dapr Dashboard process %s: %v\n", pid, err)
-								}
-							} else if verbose {
-								fmt.Printf("Killed Dapr Dashboard process with PID %s\n", pid)
-							}
-						}
-
-						if allKilled {
-							fmt.Println("✅ Dapr Dashboard stopped successfully.")
-							stoppedCount++
-						} else {
-							fmt.Println("❌ Failed to stop some Dapr Dashboard processes.")
-							if force {
-								fmt.Println("   Continuing due to --force flag.")
-							}
-						}
-					}
-				}
-			}
-
-			if !found {
 				if verbose {
 					fmt.Println("No running Dapr Dashboard processes found.")
 				} else {

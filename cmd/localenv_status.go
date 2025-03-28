@@ -160,7 +160,7 @@ environment are running, including:
 			fmt.Println("✅ Kind: Clusters configured")
 		} else {
 			fmt.Println("❌ Kind: No clusters available")
-			fmt.Println("   Create a cluster with: 'kind create cluster --name my-cluster'")
+			fmt.Println("   Note: Kubernetes functionality is not required for local development.")
 		}
 
 		if !podmanWorking || !kindWorking {
@@ -217,6 +217,21 @@ environment are running, including:
 			outputStr := strings.TrimSpace(string(output))
 
 			if err != nil {
+				// Special case for Temporal - sometimes workflow list returns an error even when Temporal is running
+				if comp.Name == "Temporal" {
+					// Try a simpler check - just use the UI availability as the primary indicator
+					client := http.Client{
+						Timeout: 2 * time.Second,
+					}
+					resp, err := client.Get(comp.WebUIURL)
+					if err == nil && resp.StatusCode < 400 {
+						resp.Body.Close()
+						fmt.Printf("✅ %s: Running\n", comp.Name)
+						fmt.Printf("   UI: %s (Accessible)\n", comp.WebUIURL)
+						continue
+					}
+				}
+
 				fmt.Printf("❌ %s: Not running\n", comp.Name)
 				if verbose && outputStr != "" {
 					fmt.Printf("   Details: %s\n", outputStr)
@@ -243,6 +258,16 @@ environment are running, including:
 					fmt.Printf("   UI: %s (Accessible)\n", comp.WebUIURL)
 				} else {
 					fmt.Printf("   UI: %s (Not accessible yet, may still be starting up)\n", comp.WebUIURL)
+				}
+
+				// Check if the configured namespace exists (if not default)
+				if comp.Name == "Temporal" && configLoaded && config.Components.Temporal && config.Temporal.Namespace != "" && config.Temporal.Namespace != "default" {
+					namespaceCmd := exec.Command("temporal", "operator", "namespace", "describe", config.Temporal.Namespace)
+					if err := namespaceCmd.Run(); err != nil {
+						fmt.Printf("   ⚠️ Namespace '%s' does not exist. It will be created when starting the environment.\n", config.Temporal.Namespace)
+					} else {
+						fmt.Printf("   ✅ Temporal namespace '%s' exists\n", config.Temporal.Namespace)
+					}
 				}
 			}
 
@@ -382,7 +407,7 @@ func getTemporalNamespaceArgs(configLoaded bool, config LocalEnvConfig) []string
 	if configLoaded && config.Temporal.Namespace != "" {
 		namespace = config.Temporal.Namespace
 	}
-	return []string{"workflow", "list", "--namespace", namespace}
+	return []string{"operator", "namespace", "describe", namespace}
 }
 
 // Helper function to get Temporal UI URL

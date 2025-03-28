@@ -38,8 +38,7 @@ type LocalEnvConfig struct {
 		Dapr     string `yaml:"dapr"`
 		Temporal string `yaml:"temporal"`
 	} `yaml:"paths"`
-	ClusterName string `yaml:"clusterName"`
-	Temporal    struct {
+	Temporal struct {
 		Namespace string `yaml:"namespace"`
 		UIPort    int    `yaml:"uiPort"`
 		GRPCPort  int    `yaml:"grpcPort"`
@@ -65,7 +64,6 @@ This command should be run once before using other localenv commands.`,
 
 		force, _ := cmd.Flags().GetBool("force")
 		verbose, _ := cmd.Flags().GetBool("verbose")
-		clusterName, _ := cmd.Flags().GetString("cluster-name")
 
 		// Check if localenv.yaml already exists
 		configPath := "localenv.yaml"
@@ -79,7 +77,6 @@ This command should be run once before using other localenv commands.`,
 		config.Components.Dapr = true
 		config.Components.Temporal = true
 		config.Components.DaprDashboard = false // Disabled by default since it requires separate installation
-		config.ClusterName = clusterName
 
 		// Set default Temporal configuration
 		config.Temporal.Namespace = "default"
@@ -124,11 +121,7 @@ This command should be run once before using other localenv commands.`,
 			output, err := clusterCmd.CombinedOutput()
 			if err != nil || strings.TrimSpace(string(output)) == "" {
 				fmt.Println("⚠️  Kind is installed but no clusters are configured")
-				if clusterName != "" {
-					fmt.Printf("   Consider creating a cluster with: 'kind create cluster --name %s'\n", clusterName)
-				} else {
-					fmt.Println("   Consider creating a cluster with: 'kind create cluster --name my-cluster'")
-				}
+				fmt.Println("   Note: Kubernetes functionality is not required for local development")
 			} else {
 				fmt.Printf("   Clusters found: %s\n", strings.ReplaceAll(string(output), "\n", ", "))
 			}
@@ -251,7 +244,7 @@ func validateTool(name, versionFlag string, verbose bool) (string, error) {
 func init() {
 	localenvCmd.AddCommand(localenvInitCmd)
 
-	// Add flags specific to the init command
-	localenvInitCmd.Flags().Bool("force", false, "Overwrite existing configuration")
-	localenvInitCmd.Flags().String("cluster-name", "shielddev-local", "Name for the Kind cluster")
+	// Add flags
+	localenvInitCmd.Flags().BoolP("force", "f", false, "Force overwrite of existing configuration")
+	localenvInitCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
 }

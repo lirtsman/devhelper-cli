@@ -90,6 +90,7 @@ func TestLocalenvFlags(t *testing.T) {
 		assert.NotNil(t, startCmd.Flags().Lookup("skip-temporal"), "skip-temporal flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("config"), "config flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("wait"), "wait flag should exist")
+		assert.NotNil(t, startCmd.Flags().Lookup("skip-dapr-dashboard"), "skip-dapr-dashboard flag should exist")
 	})
 
 	t.Run("Stop command should have skip flags", func(t *testing.T) {

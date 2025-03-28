@@ -65,7 +65,6 @@ in the correct order.`,
 		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
 		skipDaprDashboard, _ := cmd.Flags().GetBool("skip-dapr-dashboard")
-		wait, _ := cmd.Flags().GetBool("wait")
 		configPath, _ := cmd.Flags().GetString("config")
 
 		// If no config path is provided, look for localenv.yaml in current directory
@@ -110,7 +109,7 @@ in the correct order.`,
 
 		// Function to check if Temporal server is accessible
 		checkTemporalServerRunning := func() bool {
-			checkCmd := exec.Command("temporal", "workflow", "list")
+			checkCmd := exec.Command("temporal", "operator", "namespace", "list")
 			if err := checkCmd.Run(); err != nil {
 				if verbose {
 					fmt.Printf("Temporal server check failed: %v\n", err)
@@ -243,7 +242,7 @@ in the correct order.`,
 				Command:         "temporal",
 				Args:            []string{"server", "start-dev"},
 				CheckCommand:    "temporal",
-				CheckArgs:       []string{"operator", "list", "--namespace", "default"},
+				CheckArgs:       []string{"workflow", "list"},
 				RequiredFor:     []string{},
 				StartupDelay:    5 * time.Second, // Increased delay for Temporal to start fully
 				IsRequired:      getTemporalRequirement(configLoaded, config.Components.Temporal, skipTemporal),
@@ -315,7 +314,7 @@ in the correct order.`,
 							fmt.Println("   Make sure Podman is installed correctly and has proper permissions.")
 						} else if comp.Name == "Kind" {
 							fmt.Printf("❌ %s does not have any clusters configured.\n", comp.Name)
-							fmt.Println("   Create a cluster with: 'kind create cluster --name my-cluster'")
+							fmt.Println("   Note: Kubernetes functionality is not required for local development.")
 						} else {
 							fmt.Printf("❌ %s is not available.\n", comp.Name)
 						}
@@ -399,182 +398,90 @@ in the correct order.`,
 				continue
 			}
 
-			// For Temporal and other components that need to be started
-			cmd := exec.Command(comp.Command, comp.Args...)
+			// Special handling for Temporal server
+			if comp.Name == "Temporal" {
+				// Check if Temporal is already running
+				if checkTemporalServerRunning() {
+					fmt.Println("✅ Temporal is already running, skipping startup.")
+					components[i].IsRunning = true
+					continue
+				}
 
-			// Start the process in the background
-			if err := cmd.Start(); err != nil {
-				fmt.Printf("❌ Failed to start %s: %v\n", comp.Name, err)
-				continue
-			}
+				// Start Temporal server in background
+				fmt.Println("Starting Temporal server in background mode...")
 
-			components[i].IsRunning = true
+				// Prepare command with namespace flag if configured
+				var temporalCmd *exec.Cmd
+				if configLoaded && config.Components.Temporal && config.Temporal.Namespace != "" && config.Temporal.Namespace != "default" {
+					fmt.Printf("Configuring Temporal with namespace: %s\n", config.Temporal.Namespace)
+					temporalCmd = exec.Command("temporal", "server", "start-dev", "--namespace", config.Temporal.Namespace)
+				} else {
+					temporalCmd = exec.Command("temporal", "server", "start-dev")
+				}
 
-			// Wait a bit for the component to start
-			time.Sleep(comp.StartupDelay)
+				// Redirect output to null device
+				devNull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+				temporalCmd.Stdout = devNull
+				temporalCmd.Stderr = devNull
 
-			// If there's a verification function, use it to make sure the component is accessible
-			if comp.VerifyAvailable != nil && wait {
-				maxRetries := 5
-				for retry := 0; retry < maxRetries; retry++ {
-					if comp.VerifyAvailable() {
+				// Start Temporal server in background
+				if err := temporalCmd.Start(); err != nil {
+					fmt.Printf("❌ Failed to start Temporal server: %v\n", err)
+					continue
+				}
+
+				// Wait for Temporal to start up
+				fmt.Println("Waiting for Temporal server to start...")
+				time.Sleep(5 * time.Second)
+
+				// Verify Temporal is running
+				retries := 3
+				temporalStarted := false
+				for retry := 0; retry < retries; retry++ {
+					if checkTemporalServerRunning() {
+						fmt.Println("✅ Temporal server started successfully.")
+						components[i].IsRunning = true
+						temporalStarted = true
 						break
 					}
-					if retry == maxRetries-1 {
-						fmt.Printf("⚠️ %s may not be fully running yet. It might need more time to initialize.\n", comp.Name)
-					} else {
-						if verbose {
-							fmt.Printf("Waiting for %s to become available (attempt %d/%d)...\n", comp.Name, retry+1, maxRetries)
-						}
+
+					if retry < retries-1 {
+						fmt.Println("Waiting for Temporal server to become available...")
 						time.Sleep(2 * time.Second)
+					} else {
+						fmt.Println("❌ Temporal server did not start properly.")
 					}
 				}
-			}
 
-			if verbose {
-				fmt.Printf("✅ Started %s (PID: %d)\n", comp.Name, cmd.Process.Pid)
+				if !temporalStarted {
+					continue
+				}
 			}
 		}
 
-		// Check if all required components are running
-		allRunning := true
+		// Check if all components are running
 		for _, comp := range components {
 			if comp.IsRequired && !comp.IsRunning {
-				allRunning = false
-				break
+				fmt.Printf("❌ %s is not running. Please check its logs for errors.\n", comp.Name)
+				allInstalled = false
 			}
 		}
 
-		if !allRunning {
-			fmt.Println("\n⚠️ Not all components are running. Please check the errors above.")
+		if !allInstalled {
+			fmt.Println("\nSome components failed to start. Please check the logs for errors.")
 			os.Exit(1)
 		}
 
-		fmt.Println("\n✅ Local development environment is running!")
-
-		// Show connection information
-		if configLoaded && config.Components.Temporal {
-			// Default values
-			uiPort := 8233
-			grpcPort := 7233
-			namespace := "default"
-
-			// Override with config if available
-			if config.Temporal.UIPort != 0 {
-				uiPort = config.Temporal.UIPort
-			}
-			if config.Temporal.GRPCPort != 0 {
-				grpcPort = config.Temporal.GRPCPort
-			}
-			if config.Temporal.Namespace != "" {
-				namespace = config.Temporal.Namespace
-			}
-
-			fmt.Printf("Temporal UI: http://localhost:%d\n", uiPort)
-			fmt.Printf("Temporal Server: localhost:%d (namespace: %s)\n", grpcPort, namespace)
-		} else {
-			fmt.Printf("Temporal UI is available at http://localhost:8233\n")
-		}
-
-		// Show Dapr container information if enabled
-		if configLoaded && config.Components.Dapr && !skipDaprDashboard {
-			// Check for Dapr Dashboard
-			dashboardCmd := exec.Command("dapr", "dashboard", "--help")
-			if dashboardCmd.Run() == nil {
-				// Dashboard command is available
-				fmt.Printf("Dapr Dashboard: http://localhost:%d\n", config.Dapr.DashboardPort)
-			}
-
-			// Show Zipkin URL for tracing
-			zipkinPort := 9411
-
-			if config.Dapr.ZipkinPort != 0 {
-				zipkinPort = config.Dapr.ZipkinPort
-			}
-
-			fmt.Printf("Zipkin UI (tracing): http://localhost:%d\n", zipkinPort)
-
-			// Check if Dapr containers are running using podman
-			cmd := exec.Command("podman", "ps", "--format", "{{.Names}}", "--filter", "name=dapr_")
-			output, err := cmd.CombinedOutput()
-			if err == nil && len(output) > 0 {
-				fmt.Println("\nDapr Services:")
-				containers := strings.Split(strings.TrimSpace(string(output)), "\n")
-				for _, container := range containers {
-					if container == "" {
-						continue
-					}
-					fmt.Printf("- %s\n", container)
-				}
-
-				fmt.Println("\nYou can check running containers with: podman ps")
-			}
-		}
-
-		fmt.Println("Use 'shielddev-cli localenv stop' to stop the environment.")
+		fmt.Println("\nAll required components are running successfully!")
 	},
 }
 
 func init() {
 	localenvCmd.AddCommand(startCmd)
-
-	// Add flags specific to the start command
-	startCmd.Flags().Bool("skip-dapr", false, "Skip starting Dapr runtime")
-	startCmd.Flags().Bool("skip-temporal", false, "Skip starting Temporal server")
+	startCmd.Flags().BoolP("verbose", "v", false, "Enable verbose output")
+	startCmd.Flags().Bool("skip-dapr", false, "Skip starting Dapr")
+	startCmd.Flags().Bool("skip-temporal", false, "Skip starting Temporal")
 	startCmd.Flags().Bool("skip-dapr-dashboard", false, "Skip starting Dapr Dashboard")
-	startCmd.Flags().StringP("config", "c", "", "Path to environment configuration file (default: localenv.yaml)")
-	startCmd.Flags().Bool("wait", true, "Wait for all components to be ready before exiting")
-}
-
-// Helper functions for determining if components are required
-func getDaprRequirement(configLoaded bool, configValue bool, skipFlag bool) bool {
-	if configLoaded {
-		return configValue
-	}
-	return !skipFlag
-}
-
-func getTemporalRequirement(configLoaded bool, configValue bool, skipFlag bool) bool {
-	if configLoaded {
-		return configValue
-	}
-	return !skipFlag
-}
-
-func getDaprDashboardRequirement(configLoaded bool, configValue bool, skipFlag bool) bool {
-	if configLoaded {
-		return configValue
-	}
-	return !skipFlag
-}
-
-func tryStartDashboard(command string, port int, logFile *os.File) bool {
-	dashboardCmd := exec.Command(command, "dashboard", "-p", strconv.Itoa(port), "--address", "0.0.0.0")
-
-	// Redirect output to null device
-	devNull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	dashboardCmd.Stdout = devNull
-	dashboardCmd.Stderr = devNull
-
-	// Start the dashboard in a goroutine
-	resultChan := make(chan error, 1)
-	go func() {
-		resultChan <- dashboardCmd.Run()
-	}()
-
-	// Wait a bit for the dashboard to start
-	time.Sleep(3 * time.Second)
-
-	// Check if the process exited quickly (indicating failure)
-	select {
-	case err := <-resultChan:
-		// If we get here, the process exited before our timeout
-		if err != nil {
-			fmt.Printf("Dashboard failed to start: %v\n", err)
-		}
-		return false
-	default:
-		// No error yet, process is still running
-		return true
-	}
+	startCmd.Flags().Bool("wait", false, "Wait for all components to start")
+	startCmd.Flags().StringP("config", "c", "", "Path to localenv configuration file")
 }
