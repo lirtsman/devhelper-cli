@@ -53,14 +53,16 @@ func TestCommandValidation(t *testing.T) {
 	t.Run("Commands should check for required tools", func(t *testing.T) {
 		// Mock the isCommandAvailable function to return no tools are available
 		isCommandAvailable = test.CommandExistsMock(map[string]bool{
-			"docker":   false,
+			"podman":   false,
+			"kind":     false,
 			"dapr":     false,
 			"temporal": false,
 		})
 
 		// Since we can't easily test the commands with mocked exec.Command,
 		// we'll just verify that the component checker works correctly
-		assert.False(t, isCommandAvailable("docker"), "Docker should not be available")
+		assert.False(t, isCommandAvailable("podman"), "Podman should not be available")
+		assert.False(t, isCommandAvailable("kind"), "Kind should not be available")
 		assert.False(t, isCommandAvailable("dapr"), "Dapr should not be available")
 		assert.False(t, isCommandAvailable("temporal"), "Temporal should not be available")
 	})
@@ -68,12 +70,14 @@ func TestCommandValidation(t *testing.T) {
 	t.Run("Commands should find available tools", func(t *testing.T) {
 		// Mock the isCommandAvailable function to return all tools are available
 		isCommandAvailable = test.CommandExistsMock(map[string]bool{
-			"docker":   true,
+			"podman":   true,
+			"kind":     true,
 			"dapr":     true,
 			"temporal": true,
 		})
 
-		assert.True(t, isCommandAvailable("docker"), "Docker should be available")
+		assert.True(t, isCommandAvailable("podman"), "Podman should be available")
+		assert.True(t, isCommandAvailable("kind"), "Kind should be available")
 		assert.True(t, isCommandAvailable("dapr"), "Dapr should be available")
 		assert.True(t, isCommandAvailable("temporal"), "Temporal should be available")
 	})

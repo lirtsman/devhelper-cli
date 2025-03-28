@@ -36,13 +36,15 @@ func TestLocalenvStatusCommand(t *testing.T) {
 		// Most we can do without actually executing the command is to
 		// verify the function uses isCommandAvailable
 		isCommandAvailable = test.CommandExistsMock(map[string]bool{
-			"docker":   true,
+			"podman":   true,
+			"kind":     true,
 			"dapr":     true,
 			"temporal": true,
 		})
 
 		// Verify the mock returns correctly
-		assert.True(t, isCommandAvailable("docker"), "Docker should be available")
+		assert.True(t, isCommandAvailable("podman"), "Podman should be available")
+		assert.True(t, isCommandAvailable("kind"), "Kind should be available")
 		assert.True(t, isCommandAvailable("dapr"), "Dapr should be available")
 		assert.True(t, isCommandAvailable("temporal"), "Temporal should be available")
 	})
@@ -50,13 +52,15 @@ func TestLocalenvStatusCommand(t *testing.T) {
 	t.Run("Status command should detect missing components", func(t *testing.T) {
 		// Set mock to report missing components
 		isCommandAvailable = test.CommandExistsMock(map[string]bool{
-			"docker":   true,
+			"podman":   true,
+			"kind":     true,
 			"dapr":     false,
 			"temporal": false,
 		})
 
 		// Verify the mock returns correctly
-		assert.True(t, isCommandAvailable("docker"), "Docker should be available")
+		assert.True(t, isCommandAvailable("podman"), "Podman should be available")
+		assert.True(t, isCommandAvailable("kind"), "Kind should be available")
 		assert.False(t, isCommandAvailable("dapr"), "Dapr should not be available")
 		assert.False(t, isCommandAvailable("temporal"), "Temporal should not be available")
 	})

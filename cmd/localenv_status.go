@@ -17,8 +17,10 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -46,24 +48,36 @@ environment are running, including:
 			CheckArgs     []string
 			StatusMessage string
 			Available     bool
+			WebUIURL      string
+			CheckUI       bool
 		}{
 			{
-				Name:         "Docker",
-				CheckCommand: "docker",
+				Name:         "Podman",
+				CheckCommand: "podman",
 				CheckArgs:    []string{"ps", "--format", "{{.Names}} - {{.Status}}"},
-				Available:    isCommandAvailable("docker"),
+				Available:    isCommandAvailable("podman"),
+			},
+			{
+				Name:         "Kind",
+				CheckCommand: "kind",
+				CheckArgs:    []string{"get", "clusters"},
+				Available:    isCommandAvailable("kind"),
 			},
 			{
 				Name:         "Dapr",
 				CheckCommand: "dapr",
-				CheckArgs:    []string{"status", "-k"},
+				CheckArgs:    []string{"list"},
 				Available:    isCommandAvailable("dapr"),
+				WebUIURL:     "", // Dashboard not available in slim installation
+				CheckUI:      false,
 			},
 			{
 				Name:         "Temporal",
 				CheckCommand: "temporal",
-				CheckArgs:    []string{"server", "list"},
+				CheckArgs:    []string{"workflow", "list"},
 				Available:    isCommandAvailable("temporal"),
+				WebUIURL:     "http://localhost:8233",
+				CheckUI:      true,
 			},
 		}
 
@@ -87,7 +101,14 @@ environment are running, including:
 			outputStr := strings.TrimSpace(string(output))
 
 			if err != nil {
-				fmt.Printf("❌ %s: Not running\n", comp.Name)
+				if comp.Name == "Podman" {
+					fmt.Printf("❌ %s: Not able to run containers\n", comp.Name)
+				} else if comp.Name == "Kind" {
+					fmt.Printf("❌ %s: No clusters available\n", comp.Name)
+				} else {
+					fmt.Printf("❌ %s: Not running\n", comp.Name)
+				}
+
 				if verbose && outputStr != "" {
 					fmt.Printf("   Details: %s\n", outputStr)
 				}
@@ -95,14 +116,42 @@ environment are running, including:
 				continue
 			}
 
-			fmt.Printf("✅ %s: Running\n", comp.Name)
+			if comp.Name == "Podman" {
+				fmt.Printf("✅ %s: Available (can run containers)\n", comp.Name)
+			} else if comp.Name == "Kind" {
+				fmt.Printf("✅ %s: Available (has clusters)\n", comp.Name)
+			} else {
+				fmt.Printf("✅ %s: Running\n", comp.Name)
+			}
+
+			// For Temporal, check if the UI is accessible
+			if comp.CheckUI && comp.WebUIURL != "" {
+				uiAccessible := false
+				client := http.Client{
+					Timeout: 2 * time.Second,
+				}
+				resp, err := client.Get(comp.WebUIURL)
+				if err == nil && resp.StatusCode < 400 {
+					uiAccessible = true
+					resp.Body.Close()
+				}
+
+				if uiAccessible {
+					fmt.Printf("   UI: %s (Accessible)\n", comp.WebUIURL)
+				} else {
+					fmt.Printf("   UI: %s (Not accessible yet, may still be starting up)\n", comp.WebUIURL)
+				}
+			}
+
 			if verbose && outputStr != "" {
 				// Format and print relevant output details
 				lines := strings.Split(outputStr, "\n")
 				if len(lines) > 5 && !verbose {
 					// Truncate output if it's too long and we're not in verbose mode
 					for i := 0; i < 3; i++ {
-						fmt.Printf("   %s\n", lines[i])
+						if i < len(lines) {
+							fmt.Printf("   %s\n", lines[i])
+						}
 					}
 					fmt.Printf("   ... %d more lines ...\n", len(lines)-3)
 				} else {
@@ -122,6 +171,8 @@ environment are running, including:
 		fmt.Println("\n=== Summary ===")
 		if allRunning {
 			fmt.Println("✅ All components are running properly.")
+			fmt.Println("Temporal UI: http://localhost:8233")
+			// Dapr Dashboard not available in slim installation
 		} else {
 			fmt.Println("⚠️  Some components are not running.")
 			fmt.Println("Run 'shielddev-cli localenv start' to start the environment.")

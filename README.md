@@ -118,18 +118,94 @@ api:
 
 ## Prerequisites for Local Development
 
-To use the `localenv` commands, the following tools should be installed:
+To use the `localenv` commands, the following tools must be installed and properly configured:
 
-1. **Docker**: Required for running containerized services
-   - Install from [Docker's official website](https://www.docker.com/get-started)
+1. **Podman**: Required for running containerized services
+   - Install from [Podman's official website](https://podman.io/getting-started/installation)
+   - Podman is a binary tool that needs to be properly installed and configured to run containers
 
-2. **Dapr CLI**: Used for managing the Dapr runtime
+2. **Kind (Kubernetes in Docker)**: Required for local Kubernetes clusters
+   - Install with: `curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 && chmod +x ./kind && sudo mv ./kind /usr/local/bin/`
+   - At least one cluster must be created before using shielddev-cli: `kind create cluster --name my-cluster`
+   - Kind is a CLI tool that creates and manages Kubernetes clusters running in Podman containers
+   - Or follow instructions at [Kind's documentation](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
+
+3. **Dapr CLI**: Used for managing the Dapr runtime
    - Install with: `curl -fsSL https://raw.githubusercontent.com/dapr/cli/master/install/install.sh | /bin/bash`
+   - The CLI will initialize and start Dapr runtime services automatically
    - Or follow instructions at [Dapr's documentation](https://docs.dapr.io/getting-started/install-dapr-cli/)
 
-3. **Temporal CLI**: Used for managing Temporal server
+4. **Temporal CLI**: Used for managing Temporal server
    - Install with: `curl -sSf https://temporal.download/cli.sh | sh`
+   - The CLI will start the Temporal server as a service
    - Or follow instructions at [Temporal's documentation](https://docs.temporal.io/cli#install)
+
+## Local Development Environment
+
+When you run `shielddev-cli localenv start`, the CLI:
+
+1. Verifies Podman is available and can run containers
+2. Verifies Kind is available and has clusters configured
+3. Initializes and starts the Dapr runtime
+4. Starts the Temporal server
+
+### Temporal Server
+
+The Temporal server is started in development mode with `temporal server start-dev`. This provides:
+
+- **Temporal Web UI**: Available at http://localhost:8233
+  - Use this interface to monitor and manage workflows
+  - Track workflow execution history
+  - Visualize workflow dependencies
+  
+- **Temporal API**: Available at http://localhost:7233
+  - Used by applications to interact with Temporal
+  - Default namespace: "default"
+  
+- **Working with Temporal**:
+  ```bash
+  # List workflows
+  temporal workflow list
+  
+  # View details of a specific workflow
+  temporal workflow describe -w <workflow-id>
+  
+  # Start a new workflow
+  temporal workflow start -w <workflow-id> -t <task-queue> -wt <workflow-type>
+  ```
+
+### Dapr Runtime
+
+Dapr is initialized with `dapr init --slim`, which provides a lightweight self-hosted mode without requiring Kubernetes:
+
+- **Self-hosted Mode**: The `--slim` flag installs only the core Dapr runtime components without any Kubernetes components
+  - This mode is ideal for local development and testing
+  - Each Dapr application runs in its own process alongside your application
+  - Note: The Dapr Dashboard is not included in the slim installation mode
+  
+- **Working with Dapr**:
+  ```bash
+  # Check Dapr status
+  dapr status
+  
+  # List running Dapr applications
+  dapr list
+  
+  # Run an application with Dapr
+  dapr run --app-id myapp --app-port 3000 -- node app.js
+  
+  # Stop a running Dapr application
+  dapr stop --app-id myapp
+  ```
+
+- **Future Kubernetes Integration**: When ready to deploy to Kubernetes, you can use:
+  ```bash
+  # Initialize Dapr in a Kubernetes cluster
+  dapr init -k
+  
+  # Check Dapr status in Kubernetes
+  dapr status -k
+  ```
 
 ## Development
 

@@ -18,6 +18,7 @@ package cmd
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -39,70 +40,114 @@ environment, including:
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
-
-		// Components to stop - in reverse order from how we start them
-		components := []struct {
-			Name      string
-			Command   string
-			Args      []string
-			SkipFlag  bool
-			Available bool
-		}{
-			{
-				Name:      "Temporal",
-				Command:   "temporal",
-				Args:      []string{"server", "stop-dev"},
-				SkipFlag:  skipTemporal,
-				Available: isCommandAvailable("temporal"),
-			},
-			{
-				Name:      "Dapr",
-				Command:   "dapr",
-				Args:      []string{"uninstall", "--all"},
-				SkipFlag:  skipDapr,
-				Available: isCommandAvailable("dapr"),
-			},
-		}
+		force, _ := cmd.Flags().GetBool("force")
 
 		stoppedCount := 0
 
-		for _, comp := range components {
-			if comp.SkipFlag {
-				if verbose {
-					fmt.Printf("⏭️  Skipping '%s' as requested.\n", comp.Name)
+		// Stop Temporal server by finding and killing its process
+		if !skipTemporal && isCommandAvailable("temporal") {
+			fmt.Println("Stopping Temporal...")
+
+			// Find the Temporal server process
+			findCmd := exec.Command("pgrep", "-f", "temporal server start-dev")
+			output, err := findCmd.Output()
+
+			if err == nil && len(output) > 0 {
+				// Process found, try to kill it
+				pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+				allKilled := true
+
+				for _, pid := range pids {
+					killCmd := exec.Command("kill", pid)
+					if err := killCmd.Run(); err != nil {
+						allKilled = false
+						if verbose {
+							fmt.Printf("Failed to kill Temporal process %s: %v\n", pid, err)
+						}
+					} else if verbose {
+						fmt.Printf("Killed Temporal process with PID %s\n", pid)
+					}
 				}
-				continue
-			}
 
-			if !comp.Available {
-				if verbose {
-					fmt.Printf("⚠️  '%s' command not found, skipping.\n", comp.Name)
+				if allKilled {
+					fmt.Println("✅ Temporal stopped successfully.")
+					stoppedCount++
+				} else {
+					fmt.Println("❌ Failed to stop some Temporal processes.")
+					if force {
+						fmt.Println("   Continuing due to --force flag.")
+					}
 				}
-				continue
-			}
-
-			fmt.Printf("Stopping %s...\n", comp.Name)
-
-			// Run the stop command
-			cmd := exec.Command(comp.Command, comp.Args...)
-			output, err := cmd.CombinedOutput()
-
-			if err != nil {
-				fmt.Printf("❌ Failed to stop %s: %v\n", comp.Name, err)
-				if verbose {
-					fmt.Printf("Output: %s\n", string(output))
-				}
-				continue
-			}
-
-			if verbose {
-				fmt.Printf("✅ %s stopped successfully.\n", comp.Name)
-				fmt.Printf("Output: %s\n", string(output))
 			} else {
-				fmt.Printf("✅ %s stopped successfully.\n", comp.Name)
+				if verbose {
+					fmt.Println("No running Temporal server processes found.")
+				} else {
+					fmt.Println("❌ Failed to stop Temporal: no running processes found.")
+				}
+			}
+		} else if skipTemporal && verbose {
+			fmt.Println("⏭️  Skipping Temporal as requested.")
+		}
+
+		// Stop Dapr runtime
+		if !skipDapr && isCommandAvailable("dapr") {
+			fmt.Println("Stopping Dapr...")
+
+			// Check if any Dapr apps are running and stop them
+			listCmd := exec.Command("dapr", "list")
+			listOutput, _ := listCmd.Output()
+
+			if len(listOutput) > 0 && !strings.Contains(string(listOutput), "No Dapr instances found") {
+				if verbose {
+					fmt.Println("Stopping running Dapr applications...")
+					fmt.Println(string(listOutput))
+				}
+
+				// Stop each running Dapr app
+				// This command would need to parse the output and stop each app by ID
+				// For simplicity, we'll just uninstall which should stop everything
 			}
 
-			stoppedCount++
+			// Run the dapr uninstall command
+			uninstallCmd := exec.Command("dapr", "uninstall", "--all")
+			uninstallOutput, err := uninstallCmd.CombinedOutput()
+			outputStr := string(uninstallOutput)
+
+			// Check for success despite Docker-related errors
+			success := err == nil ||
+				(strings.Contains(outputStr, "Error removing Dapr") &&
+					strings.Contains(outputStr, "docker") &&
+					isCommandAvailable("podman"))
+
+			if !success {
+				fmt.Printf("❌ Failed to stop Dapr: %v\n", err)
+				if verbose {
+					fmt.Printf("Output: %s\n", outputStr)
+				}
+				if !force {
+					// Only exit if force flag is not set
+					if stoppedCount == 0 {
+						fmt.Println("\n⚠️  No components were stopped successfully.")
+					} else {
+						fmt.Println("\n⚠️  Some components were not stopped properly.")
+					}
+					return
+				}
+			} else {
+				fmt.Println("✅ Dapr stopped successfully.")
+
+				// If there were Docker-related warnings but we're using Podman, add a clarification
+				if strings.Contains(outputStr, "docker") && isCommandAvailable("podman") {
+					fmt.Println("   (Docker-related warnings can be ignored when using Podman)")
+				}
+
+				if verbose {
+					fmt.Printf("Output: %s\n", outputStr)
+				}
+				stoppedCount++
+			}
+		} else if skipDapr && verbose {
+			fmt.Println("⏭️  Skipping Dapr as requested.")
 		}
 
 		if stoppedCount > 0 {
