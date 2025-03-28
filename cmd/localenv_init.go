@@ -40,16 +40,13 @@ type LocalEnvConfig struct {
 	} `yaml:"paths"`
 	ClusterName string `yaml:"clusterName"`
 	Temporal    struct {
-		Namespace  string `yaml:"namespace"`
-		UIPort     int    `yaml:"uiPort"`
-		FrontendIP string `yaml:"frontendIP"`
-		GRPCPort   int    `yaml:"grpcPort"`
+		Namespace string `yaml:"namespace"`
+		UIPort    int    `yaml:"uiPort"`
+		GRPCPort  int    `yaml:"grpcPort"`
 	} `yaml:"temporal"`
 	Dapr struct {
-		DashboardPort int    `yaml:"dashboardPort"`
-		DashboardIP   string `yaml:"dashboardIP"`
-		ZipkinPort    int    `yaml:"zipkinPort"`
-		ZipkinIP      string `yaml:"zipkinIP"`
+		DashboardPort int `yaml:"dashboardPort"`
+		ZipkinPort    int `yaml:"zipkinPort"`
 	} `yaml:"dapr"`
 }
 
@@ -87,14 +84,11 @@ This command should be run once before using other localenv commands.`,
 		// Set default Temporal configuration
 		config.Temporal.Namespace = "default"
 		config.Temporal.UIPort = 8233
-		config.Temporal.FrontendIP = "localhost"
 		config.Temporal.GRPCPort = 7233
 
 		// Set default Dapr configuration
 		config.Dapr.DashboardPort = 8080
-		config.Dapr.DashboardIP = "localhost"
 		config.Dapr.ZipkinPort = 9411
-		config.Dapr.ZipkinIP = "localhost"
 
 		// Check for required tools and record their paths
 		fmt.Println("\n=== Validating Required Tools ===")

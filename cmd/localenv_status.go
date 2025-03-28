@@ -278,14 +278,10 @@ environment are running, including:
 			// Show concise component information
 			if configLoaded && config.Components.Temporal {
 				// Extract Temporal configuration values
-				frontendIP := "localhost"
 				uiPort := 8233
 				grpcPort := 7233
 				namespace := "default"
 
-				if config.Temporal.FrontendIP != "" {
-					frontendIP = config.Temporal.FrontendIP
-				}
 				if config.Temporal.UIPort != 0 {
 					uiPort = config.Temporal.UIPort
 				}
@@ -296,8 +292,8 @@ environment are running, including:
 					namespace = config.Temporal.Namespace
 				}
 
-				fmt.Printf("\nTemporal UI: http://%s:%d\n", frontendIP, uiPort)
-				fmt.Printf("Temporal Server: %s:%d (namespace: %s)\n", frontendIP, grpcPort, namespace)
+				fmt.Printf("\nTemporal UI: http://localhost:%d\n", uiPort)
+				fmt.Printf("Temporal Server: localhost:%d (namespace: %s)\n", grpcPort, namespace)
 			}
 
 			// Show Dapr connection information if enabled
@@ -334,14 +330,14 @@ environment are running, including:
 					// Check if Dapr Dashboard process is running
 					dashboardPID := getDaprDashboardPID()
 					if dashboardPID != "" {
-						fmt.Println("- dapr_dashboard (process)")
+						fmt.Println("- dapr_dashboard")
 					}
 				} else {
 					// If we couldn't find containers but the dashboard is running, still show it
 					dashboardPID := getDaprDashboardPID()
 					if dashboardPID != "" {
 						fmt.Println("\nDapr Services:")
-						fmt.Println("- dapr_dashboard (process)")
+						fmt.Println("- dapr_dashboard")
 					}
 				}
 			}
@@ -391,19 +387,13 @@ func getTemporalNamespaceArgs(configLoaded bool, config LocalEnvConfig) []string
 
 // Helper function to get Temporal UI URL
 func getTemporalUIURL(configLoaded bool, config LocalEnvConfig) string {
-	frontendIP := "localhost"
 	uiPort := 8233
 
-	if configLoaded {
-		if config.Temporal.FrontendIP != "" {
-			frontendIP = config.Temporal.FrontendIP
-		}
-		if config.Temporal.UIPort != 0 {
-			uiPort = config.Temporal.UIPort
-		}
+	if configLoaded && config.Temporal.UIPort != 0 {
+		uiPort = config.Temporal.UIPort
 	}
 
-	return fmt.Sprintf("http://%s:%d", frontendIP, uiPort)
+	return fmt.Sprintf("http://localhost:%d", uiPort)
 }
 
 // Helper function to check if Dapr Dashboard is available
@@ -416,20 +406,14 @@ func isDaprDashboardAvailable() bool {
 
 // Helper function to get Dapr Dashboard URL
 func getDaprDashboardURL(configLoaded bool, config LocalEnvConfig) string {
-	dashboardIP := "localhost"
 	dashboardPort := 8080
 
-	if configLoaded {
-		if config.Dapr.DashboardIP != "" {
-			dashboardIP = config.Dapr.DashboardIP
-		}
-		if config.Dapr.DashboardPort != 0 {
-			dashboardPort = config.Dapr.DashboardPort
-		}
+	if configLoaded && config.Dapr.DashboardPort != 0 {
+		dashboardPort = config.Dapr.DashboardPort
 	}
 
 	// Simply return the configured URL
-	return fmt.Sprintf("http://%s:%d", dashboardIP, dashboardPort)
+	return fmt.Sprintf("http://localhost:%d", dashboardPort)
 }
 
 // Helper function to check if Dapr Dashboard is running and get its PID
@@ -474,19 +458,13 @@ func getDaprWebUIURL(configLoaded bool, config LocalEnvConfig) string {
 
 // Helper function to get Zipkin URL
 func getZipkinURL(configLoaded bool, config LocalEnvConfig) string {
-	zipkinIP := "localhost"
 	zipkinPort := 9411
 
-	if configLoaded {
-		if config.Dapr.ZipkinIP != "" {
-			zipkinIP = config.Dapr.ZipkinIP
-		}
-		if config.Dapr.ZipkinPort != 0 {
-			zipkinPort = config.Dapr.ZipkinPort
-		}
+	if configLoaded && config.Dapr.ZipkinPort != 0 {
+		zipkinPort = config.Dapr.ZipkinPort
 	}
 
-	return fmt.Sprintf("http://%s:%d", zipkinIP, zipkinPort)
+	return fmt.Sprintf("http://localhost:%d", zipkinPort)
 }
 
 func init() {

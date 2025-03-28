@@ -388,7 +388,7 @@ in the correct order.`,
 
 				if dashboardStarted {
 					components[i].IsRunning = true
-					dashboardURL := fmt.Sprintf("http://%s:%d", config.Dapr.DashboardIP, dashboardPort)
+					dashboardURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
 					fmt.Printf("✅ Dapr Dashboard started at %s\n", dashboardURL)
 				} else {
 					fmt.Printf("❌ Failed to start Dapr Dashboard on port %d\n", dashboardPort)
@@ -455,15 +455,11 @@ in the correct order.`,
 		// Show connection information
 		if configLoaded && config.Components.Temporal {
 			// Default values
-			frontendIP := "localhost"
 			uiPort := 8233
 			grpcPort := 7233
 			namespace := "default"
 
 			// Override with config if available
-			if config.Temporal.FrontendIP != "" {
-				frontendIP = config.Temporal.FrontendIP
-			}
 			if config.Temporal.UIPort != 0 {
 				uiPort = config.Temporal.UIPort
 			}
@@ -474,8 +470,8 @@ in the correct order.`,
 				namespace = config.Temporal.Namespace
 			}
 
-			fmt.Printf("Temporal UI: http://%s:%d\n", frontendIP, uiPort)
-			fmt.Printf("Temporal Server: %s:%d (namespace: %s)\n", frontendIP, grpcPort, namespace)
+			fmt.Printf("Temporal UI: http://localhost:%d\n", uiPort)
+			fmt.Printf("Temporal Server: localhost:%d (namespace: %s)\n", grpcPort, namespace)
 		} else {
 			fmt.Printf("Temporal UI is available at http://localhost:8233\n")
 		}
@@ -486,21 +482,17 @@ in the correct order.`,
 			dashboardCmd := exec.Command("dapr", "dashboard", "--help")
 			if dashboardCmd.Run() == nil {
 				// Dashboard command is available
-				fmt.Printf("Dapr Dashboard: http://%s:%d\n", config.Dapr.DashboardIP, config.Dapr.DashboardPort)
+				fmt.Printf("Dapr Dashboard: http://localhost:%d\n", config.Dapr.DashboardPort)
 			}
 
 			// Show Zipkin URL for tracing
-			zipkinIP := "localhost"
 			zipkinPort := 9411
 
-			if config.Dapr.ZipkinIP != "" {
-				zipkinIP = config.Dapr.ZipkinIP
-			}
 			if config.Dapr.ZipkinPort != 0 {
 				zipkinPort = config.Dapr.ZipkinPort
 			}
 
-			fmt.Printf("Zipkin UI (tracing): http://%s:%d\n", zipkinIP, zipkinPort)
+			fmt.Printf("Zipkin UI (tracing): http://localhost:%d\n", zipkinPort)
 
 			// Check if Dapr containers are running using podman
 			cmd := exec.Command("podman", "ps", "--format", "{{.Names}}", "--filter", "name=dapr_")

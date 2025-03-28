@@ -11,10 +11,7 @@ clusterName: shielddev-local
 temporal:
     namespace: default
     uiPort: 8233
-    frontendIP: localhost
     grpcPort: 7233
 dapr:
-    dashboardPort: 8081
-    dashboardIP: localhost
+    dashboardPort: 8082
     zipkinPort: 9411
-    zipkinIP: localhost
