@@ -14,7 +14,7 @@ temporal:
     frontendIP: localhost
     grpcPort: 7233
 dapr:
-    dashboardPort: 8080
+    dashboardPort: 8081
     dashboardIP: localhost
     zipkinPort: 9411
     zipkinIP: localhost

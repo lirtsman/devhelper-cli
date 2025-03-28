@@ -21,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -306,7 +305,13 @@ environment are running, including:
 				// Check for Dapr Dashboard
 				if isDaprDashboardAvailable() {
 					dashboardURL := getDaprDashboardURL(configLoaded, config)
-					fmt.Printf("\nDapr Dashboard: %s\n", dashboardURL)
+					if isDaprDashboardAccessible(dashboardURL) {
+						fmt.Printf("\nDapr Dashboard: %s\n", dashboardURL)
+					} else {
+						fmt.Printf("\nDapr Dashboard: %s (Not accessible)\n", dashboardURL)
+						fmt.Println("   If the dashboard is running but not accessible on this port,")
+						fmt.Println("   update the dashboardPort in localenv.yaml and restart the environment.")
+					}
 				}
 
 				// Show Zipkin URL for tracing
@@ -329,55 +334,14 @@ environment are running, including:
 					// Check if Dapr Dashboard process is running
 					dashboardPID := getDaprDashboardPID()
 					if dashboardPID != "" {
-						// Get the port for display
-						dashboardPort := "unknown port"
-						portCmd := exec.Command("lsof", "-i", "-P", "-n", "-a", "-p", dashboardPID)
-						portOutput, err := portCmd.CombinedOutput()
-						if err == nil {
-							portLines := strings.Split(string(portOutput), "\n")
-							for _, portLine := range portLines {
-								if strings.Contains(portLine, "LISTEN") {
-									// Extract port from line
-									for _, field := range strings.Fields(portLine) {
-										if strings.Contains(field, ":") {
-											parts := strings.Split(field, ":")
-											if len(parts) == 2 {
-												dashboardPort = parts[1]
-												break
-											}
-										}
-									}
-								}
-							}
-						}
-						fmt.Printf("- dapr_dashboard (process on port %s)\n", dashboardPort)
+						fmt.Println("- dapr_dashboard (process)")
 					}
 				} else {
 					// If we couldn't find containers but the dashboard is running, still show it
 					dashboardPID := getDaprDashboardPID()
 					if dashboardPID != "" {
 						fmt.Println("\nDapr Services:")
-						dashboardPort := "unknown port"
-						portCmd := exec.Command("lsof", "-i", "-P", "-n", "-a", "-p", dashboardPID)
-						portOutput, err := portCmd.CombinedOutput()
-						if err == nil {
-							portLines := strings.Split(string(portOutput), "\n")
-							for _, portLine := range portLines {
-								if strings.Contains(portLine, "LISTEN") {
-									// Extract port from line
-									for _, field := range strings.Fields(portLine) {
-										if strings.Contains(field, ":") {
-											parts := strings.Split(field, ":")
-											if len(parts) == 2 {
-												dashboardPort = parts[1]
-												break
-											}
-										}
-									}
-								}
-							}
-						}
-						fmt.Printf("- dapr_dashboard (process on port %s)\n", dashboardPort)
+						fmt.Println("- dapr_dashboard (process)")
 					}
 				}
 			}
@@ -464,54 +428,7 @@ func getDaprDashboardURL(configLoaded bool, config LocalEnvConfig) string {
 		}
 	}
 
-	// Check if the dashboard process is running and what port it's using
-	findPortCmd := exec.Command("ps", "-ef")
-	output, err := findPortCmd.CombinedOutput()
-	if err == nil {
-		outputLines := strings.Split(string(output), "\n")
-		for _, line := range outputLines {
-			if strings.Contains(line, "dapr dashboard") {
-				// Extract PID to find the port
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					pid := fields[1]
-					// Use lsof to find the port
-					portCmd := exec.Command("lsof", "-i", "-P", "-n", "-a", "-p", pid)
-					portOutput, err := portCmd.CombinedOutput()
-					if err == nil {
-						portLines := strings.Split(string(portOutput), "\n")
-						for _, portLine := range portLines {
-							if strings.Contains(portLine, "LISTEN") {
-								// Extract port from line like "dashboard 25427 ilya 7u IPv6 0x4bc72fd967bf4175 0t0 TCP *:63160 (LISTEN)"
-								portFields := strings.Fields(portLine)
-								for _, field := range portFields {
-									if strings.Contains(field, ":") {
-										parts := strings.Split(field, ":")
-										if len(parts) == 2 {
-											actualPort, err := strconv.Atoi(parts[1])
-											if err == nil && actualPort > 0 {
-												// Try connecting to verify
-												testURL := fmt.Sprintf("http://%s:%d", dashboardIP, actualPort)
-												client := http.Client{Timeout: 2 * time.Second}
-												resp, err := client.Get(testURL)
-												if err == nil {
-													resp.Body.Close()
-													return testURL
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-				break
-			}
-		}
-	}
-
-	// Default: return configured URL if we couldn't determine the actual port
+	// Simply return the configured URL
 	return fmt.Sprintf("http://%s:%d", dashboardIP, dashboardPort)
 }
 
@@ -531,6 +448,19 @@ func getDaprDashboardPID() string {
 		}
 	}
 	return ""
+}
+
+// Helper function to check if Dapr Dashboard is accessible
+func isDaprDashboardAccessible(url string) bool {
+	client := http.Client{
+		Timeout: 2 * time.Second,
+	}
+	resp, err := client.Get(url)
+	if err == nil {
+		resp.Body.Close()
+		return true
+	}
+	return false
 }
 
 // Helper function to get Dapr Dashboard URL with availability check

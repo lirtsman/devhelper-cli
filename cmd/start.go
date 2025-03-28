@@ -382,80 +382,19 @@ in the correct order.`,
 				// For Dapr Dashboard, we need special handling to make sure it stays running
 				fmt.Println("Starting DaprDashboard in background mode...")
 
-				// Try using a random free port if dashboard fails to start
-				dashboardStarted := false
-
-				// Create a log file
-				logFile, err := os.Create("dapr-dashboard.log")
-				if err != nil {
-					fmt.Printf("Failed to create log file: %v, redirecting to null device\n", err)
-					logFile = nil
-				} else {
-					fmt.Println("Dapr Dashboard logs are being written to dapr-dashboard.log")
-				}
-
-				// First, try the configured port
+				// Try the configured port first
 				dashboardPort := config.Dapr.DashboardPort
-				dashboardStarted = tryStartDashboard(comp.Command, dashboardPort, logFile)
-
-				// If the configured port fails, try a random port
-				if !dashboardStarted {
-					fmt.Printf("Failed to start Dapr Dashboard on port %d, trying a random port\n", dashboardPort)
-					dashboardPort = 0 // 0 tells Dapr to find a free port
-					dashboardStarted = tryStartDashboard(comp.Command, dashboardPort, logFile)
-				}
-
-				// If still not started, try a few hardcoded ports
-				if !dashboardStarted {
-					altPorts := []int{8081, 8082, 8090, 9090}
-					for _, port := range altPorts {
-						fmt.Printf("Trying to start Dapr Dashboard on port %d\n", port)
-						dashboardStarted = tryStartDashboard(comp.Command, port, logFile)
-						if dashboardStarted {
-							dashboardPort = port
-							break
-						}
-					}
-				}
+				dashboardStarted := tryStartDashboard(comp.Command, dashboardPort, nil)
 
 				if dashboardStarted {
 					components[i].IsRunning = true
 					dashboardURL := fmt.Sprintf("http://%s:%d", config.Dapr.DashboardIP, dashboardPort)
-
-					// If using port 0, try to extract the actual port from the log file
-					if dashboardPort == 0 && logFile != nil {
-						// Wait a moment for the log to be written
-						time.Sleep(500 * time.Millisecond)
-
-						// Close and reopen the file for reading
-						logFile.Close()
-						logContent, err := os.ReadFile("dapr-dashboard.log")
-						if err == nil {
-							// Try to extract the port from the log
-							logLines := strings.Split(string(logContent), "\n")
-							for _, line := range logLines {
-								if strings.Contains(line, "Dapr Dashboard running on") {
-									parts := strings.Split(line, ":")
-									if len(parts) >= 3 {
-										portStr := parts[len(parts)-1]
-										if actualPort, err := strconv.Atoi(strings.TrimSpace(portStr)); err == nil {
-											dashboardPort = actualPort
-											dashboardURL = fmt.Sprintf("http://%s:%d", config.Dapr.DashboardIP, dashboardPort)
-											break
-										}
-									}
-								}
-							}
-						}
-					}
-
 					fmt.Printf("✅ Dapr Dashboard started at %s\n", dashboardURL)
-
-					// Update the port in the config so it's displayed correctly in status
-					config.Dapr.DashboardPort = dashboardPort
 				} else {
-					fmt.Println("❌ Failed to start Dapr Dashboard after trying multiple ports")
-					fmt.Println("   Check dapr-dashboard.log for error details")
+					fmt.Printf("❌ Failed to start Dapr Dashboard on port %d\n", dashboardPort)
+					fmt.Println("   This could be because the port is already in use.")
+					fmt.Println("   Update the dashboardPort in localenv.yaml to a different value and try again.")
+					fmt.Println("   For example: dapr.dashboardPort: 8081")
 				}
 				continue
 			}
@@ -619,14 +558,11 @@ func getDaprDashboardRequirement(configLoaded bool, configValue bool, skipFlag b
 
 func tryStartDashboard(command string, port int, logFile *os.File) bool {
 	dashboardCmd := exec.Command(command, "dashboard", "-p", strconv.Itoa(port), "--address", "0.0.0.0")
-	if logFile != nil {
-		dashboardCmd.Stdout = logFile
-		dashboardCmd.Stderr = logFile
-	} else {
-		devNull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-		dashboardCmd.Stdout = devNull
-		dashboardCmd.Stderr = devNull
-	}
+
+	// Redirect output to null device
+	devNull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	dashboardCmd.Stdout = devNull
+	dashboardCmd.Stderr = devNull
 
 	// Start the dashboard in a goroutine
 	resultChan := make(chan error, 1)
@@ -642,7 +578,7 @@ func tryStartDashboard(command string, port int, logFile *os.File) bool {
 	case err := <-resultChan:
 		// If we get here, the process exited before our timeout
 		if err != nil {
-			fmt.Printf("Dashboard exited with error: %v\n", err)
+			fmt.Printf("Dashboard failed to start: %v\n", err)
 		}
 		return false
 	default:
