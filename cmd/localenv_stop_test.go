@@ -79,5 +79,20 @@ func TestLocalenvStopCommand(t *testing.T) {
 		skipTemporalFlag := stopCmd.Flags().Lookup("skip-temporal")
 		assert.NotNil(t, skipTemporalFlag, "skip-temporal flag should exist")
 		assert.Equal(t, "false", skipTemporalFlag.DefValue, "skip-temporal flag should default to false")
+
+		skipDaprDashboardFlag := stopCmd.Flags().Lookup("skip-dapr-dashboard")
+		assert.NotNil(t, skipDaprDashboardFlag, "skip-dapr-dashboard flag should exist")
+		assert.Equal(t, "false", skipDaprDashboardFlag.DefValue, "skip-dapr-dashboard flag should default to false")
+	})
+
+	t.Run("Stop command should honor skip-dapr-dashboard flag", func(t *testing.T) {
+		// Verify that the skip-dapr-dashboard flag exists and can be retrieved
+		flag := stopCmd.Flags().Lookup("skip-dapr-dashboard")
+		assert.NotNil(t, flag, "skip-dapr-dashboard flag should exist")
+
+		// The actual behavior can't be fully tested without executing the command,
+		// but we can verify the flag is properly registered
+		assert.Equal(t, "skip-dapr-dashboard", flag.Name, "Flag name should be skip-dapr-dashboard")
+		assert.Equal(t, "Skip stopping Dapr Dashboard", flag.Usage, "Flag usage should mention skipping Dapr Dashboard")
 	})
 }

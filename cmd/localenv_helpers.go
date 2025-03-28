@@ -52,6 +52,10 @@ func getDaprDashboardRequirement(configLoaded bool, configValue bool, skipFlag b
 }
 
 func tryStartDashboard(command string, port int, logFile *os.File) bool {
+	return tryStartDashboardWithTimeout(command, port, logFile, 3*time.Second)
+}
+
+func tryStartDashboardWithTimeout(command string, port int, logFile *os.File, timeout time.Duration) bool {
 	dashboardCmd := exec.Command(command, "dashboard", "-p", strconv.Itoa(port), "--address", "0.0.0.0")
 
 	// Redirect output to null device or log file
@@ -71,7 +75,7 @@ func tryStartDashboard(command string, port int, logFile *os.File) bool {
 	}()
 
 	// Wait a bit for the dashboard to start
-	time.Sleep(3 * time.Second)
+	time.Sleep(timeout)
 
 	// Check if the process exited quickly (indicating failure)
 	select {

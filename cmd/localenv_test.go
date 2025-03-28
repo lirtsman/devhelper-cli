@@ -88,18 +88,49 @@ func TestLocalenvFlags(t *testing.T) {
 	t.Run("Start command should have skip flags", func(t *testing.T) {
 		assert.NotNil(t, startCmd.Flags().Lookup("skip-dapr"), "skip-dapr flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("skip-temporal"), "skip-temporal flag should exist")
+		assert.NotNil(t, startCmd.Flags().Lookup("skip-dapr-dashboard"), "skip-dapr-dashboard flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("config"), "config flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("wait"), "wait flag should exist")
-		assert.NotNil(t, startCmd.Flags().Lookup("skip-dapr-dashboard"), "skip-dapr-dashboard flag should exist")
 	})
 
 	t.Run("Stop command should have skip flags", func(t *testing.T) {
 		assert.NotNil(t, stopCmd.Flags().Lookup("skip-dapr"), "skip-dapr flag should exist")
 		assert.NotNil(t, stopCmd.Flags().Lookup("skip-temporal"), "skip-temporal flag should exist")
+		assert.NotNil(t, stopCmd.Flags().Lookup("skip-dapr-dashboard"), "skip-dapr-dashboard flag should exist")
 		assert.NotNil(t, stopCmd.Flags().Lookup("force"), "force flag should exist")
+	})
+
+	t.Run("Init command should have proper flags", func(t *testing.T) {
+		assert.NotNil(t, localenvInitCmd.Flags().Lookup("force"), "force flag should exist")
+		assert.NotNil(t, localenvInitCmd.Flags().Lookup("verbose"), "verbose flag should exist")
 	})
 
 	t.Run("Verbose flag should be available to all commands", func(t *testing.T) {
 		assert.NotNil(t, localenvCmd.PersistentFlags().Lookup("verbose"), "verbose flag should exist")
+	})
+}
+
+// TestLocalenvCommands tests that all localenv subcommands are properly registered
+func TestLocalenvCommands(t *testing.T) {
+	t.Run("All subcommands should be registered", func(t *testing.T) {
+		// Create a map to track which commands we've found
+		foundCmds := map[string]bool{
+			"start":  false,
+			"stop":   false,
+			"status": false,
+			"init":   false,
+		}
+
+		// Check each registered command
+		for _, cmd := range localenvCmd.Commands() {
+			if _, ok := foundCmds[cmd.Use]; ok {
+				foundCmds[cmd.Use] = true
+			}
+		}
+
+		// Verify that all expected commands were found
+		for cmdName, found := range foundCmds {
+			assert.True(t, found, "%s command should be registered", cmdName)
+		}
 	})
 }
