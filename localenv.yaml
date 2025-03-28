@@ -1,0 +1,20 @@
+components:
+    dapr: true
+    temporal: true
+    daprDashboard: true
+paths:
+    podman: /opt/homebrew/bin/podman
+    kind: /opt/homebrew/bin/kind
+    dapr: /opt/homebrew/bin/dapr
+    temporal: /opt/homebrew/bin/temporal
+clusterName: shielddev-local
+temporal:
+    namespace: default
+    uiPort: 8233
+    frontendIP: localhost
+    grpcPort: 7233
+dapr:
+    dashboardPort: 8080
+    dashboardIP: localhost
+    zipkinPort: 9411
+    zipkinIP: localhost

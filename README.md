@@ -49,6 +49,9 @@ shielddev-cli status
 # Check detailed status of applications in production
 shielddev-cli status app --detailed --env prod
 
+# Initialize local development environment
+shielddev-cli localenv init
+
 # Start local development environment
 shielddev-cli localenv start
 
@@ -77,6 +80,40 @@ api:
   token: YOUR_API_TOKEN
 ```
 
+### Local Environment Configuration
+
+The local development environment can be configured using `localenv.yaml` in your project directory:
+
+```yaml
+# localenv.yaml
+components:
+  dapr: true
+  temporal: true
+paths:
+  podman: /usr/local/bin/podman
+  kind: /usr/local/bin/kind
+  dapr: /usr/local/bin/dapr
+  temporal: /usr/local/bin/temporal
+clusterName: shielddev-local
+temporal:
+  namespace: default            # Default namespace to use
+  uiPort: 8233                  # Web UI port
+  frontendIP: localhost         # Frontend IP/hostname
+  grpcPort: 7233                # gRPC port for client connections
+dapr:
+  dashboardPort: 8080           # Dashboard port (if dashboard is installed)
+  dashboardIP: localhost        # Dashboard IP/hostname
+  zipkinPort: 9411             # Zipkin port for distributed tracing
+  zipkinIP: localhost          # Zipkin IP/hostname
+```
+
+This configuration is created when you run `shielddev-cli localenv init` and can be customized:
+
+- `components` - Controls which components will be started (true) or disabled (false)
+- `paths` - Stores the paths to required tools, useful for validation on subsequent starts
+- `clusterName` - The default cluster name for Kind (useful for script automation)
+- `temporal` - Configuration for Temporal server including namespace, ports, and addresses
+
 ## Environment Variables
 
 - `SHIELDDEV_API_ENDPOINT`: API endpoint URL
@@ -103,17 +140,24 @@ api:
     - `--env`, `-e`: Target environment (dev, staging, prod)
     - `--watch`, `-w`: Watch status updates in real-time
 - `localenv`: Manage local development environment
+  - `init`: Initialize the local environment configuration
+    - Flags:
+      - `--force`: Overwrite existing configuration
+      - `--cluster-name`: Name for the Kind cluster (default: shielddev-local)
   - `start`: Start the local development environment with Dapr and Temporal
     - Flags:
       - `--skip-dapr`: Skip starting Dapr runtime
       - `--skip-temporal`: Skip starting Temporal server
-      - `--config`, `-c`: Path to environment configuration file
+      - `--config`, `-c`: Path to environment configuration file (default: localenv.yaml)
       - `--wait`: Wait for all components to be ready before exiting
   - `status`: Check status of the local development environment
+    - Flags:
+      - `--config`, `-c`: Path to environment configuration file (default: localenv.yaml)
   - `stop`: Stop the local development environment
     - Flags:
       - `--skip-dapr`: Skip stopping Dapr runtime
       - `--skip-temporal`: Skip stopping Temporal server
+      - `--config`, `-c`: Path to environment configuration file (default: localenv.yaml)
       - `--force`: Force stop all components even if errors occur
 
 ## Prerequisites for Local Development
@@ -142,12 +186,19 @@ To use the `localenv` commands, the following tools must be installed and proper
 
 ## Local Development Environment
 
+When you run `shielddev-cli localenv init`, the CLI:
+
+1. Checks for required tools (Podman, Kind, Dapr CLI, Temporal CLI)
+2. Validates their functionality
+3. Creates a configuration file (localenv.yaml) that remembers the tools and enabled components
+
 When you run `shielddev-cli localenv start`, the CLI:
 
-1. Verifies Podman is available and can run containers
-2. Verifies Kind is available and has clusters configured
-3. Initializes and starts the Dapr runtime
-4. Starts the Temporal server
+1. Loads the configuration file if it exists
+2. Verifies Podman is available and can run containers
+3. Verifies Kind is available and has clusters configured
+4. Initializes and starts the Dapr runtime (if enabled)
+5. Starts the Temporal server (if enabled)
 
 ### Temporal Server
 
@@ -161,6 +212,16 @@ The Temporal server is started in development mode with `temporal server start-d
 - **Temporal API**: Available at http://localhost:7233
   - Used by applications to interact with Temporal
   - Default namespace: "default"
+  - gRPC port: 7233 (for client applications)
+
+- **Configuration**: You can customize the connection settings in `localenv.yaml`:
+  ```yaml
+  temporal:
+    namespace: default       # Namespace for workflows
+    uiPort: 8233             # Web UI port
+    frontendIP: localhost    # Server address
+    grpcPort: 7233           # gRPC port for client connections
+  ```
   
 - **Working with Temporal**:
   ```bash
@@ -176,12 +237,28 @@ The Temporal server is started in development mode with `temporal server start-d
 
 ### Dapr Runtime
 
-Dapr is initialized with `dapr init --slim`, which provides a lightweight self-hosted mode without requiring Kubernetes:
+Dapr is initialized with `dapr init --container-runtime podman`, which provides a self-hosted mode using Podman as the container runtime:
 
-- **Self-hosted Mode**: The `--slim` flag installs only the core Dapr runtime components without any Kubernetes components
-  - This mode is ideal for local development and testing
-  - Each Dapr application runs in its own process alongside your application
-  - Note: The Dapr Dashboard is not included in the slim installation mode
+- **Self-hosted Mode**: Dapr runs as a set of containers in your local Podman environment
+  - Includes Redis for state management and pub/sub
+  - Includes Zipkin for distributed tracing
+  - Includes placement and scheduler services
+  
+- **Zipkin UI**: 
+  - Available at http://localhost:9411
+  - Provides distributed tracing for monitoring application performance
+  - Visualize traces to identify bottlenecks and troubleshoot issues
+  - Configure port and host in `localenv.yaml` under the `dapr` section
+  
+- **Dapr Dashboard** (Optional): 
+  - Not installed by default, but can be installed with: `dapr dashboard install`
+  - When installed, it's available at http://localhost:8080
+  - Provides UI for monitoring and managing Dapr applications and components
+  - Configure port and host in `localenv.yaml` under the `dapr` section
+  
+- **Podman Integration**: The CLI automatically uses Podman as the container runtime for Dapr
+  - When Docker is not available, Podman is used for all container operations
+  - Dapr version 1.8+ is required for Podman support
   
 - **Working with Dapr**:
   ```bash
@@ -197,6 +274,12 @@ Dapr is initialized with `dapr init --slim`, which provides a lightweight self-h
   # Stop a running Dapr application
   dapr stop --app-id myapp
   ```
+
+- **Container Services**:
+  - **dapr_redis**: Redis instance for state management and pub/sub
+  - **dapr_placement**: Service for actor placement
+  - **dapr_zipkin**: Zipkin instance for distributed tracing
+  - **dapr_scheduler**: Scheduler service for distributed coordination
 
 - **Future Kubernetes Integration**: When ready to deploy to Kubernetes, you can use:
   ```bash
