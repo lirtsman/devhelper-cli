@@ -99,14 +99,18 @@ environment, including:
 		if stopDaprDashboard && isCommandAvailable("dapr") && isDaprDashboardAvailable() {
 			fmt.Println("Stopping Dapr Dashboard...")
 
-			// Find the Dapr Dashboard process
-			findCmd := exec.Command("pgrep", "-f", "dapr dashboard")
-			output, err := findCmd.Output()
+			// Try to find the dashboard process
+			found := false
 
-			if err == nil && len(output) > 0 {
-				// Process found, try to kill it
-				pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+			// Try using pgrep first (more reliable on macOS and Linux)
+			pgrepCmd := exec.Command("pgrep", "-f", "dapr dashboard")
+			pgrepOutput, pgrepErr := pgrepCmd.Output()
+
+			if pgrepErr == nil && len(pgrepOutput) > 0 {
+				// Process found with pgrep
+				pids := strings.Split(strings.TrimSpace(string(pgrepOutput)), "\n")
 				allKilled := true
+				found = true
 
 				for _, pid := range pids {
 					killCmd := exec.Command("kill", pid)
@@ -130,6 +134,54 @@ environment, including:
 					}
 				}
 			} else {
+				// Try using ps as fallback
+				psCmd := exec.Command("ps", "-ef")
+				psOutput, psErr := psCmd.Output()
+
+				if psErr == nil {
+					lines := strings.Split(string(psOutput), "\n")
+					var dashboardPids []string
+
+					for _, line := range lines {
+						if strings.Contains(line, "dapr dashboard") && !strings.Contains(line, "grep") {
+							// Parse the line to extract PID
+							fields := strings.Fields(line)
+							if len(fields) > 1 {
+								dashboardPids = append(dashboardPids, fields[1])
+							}
+						}
+					}
+
+					if len(dashboardPids) > 0 {
+						found = true
+						allKilled := true
+
+						for _, pid := range dashboardPids {
+							killCmd := exec.Command("kill", pid)
+							if err := killCmd.Run(); err != nil {
+								allKilled = false
+								if verbose {
+									fmt.Printf("Failed to kill Dapr Dashboard process %s: %v\n", pid, err)
+								}
+							} else if verbose {
+								fmt.Printf("Killed Dapr Dashboard process with PID %s\n", pid)
+							}
+						}
+
+						if allKilled {
+							fmt.Println("✅ Dapr Dashboard stopped successfully.")
+							stoppedCount++
+						} else {
+							fmt.Println("❌ Failed to stop some Dapr Dashboard processes.")
+							if force {
+								fmt.Println("   Continuing due to --force flag.")
+							}
+						}
+					}
+				}
+			}
+
+			if !found {
 				if verbose {
 					fmt.Println("No running Dapr Dashboard processes found.")
 				} else {

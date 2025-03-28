@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -324,6 +325,60 @@ environment are running, including:
 						}
 						fmt.Printf("- %s\n", container)
 					}
+
+					// Check if Dapr Dashboard process is running
+					dashboardPID := getDaprDashboardPID()
+					if dashboardPID != "" {
+						// Get the port for display
+						dashboardPort := "unknown port"
+						portCmd := exec.Command("lsof", "-i", "-P", "-n", "-a", "-p", dashboardPID)
+						portOutput, err := portCmd.CombinedOutput()
+						if err == nil {
+							portLines := strings.Split(string(portOutput), "\n")
+							for _, portLine := range portLines {
+								if strings.Contains(portLine, "LISTEN") {
+									// Extract port from line
+									for _, field := range strings.Fields(portLine) {
+										if strings.Contains(field, ":") {
+											parts := strings.Split(field, ":")
+											if len(parts) == 2 {
+												dashboardPort = parts[1]
+												break
+											}
+										}
+									}
+								}
+							}
+						}
+						fmt.Printf("- dapr_dashboard (process on port %s)\n", dashboardPort)
+					}
+				} else {
+					// If we couldn't find containers but the dashboard is running, still show it
+					dashboardPID := getDaprDashboardPID()
+					if dashboardPID != "" {
+						fmt.Println("\nDapr Services:")
+						dashboardPort := "unknown port"
+						portCmd := exec.Command("lsof", "-i", "-P", "-n", "-a", "-p", dashboardPID)
+						portOutput, err := portCmd.CombinedOutput()
+						if err == nil {
+							portLines := strings.Split(string(portOutput), "\n")
+							for _, portLine := range portLines {
+								if strings.Contains(portLine, "LISTEN") {
+									// Extract port from line
+									for _, field := range strings.Fields(portLine) {
+										if strings.Contains(field, ":") {
+											parts := strings.Split(field, ":")
+											if len(parts) == 2 {
+												dashboardPort = parts[1]
+												break
+											}
+										}
+									}
+								}
+							}
+						}
+						fmt.Printf("- dapr_dashboard (process on port %s)\n", dashboardPort)
+					}
 				}
 			}
 		} else {
@@ -409,7 +464,73 @@ func getDaprDashboardURL(configLoaded bool, config LocalEnvConfig) string {
 		}
 	}
 
+	// Check if the dashboard process is running and what port it's using
+	findPortCmd := exec.Command("ps", "-ef")
+	output, err := findPortCmd.CombinedOutput()
+	if err == nil {
+		outputLines := strings.Split(string(output), "\n")
+		for _, line := range outputLines {
+			if strings.Contains(line, "dapr dashboard") {
+				// Extract PID to find the port
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					pid := fields[1]
+					// Use lsof to find the port
+					portCmd := exec.Command("lsof", "-i", "-P", "-n", "-a", "-p", pid)
+					portOutput, err := portCmd.CombinedOutput()
+					if err == nil {
+						portLines := strings.Split(string(portOutput), "\n")
+						for _, portLine := range portLines {
+							if strings.Contains(portLine, "LISTEN") {
+								// Extract port from line like "dashboard 25427 ilya 7u IPv6 0x4bc72fd967bf4175 0t0 TCP *:63160 (LISTEN)"
+								portFields := strings.Fields(portLine)
+								for _, field := range portFields {
+									if strings.Contains(field, ":") {
+										parts := strings.Split(field, ":")
+										if len(parts) == 2 {
+											actualPort, err := strconv.Atoi(parts[1])
+											if err == nil && actualPort > 0 {
+												// Try connecting to verify
+												testURL := fmt.Sprintf("http://%s:%d", dashboardIP, actualPort)
+												client := http.Client{Timeout: 2 * time.Second}
+												resp, err := client.Get(testURL)
+												if err == nil {
+													resp.Body.Close()
+													return testURL
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Default: return configured URL if we couldn't determine the actual port
 	return fmt.Sprintf("http://%s:%d", dashboardIP, dashboardPort)
+}
+
+// Helper function to check if Dapr Dashboard is running and get its PID
+func getDaprDashboardPID() string {
+	cmd := exec.Command("ps", "-ef")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		outputLines := strings.Split(string(output), "\n")
+		for _, line := range outputLines {
+			if strings.Contains(line, "dapr dashboard") && !strings.Contains(line, "grep") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					return fields[1] // Return PID
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // Helper function to get Dapr Dashboard URL with availability check

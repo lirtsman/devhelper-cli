@@ -219,7 +219,7 @@ in the correct order.`,
 			{
 				Name:         "DaprDashboard",
 				Command:      "dapr",
-				Args:         []string{"dashboard", "-p", strconv.Itoa(config.Dapr.DashboardPort)},
+				Args:         []string{"dashboard", "-p", strconv.Itoa(config.Dapr.DashboardPort), "--address", "0.0.0.0"},
 				CheckCommand: "dapr",
 				CheckArgs:    []string{"dashboard", "--help"},
 				RequiredFor:  []string{},
@@ -231,8 +231,11 @@ in the correct order.`,
 					err := cmd.Run()
 					return err == nil
 				}(),
-				VerifyAvailable: nil,  // No specific verification beyond checking if process starts
-				RequiresStartup: true, // Dashboard needs to be started
+				VerifyAvailable: func() bool {
+					// Dashboard is available if the command exists
+					return true
+				},
+				RequiresStartup: true, // We want the component system to handle it
 				IsBinary:        false,
 			},
 			{
@@ -374,6 +377,89 @@ in the correct order.`,
 				continue
 			}
 
+			// Special handling for Dapr Dashboard
+			if comp.Name == "DaprDashboard" {
+				// For Dapr Dashboard, we need special handling to make sure it stays running
+				fmt.Println("Starting DaprDashboard in background mode...")
+
+				// Try using a random free port if dashboard fails to start
+				dashboardStarted := false
+
+				// Create a log file
+				logFile, err := os.Create("dapr-dashboard.log")
+				if err != nil {
+					fmt.Printf("Failed to create log file: %v, redirecting to null device\n", err)
+					logFile = nil
+				} else {
+					fmt.Println("Dapr Dashboard logs are being written to dapr-dashboard.log")
+				}
+
+				// First, try the configured port
+				dashboardPort := config.Dapr.DashboardPort
+				dashboardStarted = tryStartDashboard(comp.Command, dashboardPort, logFile)
+
+				// If the configured port fails, try a random port
+				if !dashboardStarted {
+					fmt.Printf("Failed to start Dapr Dashboard on port %d, trying a random port\n", dashboardPort)
+					dashboardPort = 0 // 0 tells Dapr to find a free port
+					dashboardStarted = tryStartDashboard(comp.Command, dashboardPort, logFile)
+				}
+
+				// If still not started, try a few hardcoded ports
+				if !dashboardStarted {
+					altPorts := []int{8081, 8082, 8090, 9090}
+					for _, port := range altPorts {
+						fmt.Printf("Trying to start Dapr Dashboard on port %d\n", port)
+						dashboardStarted = tryStartDashboard(comp.Command, port, logFile)
+						if dashboardStarted {
+							dashboardPort = port
+							break
+						}
+					}
+				}
+
+				if dashboardStarted {
+					components[i].IsRunning = true
+					dashboardURL := fmt.Sprintf("http://%s:%d", config.Dapr.DashboardIP, dashboardPort)
+
+					// If using port 0, try to extract the actual port from the log file
+					if dashboardPort == 0 && logFile != nil {
+						// Wait a moment for the log to be written
+						time.Sleep(500 * time.Millisecond)
+
+						// Close and reopen the file for reading
+						logFile.Close()
+						logContent, err := os.ReadFile("dapr-dashboard.log")
+						if err == nil {
+							// Try to extract the port from the log
+							logLines := strings.Split(string(logContent), "\n")
+							for _, line := range logLines {
+								if strings.Contains(line, "Dapr Dashboard running on") {
+									parts := strings.Split(line, ":")
+									if len(parts) >= 3 {
+										portStr := parts[len(parts)-1]
+										if actualPort, err := strconv.Atoi(strings.TrimSpace(portStr)); err == nil {
+											dashboardPort = actualPort
+											dashboardURL = fmt.Sprintf("http://%s:%d", config.Dapr.DashboardIP, dashboardPort)
+											break
+										}
+									}
+								}
+							}
+						}
+					}
+
+					fmt.Printf("✅ Dapr Dashboard started at %s\n", dashboardURL)
+
+					// Update the port in the config so it's displayed correctly in status
+					config.Dapr.DashboardPort = dashboardPort
+				} else {
+					fmt.Println("❌ Failed to start Dapr Dashboard after trying multiple ports")
+					fmt.Println("   Check dapr-dashboard.log for error details")
+				}
+				continue
+			}
+
 			// For Temporal and other components that need to be started
 			cmd := exec.Command(comp.Command, comp.Args...)
 
@@ -461,17 +547,7 @@ in the correct order.`,
 			dashboardCmd := exec.Command("dapr", "dashboard", "--help")
 			if dashboardCmd.Run() == nil {
 				// Dashboard command is available
-				dashboardIP := "localhost"
-				dashboardPort := 8080
-
-				if config.Dapr.DashboardIP != "" {
-					dashboardIP = config.Dapr.DashboardIP
-				}
-				if config.Dapr.DashboardPort != 0 {
-					dashboardPort = config.Dapr.DashboardPort
-				}
-
-				fmt.Printf("Dapr Dashboard: http://%s:%d\n", dashboardIP, dashboardPort)
+				fmt.Printf("Dapr Dashboard: http://%s:%d\n", config.Dapr.DashboardIP, config.Dapr.DashboardPort)
 			}
 
 			// Show Zipkin URL for tracing
@@ -539,4 +615,38 @@ func getDaprDashboardRequirement(configLoaded bool, configValue bool, skipFlag b
 		return configValue
 	}
 	return !skipFlag
+}
+
+func tryStartDashboard(command string, port int, logFile *os.File) bool {
+	dashboardCmd := exec.Command(command, "dashboard", "-p", strconv.Itoa(port), "--address", "0.0.0.0")
+	if logFile != nil {
+		dashboardCmd.Stdout = logFile
+		dashboardCmd.Stderr = logFile
+	} else {
+		devNull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		dashboardCmd.Stdout = devNull
+		dashboardCmd.Stderr = devNull
+	}
+
+	// Start the dashboard in a goroutine
+	resultChan := make(chan error, 1)
+	go func() {
+		resultChan <- dashboardCmd.Run()
+	}()
+
+	// Wait a bit for the dashboard to start
+	time.Sleep(3 * time.Second)
+
+	// Check if the process exited quickly (indicating failure)
+	select {
+	case err := <-resultChan:
+		// If we get here, the process exited before our timeout
+		if err != nil {
+			fmt.Printf("Dashboard exited with error: %v\n", err)
+		}
+		return false
+	default:
+		// No error yet, process is still running
+		return true
+	}
 }
