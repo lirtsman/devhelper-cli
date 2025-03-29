@@ -24,7 +24,10 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
-          cache: true
+          # Explicitly define cache path and keys instead of using "cache: true"
+          cache-dependency-path: |
+            go.sum
+            go.mod
 
       - name: Install dependencies
         run: go mod download
@@ -51,7 +54,10 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
-          cache: true
+          # Explicitly define cache path and keys instead of using "cache: true"
+          cache-dependency-path: |
+            go.sum
+            go.mod
           
       - name: Install dependencies
         run: go mod download
@@ -95,7 +101,10 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
-          cache: true
+          # Explicitly define cache path and keys instead of using "cache: true"
+          cache-dependency-path: |
+            go.sum
+            go.mod
 
       - name: Install dependencies
         run: go mod download
