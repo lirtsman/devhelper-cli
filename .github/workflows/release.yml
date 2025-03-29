@@ -245,4 +245,6 @@ jobs:
           # Trigger the homebrew update workflow using GitHub CLI
           gh workflow run update-homebrew.yml -f version=$VERSION
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          # Use HOMEBREW_TAP_TOKEN instead of GITHUB_TOKEN
+          # This PAT has permissions to trigger other workflows
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }} 
