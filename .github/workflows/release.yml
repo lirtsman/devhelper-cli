@@ -236,15 +236,56 @@ jobs:
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
           sudo apt update
           sudo apt install gh
-            
-      # Directly trigger the Homebrew update workflow
-      - name: Update Homebrew Formula
+
+      # Calculate SHA256 of release tarball
+      - name: Calculate SHA256
+        id: sha256
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
+          TARBALL_URL="https://github.com/lirtsman/devhelper-cli/archive/refs/tags/${VERSION}.tar.gz"
+          curl -sL "$TARBALL_URL" | shasum -a 256 | awk '{print $1}' > sha256.txt
+          SHA256=$(cat sha256.txt)
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      # Checkout Homebrew tap repository
+      - name: Checkout Homebrew tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: lirtsman/homebrew-devhelper-cli
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      # Update formula
+      - name: Update formula
+        run: |
+          cd homebrew-tap/Formula
+          cat > devhelper-cli.rb << EOF
+          class DevhelperCli < Formula
+            desc "A comprehensive command-line interface for ShieldDev operations"
+            homepage "https://github.com/lirtsman/devhelper-cli"
+            url "https://github.com/lirtsman/devhelper-cli/archive/refs/tags/${{ steps.sha256.outputs.VERSION }}.tar.gz"
+            sha256 "${{ steps.sha256.outputs.SHA256 }}"
+            
+            depends_on "go" => :build
           
-          # Trigger the homebrew update workflow using GitHub CLI
-          gh workflow run update-homebrew.yml -f version=$VERSION
-        env:
-          # Use HOMEBREW_TAP_TOKEN instead of GITHUB_TOKEN
-          # This PAT has permissions to trigger other workflows
-          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }} 
+            def install
+              system "go", "build", "-o", "devhelper-cli"
+              bin.install "devhelper-cli"
+            end
+          
+            test do
+              system "#{bin}/devhelper-cli", "--help"
+            end
+          end
+          EOF
+
+      # Commit and push changes
+      - name: Commit and push changes
+        run: |
+          cd homebrew-tap
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add Formula/devhelper-cli.rb
+          git commit -m "Update formula to ${{ steps.sha256.outputs.VERSION }}"
+          git push 
