@@ -227,4 +227,22 @@ jobs:
             ./release-assets/devhelper-cli-windows-amd64.exe
             ./release-assets/devhelper-cli-linux-arm64
             ./release-assets/devhelper-cli-darwin-arm64
-            ./release-assets/checksums.txt 
+            ./release-assets/checksums.txt
+            
+      # Install GitHub CLI
+      - name: Install GitHub CLI
+        run: |
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh
+            
+      # Directly trigger the Homebrew update workflow
+      - name: Update Homebrew Formula
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          
+          # Trigger the homebrew update workflow using GitHub CLI
+          gh workflow run update-homebrew.yml -f version=$VERSION
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
