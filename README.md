@@ -153,7 +153,7 @@ devhelper-cli localenv stop
 DevHelper CLI can be configured using:
 
 1. Configuration file: `$HOME/.devhelper-cli.yaml`
-2. Environment variables: All environment variables should be prefixed with `SHIELDDEV_`
+2. Environment variables: All environment variables should be prefixed with `DEVHELPER_`
 3. Command-line flags
 
 Example configuration file:
