@@ -247,6 +247,9 @@ jobs:
           SHA256=$(cat sha256.txt)
           echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          # Get the commit hash that corresponds to this tag
+          COMMIT=$(git rev-parse HEAD)
+          echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
 
       # Checkout Homebrew tap repository
       - name: Checkout Homebrew tap repository
@@ -273,7 +276,7 @@ jobs:
               # Get version information and truncate tag prefix "v"
               version_no_v = version.to_s.sub(/^v/, "")
               system "go", "build", 
-                     "-ldflags", "-X github.com/lirtsman/devhelper-cli/cmd.Version=#{version_no_v} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=#{Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")}",
+                     "-ldflags", "-X github.com/lirtsman/devhelper-cli/cmd.Version=#{version_no_v} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=#{Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.sha256.outputs.COMMIT }}",
                      "-o", "devhelper-cli"
               bin.install "devhelper-cli"
             end
