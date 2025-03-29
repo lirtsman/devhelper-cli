@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
 
+# Add explicit permissions block at the workflow level
+permissions:
+  contents: write  # Required for creating releases
+  packages: write  # Required if you're publishing packages
+  actions: read    # Required for running actions
+
 jobs:
   test:
     name: Test
@@ -221,6 +227,4 @@ jobs:
             ./release-assets/devhelper-cli-windows-amd64.exe
             ./release-assets/devhelper-cli-linux-arm64
             ./release-assets/devhelper-cli-darwin-arm64
-            ./release-assets/checksums.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+            ./release-assets/checksums.txt 
