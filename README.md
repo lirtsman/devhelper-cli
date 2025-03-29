@@ -298,4 +298,55 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - The Shield team for their support and contributions
 - The Go community for their excellent tools and libraries
-- All contributors who have helped make this project better 
+- All contributors who have helped make this project better
+
+## Troubleshooting
+
+### CI/CD Pipeline Issues
+
+#### Tar Extraction Failures
+
+If you encounter errors like:
+```
+Failed to restore: "/usr/bin/tar" failed with error: The process '/usr/bin/tar' failed with exit code 2
+```
+
+This typically indicates an issue with archive extraction in the pipeline. Common fixes include:
+
+1. **Check archive integrity**: Ensure the source archive isn't corrupted during upload
+2. **Verify storage permissions**: Ensure the CI runner has proper permissions to read/write to storage
+3. **Check disk space**: Make sure the runner has sufficient disk space for extraction
+4. **Examine CI cache**: Try clearing the CI cache, as cached archives might be corrupted
+
+#### Format Workflow Specific Issues
+
+If you see this error in the Format workflow:
+
+```
+Annotations
+1 warning
+Format
+Failed to restore: "/usr/bin/tar" failed with error: The process '/usr/bin/tar' failed with exit code 2
+```
+
+This is likely related to Go's module cache. To fix this:
+
+1. **Disable Go caching in the Format workflow**:
+   - Edit `.github/workflows/format.yml`
+   - Change the `setup-go` action configuration:
+   ```yaml
+   - name: Set up Go
+     uses: actions/setup-go@v4
+     with:
+       go-version: '1.21'
+       cache: false  # Change from true to false
+   ```
+
+2. **Alternative: Update the Format workflow to use a newer actions/setup-go version**:
+   ```yaml
+   - name: Set up Go
+     uses: actions/setup-go@v4
+     with:
+       go-version: '1.21'
+       cache-dependency-path: go.sum
+   ``` 
