@@ -1,0 +1,10 @@
+# Correctly detect Go files
+*.go linguist-language=Go
+
+# Mark the generated coverage files as generated
+coverage/* linguist-generated=true
+coverage.html linguist-generated=true
+
+# Exclude documentation from language stats
+*.md linguist-documentation=true
+docs/* linguist-documentation=true
