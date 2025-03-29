@@ -53,6 +53,13 @@ jobs:
           - goos: windows
             goarch: amd64
             output_name: devhelper-cli-windows-amd64.exe
+          # Adding ARM64 builds for broader platform support
+          - goos: linux
+            goarch: arm64
+            output_name: devhelper-cli-linux-arm64
+          - goos: darwin
+            goarch: arm64
+            output_name: devhelper-cli-darwin-arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -91,13 +98,17 @@ jobs:
           go build -v -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version.outputs.COMMIT }}" -o ${{ matrix.output_name }}
           # Make executable for Linux/macOS builds
           if [ "$GOOS" != "windows" ]; then chmod +x ${{ matrix.output_name }}; fi
+          # Generate SHA256 checksum
+          sha256sum ${{ matrix.output_name }} > ${{ matrix.output_name }}.sha256
           ls -la
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.output_name }}
-          path: ${{ matrix.output_name }}
+          path: |
+            ${{ matrix.output_name }}
+            ${{ matrix.output_name }}.sha256
           retention-days: 7
 
   release:
@@ -124,9 +135,43 @@ jobs:
           cp ./artifacts/devhelper-cli-linux-amd64/devhelper-cli-linux-amd64 ./release-assets/
           cp ./artifacts/devhelper-cli-darwin-amd64/devhelper-cli-darwin-amd64 ./release-assets/
           cp ./artifacts/devhelper-cli-windows-amd64.exe/devhelper-cli-windows-amd64.exe ./release-assets/
+          
+          # Copy ARM64 binaries if they exist
+          if [ -d "./artifacts/devhelper-cli-linux-arm64" ]; then
+            cp ./artifacts/devhelper-cli-linux-arm64/devhelper-cli-linux-arm64 ./release-assets/
+          fi
+          if [ -d "./artifacts/devhelper-cli-darwin-arm64" ]; then
+            cp ./artifacts/devhelper-cli-darwin-arm64/devhelper-cli-darwin-arm64 ./release-assets/
+          fi
+          
+          # Copy SHA256 files
+          cp ./artifacts/devhelper-cli-linux-amd64/devhelper-cli-linux-amd64.sha256 ./release-assets/
+          cp ./artifacts/devhelper-cli-darwin-amd64/devhelper-cli-darwin-amd64.sha256 ./release-assets/
+          cp ./artifacts/devhelper-cli-windows-amd64.exe/devhelper-cli-windows-amd64.exe.sha256 ./release-assets/
+          
+          # Copy ARM64 SHA256 files if they exist
+          if [ -f "./artifacts/devhelper-cli-linux-arm64/devhelper-cli-linux-arm64.sha256" ]; then
+            cp ./artifacts/devhelper-cli-linux-arm64/devhelper-cli-linux-arm64.sha256 ./release-assets/
+          fi
+          if [ -f "./artifacts/devhelper-cli-darwin-arm64/devhelper-cli-darwin-arm64.sha256" ]; then
+            cp ./artifacts/devhelper-cli-darwin-arm64/devhelper-cli-darwin-arm64.sha256 ./release-assets/
+          fi
+          
+          # Make files executable
           chmod +x ./release-assets/devhelper-cli-linux-amd64
           chmod +x ./release-assets/devhelper-cli-darwin-amd64
-          ls -la ./release-assets
+          if [ -f "./release-assets/devhelper-cli-linux-arm64" ]; then
+            chmod +x ./release-assets/devhelper-cli-linux-arm64
+          fi
+          if [ -f "./release-assets/devhelper-cli-darwin-arm64" ]; then
+            chmod +x ./release-assets/devhelper-cli-darwin-arm64
+          fi
+          
+          # Create a checksums.txt file for easier reference
+          cd ./release-assets
+          echo "# SHA256 Checksums for DevHelper CLI ${{ github.ref_name }}" > checksums.txt
+          cat *.sha256 >> checksums.txt
+          ls -la
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -139,26 +184,43 @@ jobs:
             
             ## Installation Instructions
             
-            ### Linux
+            ### Using Homebrew (macOS/Linux)
+            ```bash
+            # Add the tap (first time only)
+            brew tap lirtsman/devhelper-cli
+            
+            # Install the CLI
+            brew install devhelper-cli
+            ```
+            
+            ### Manual Installation
+            
+            #### Linux
             ```bash
             curl -L https://github.com/lirtsman/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-linux-amd64 -o /usr/local/bin/devhelper-cli
             chmod +x /usr/local/bin/devhelper-cli
             ```
             
-            ### macOS
+            #### macOS
             ```bash
             curl -L https://github.com/lirtsman/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-darwin-amd64 -o /usr/local/bin/devhelper-cli
             chmod +x /usr/local/bin/devhelper-cli
             ```
             
-            ### Windows
+            #### Windows
             Download the `devhelper-cli-windows-amd64.exe` file and run it from the command line.
             
             ## Changes
             Please refer to [CHANGELOG.md](https://github.com/lirtsman/devhelper-cli/blob/main/CHANGELOG.md) for details.
+            
+            ## SHA256 Checksums
+            SHA256 checksums for all binaries are provided in the checksums.txt file attached to this release.
           files: |
             ./release-assets/devhelper-cli-linux-amd64
             ./release-assets/devhelper-cli-darwin-amd64
             ./release-assets/devhelper-cli-windows-amd64.exe
+            ./release-assets/devhelper-cli-linux-arm64
+            ./release-assets/devhelper-cli-darwin-arm64
+            ./release-assets/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
