@@ -127,6 +127,87 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Generate changelog entries
+      - name: Generate CHANGELOG entries
+        id: changelog
+        run: |
+          # Get current and previous tags
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -A 1 $CURRENT_TAG | tail -n 1)
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            # If this is the first tag, get all commits
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)" $CURRENT_TAG)
+          else
+            # Get commits between tags
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)" $PREVIOUS_TAG..$CURRENT_TAG)
+          fi
+          
+          # Save changelog to a temporary file
+          echo "$CHANGELOG" > /tmp/new_changes.txt
+          
+          # Create formatted changelog entry with date
+          RELEASE_DATE=$(date +"%Y-%m-%d")
+          CHANGELOG_ENTRY="## [$CURRENT_TAG] - $RELEASE_DATE\n\n$CHANGELOG\n\n"
+          echo "CHANGELOG_ENTRY<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$CHANGELOG_ENTRY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Update CHANGELOG.md
+      - name: Update CHANGELOG.md
+        run: |
+          # Check if CHANGELOG.md exists
+          if [ ! -f "CHANGELOG.md" ]; then
+            # Create new CHANGELOG.md if it doesn't exist
+            echo "# Changelog" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "All notable changes to this project will be documented in this file." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+          fi
+          
+          # Create a new changelog entry
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          RELEASE_DATE=$(date +"%Y-%m-%d")
+          
+          # Get commits since the previous tag to build the changelog
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -A 1 $CURRENT_TAG | tail -n 1)
+          
+          # Generate the changelog entry
+          echo -e "## [$CURRENT_TAG] - $RELEASE_DATE\n" > /tmp/changelog_entry.md
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            git log --pretty=format:"* %s (%h)" $CURRENT_TAG >> /tmp/changelog_entry.md
+          else
+            git log --pretty=format:"* %s (%h)" $PREVIOUS_TAG..$CURRENT_TAG >> /tmp/changelog_entry.md
+          fi
+          
+          echo -e "\n" >> /tmp/changelog_entry.md
+          
+          # Insert the new entry at the top of the changelog (after the header)
+          sed -i '4r /tmp/changelog_entry.md' CHANGELOG.md
+          
+          # Set up auth for pushing
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          
+          # Add the CHANGELOG.md to git
+          git add CHANGELOG.md
+          
+          # Commit changes if there are any
+          if git diff --staged --quiet; then
+            echo "No changes to CHANGELOG.md"
+          else
+            git commit -m "Update CHANGELOG.md for ${{ github.ref_name }}"
+            
+            # Set the remote URL with the token for authentication
+            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+            
+            # Push changes to the main branch
+            git push origin main
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
