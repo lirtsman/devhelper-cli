@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	yamlv3 "gopkg.in/yaml.v3"
 )
 
 // LocalEnvConfig represents the configuration for the local environment
@@ -183,7 +183,7 @@ This command should be run once before using other localenv commands.`,
 		}
 
 		// Write configuration to file
-		configData, err := yaml.Marshal(config)
+		configData, err := yamlv3.Marshal(config)
 		if err != nil {
 			fmt.Printf("❌ Failed to generate configuration: %v\n", err)
 			return

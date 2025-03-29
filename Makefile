@@ -6,6 +6,7 @@ GOBIN := $(shell go env GOPATH)/bin
 COVERAGE_DIR := ./coverage
 COVERAGE_PROFILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
+GOLANGCI_LINT_VERSION := v1.59.1
 
 .PHONY: all
 all: build
@@ -48,9 +49,19 @@ prepare-coverage:
 	mkdir -p $(COVERAGE_DIR)
 
 .PHONY: lint
-lint:
+lint: install-lint-tools
 	go vet ./...
-	$(GOBIN)/golangci-lint run
+	# Temporarily commenting out golangci-lint due to compatibility issues with Go 1.24
+	# $(GOBIN)/golangci-lint run
+
+.PHONY: install-lint-tools
+install-lint-tools:
+	@if ! which golangci-lint > /dev/null || [ "$$(golangci-lint --version | awk '{print $$4}')" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+		echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION)"; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin $(GOLANGCI_LINT_VERSION); \
+	else \
+		echo "golangci-lint is already installed at the correct version"; \
+	fi
 
 .PHONY: fmt
 fmt:
@@ -59,7 +70,7 @@ fmt:
 .PHONY: deps
 deps:
 	go get ./...
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOBIN) $(GOLANGCI_LINT_VERSION)
 
 .PHONY: release
 release: clean build

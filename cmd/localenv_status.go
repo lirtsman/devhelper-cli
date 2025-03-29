@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	yamlv3 "gopkg.in/yaml.v3"
 )
 
 // statusCmd represents the status command for localenv
@@ -60,7 +60,7 @@ environment are running, including:
 			// Read and parse configuration
 			configData, err := os.ReadFile(configPath)
 			if err == nil {
-				err = yaml.Unmarshal(configData, &config)
+				err = yamlv3.Unmarshal(configData, &config)
 				if err == nil {
 					configLoaded = true
 					fmt.Printf("✅ Loaded configuration from %s\n", configPath)

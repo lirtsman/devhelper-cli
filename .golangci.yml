@@ -1,0 +1,71 @@
+# Options for analysis running
+run:
+  # Timeout for analysis, e.g. 30s, 5m. Default is 1m.
+  timeout: 5m
+  # Use go version 1.21 for analysis
+  go: '1.21'
+  # Allow using parallel runners
+  allow-parallel-runners: true
+
+# Output configuration options
+output:
+  # Format: colored-line-number|line-number|json|tab|checkstyle|code-climate
+  format: colored-line-number
+  
+  # Print lines of code with issues. Default is true.
+  print-issued-lines: true
+  
+  # Print linter name in the end of issue text. Default is true.
+  print-linter-name: true
+
+# Linters settings
+linters-settings:
+  errcheck:
+    # Report about not checking of errors in type assertions: `a := b.(MyStruct)`.
+    check-type-assertions: true
+    
+  gocyclo:
+    # Minimal code complexity to report.
+    min-complexity: 15
+    
+  goimports:
+    # Put imports beginning with prefix after 3rd-party packages.
+    local-prefixes: github.com/lirtsman/devhelper-cli
+    
+  govet:
+    # Report about shadowed variables.
+    check-shadowing: true
+    
+  misspell:
+    # Correct spellings using locale preferences for US or UK.
+    locale: US
+
+# Enable specific linters
+linters:
+  enable:
+    - errcheck     # Detect unchecked errors
+    - gocyclo      # Detect cyclomatic complexity
+    - gofmt        # Check if code is formatted
+    - goimports    # Check imports order
+    - gosimple     # Check for code simplification
+    - govet        # Reports suspicious constructs
+    - ineffassign  # Detects unused assignments
+    - misspell     # Detect commonly misspelled words
+    - staticcheck  # Go static analysis
+    - typecheck    # Go type checking
+    - unused       # Detect unused constants, variables, functions and types
+    - whitespace   # Detect newlines and spaces around function definitions
+
+# Issues configuration
+issues:
+  # Maximum issues count per one linter.
+  max-issues-per-linter: 0
+  # Maximum count of issues with the same text.
+  max-same-issues: 0
+  # Exclude specific issues
+  exclude:
+    - "comment on exported"
+  exclude-rules:
+    - linters:
+        - golint
+      text: "comment on exported" 

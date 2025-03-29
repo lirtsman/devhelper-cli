@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	yamlv3 "gopkg.in/yaml.v3"
 )
 
 // Configuration cache to detect changes between runs
@@ -93,7 +93,7 @@ func loadConfigCache() ConfigCache {
 		// Cache file exists, try to read it
 		data, err := os.ReadFile(cacheFile)
 		if err == nil {
-			yaml.Unmarshal(data, &cache)
+			yamlv3.Unmarshal(data, &cache)
 		}
 	}
 
@@ -110,7 +110,7 @@ func saveConfigCache(cache ConfigCache) {
 		os.MkdirAll(cacheDir, 0755)
 	}
 
-	data, err := yaml.Marshal(cache)
+	data, err := yamlv3.Marshal(cache)
 	if err == nil {
 		os.WriteFile(cacheFile, data, 0644)
 	}
@@ -171,7 +171,7 @@ in the correct order.`,
 			// Read and parse configuration
 			configData, err := os.ReadFile(configPath)
 			if err == nil {
-				err = yaml.Unmarshal(configData, &config)
+				err = yamlv3.Unmarshal(configData, &config)
 				if err == nil {
 					configLoaded = true
 					fmt.Printf("✅ Loaded configuration from %s\n", configPath)

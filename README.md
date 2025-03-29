@@ -34,6 +34,8 @@ You can also download pre-built binaries from the [GitHub Releases page](https:/
 
 ## Development
 
+For detailed information about the development process, environment setup, and known issues, please refer to the [DEVELOPMENT.md](DEVELOPMENT.md) file.
+
 ### Testing
 
 DevHelper CLI uses Go's built-in testing framework with additional support from:
@@ -69,7 +71,7 @@ This project uses GitHub Actions for continuous integration and delivery:
 - **CI Workflow**: Runs on all pull requests to `main` and `develop` branches to ensure code quality
   - Builds the application on multiple platforms
   - Runs all tests with coverage reporting
-  - Performs code linting
+  - Performs code linting using `go vet` (note: full linting with golangci-lint is temporarily disabled due to compatibility issues with Go 1.24+)
 
 - **Release Workflow**: Triggered when a tag is pushed
   - Creates a GitHub Release

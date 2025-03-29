@@ -24,8 +24,15 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Test
+      - name: Run tests
         run: make test
+
+      - name: Run linting
+        run: |
+          make install-lint-tools
+          go vet ./...
+          # Temporarily commenting out golangci-lint due to compatibility issues with Go 1.24
+          # golangci-lint run
 
   release:
     name: Create Release
