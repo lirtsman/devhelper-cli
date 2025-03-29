@@ -37,4 +37,10 @@ Thumbs.db
 # Local configuration files
 .env
 *.local.yaml
-*.local.yml 
+*.local.yml
+
+# Homebrew tap repository
+/homebrew-devhelper-cli/
+
+# Other temporary files that might have been created
+/source.tar.gz 
