@@ -109,9 +109,43 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Build
+      # Get version for Windows
+      - name: Get version (Windows)
+        if: runner.os == 'Windows'
+        id: get_version_windows
+        shell: bash
         run: |
-          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=$(git describe --tags --always --dirty 2>/dev/null || echo 'v0.1.0') -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=$(date -u +"%Y-%m-%dT%H:%M:%SZ") -X github.com/lirtsman/devhelper-cli/cmd.Commit=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')" -o ${{ matrix.output_name }}
+          VERSION=$(git describe --tags --always --dirty 2>nul || echo "v0.1.0")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          CURRENT_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "BUILD_DATE=$CURRENT_DATE" >> $GITHUB_OUTPUT
+          COMMIT=$(git rev-parse HEAD || echo "unknown")
+          echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
+
+      # Get version for Unix-like systems
+      - name: Get version (Unix)
+        if: runner.os != 'Windows'
+        id: get_version_unix
+        shell: bash
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "v0.1.0")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          CURRENT_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "BUILD_DATE=$CURRENT_DATE" >> $GITHUB_OUTPUT
+          COMMIT=$(git rev-parse HEAD || echo "unknown")
+          echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
+
+      # Build for Windows
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version_windows.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version_windows.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version_windows.outputs.COMMIT }}" -o ${{ matrix.output_name }}
+
+      # Build for Unix-like systems
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version_unix.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version_unix.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version_unix.outputs.COMMIT }}" -o ${{ matrix.output_name }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

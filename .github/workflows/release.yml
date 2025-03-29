@@ -73,8 +73,14 @@ jobs:
 
       - name: Get tag version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
         shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          CURRENT_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          echo "BUILD_DATE=$CURRENT_DATE" >> $GITHUB_OUTPUT
+          COMMIT=$(git rev-parse HEAD || echo "unknown")
+          echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
         run: go mod download
@@ -84,7 +90,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X github.com/lirtsman/devhelper-cli/cmd.Commit=$(git rev-parse HEAD)" -o ${{ matrix.output_name }}
+          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version.outputs.COMMIT }}" -o ${{ matrix.output_name }}
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v1
