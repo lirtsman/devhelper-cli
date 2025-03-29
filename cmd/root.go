@@ -28,9 +28,9 @@ var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "shielddev-cli",
+	Use:   "devhelper-cli",
 	Short: "A CLI tool for ShieldDev operations",
-	Long: `shielddev-cli is a comprehensive command line interface tool
+	Long: `devhelper-cli is a comprehensive command line interface tool
 designed to streamline and automate ShieldDev operations.
 
 This tool provides various commands to help developers and operators
@@ -55,7 +55,7 @@ func init() {
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.shielddev-cli.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.devhelper-cli.yaml)")
 
 	// Example of a flag that can be used from any subcommand
 	rootCmd.PersistentFlags().Bool("verbose", false, "Enable verbose output")
@@ -75,10 +75,10 @@ func initConfig() {
 			os.Exit(1)
 		}
 
-		// Search config in home directory with name ".shielddev-cli" (without extension).
+		// Search config in home directory with name ".devhelper-cli" (without extension).
 		viper.AddConfigPath(home)
 		viper.SetConfigType("yaml")
-		viper.SetConfigName(".shielddev-cli")
+		viper.SetConfigName(".devhelper-cli")
 
 		// Also look for config in the current directory
 		cwd, err := os.Getwd()

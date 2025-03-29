@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"bitbucket.org/shielddev/shielddev-cli/internal/test"
+	"github.com/lirtsman/devhelper-cli/internal/test"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,7 +19,7 @@ func TestLocalenvStartCommand(t *testing.T) {
 		assert.NotNil(t, startCmd.Flags().Lookup("skip-dapr"), "skip-dapr flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("skip-temporal"), "skip-temporal flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("config"), "config flag should exist")
-		assert.NotNil(t, startCmd.Flags().Lookup("wait"), "wait flag should exist")
+		assert.NotNil(t, startCmd.Flags().Lookup("stream-logs"), "stream-logs flag should exist")
 	})
 
 	t.Run("Start command should be registered with parent", func(t *testing.T) {
@@ -73,10 +73,6 @@ func TestLocalenvStartCommand(t *testing.T) {
 		assert.NotNil(t, configFlag, "config flag should exist")
 		assert.Equal(t, "", configFlag.DefValue, "config flag should default to empty string")
 
-		waitFlag := startCmd.Flags().Lookup("wait")
-		assert.NotNil(t, waitFlag, "wait flag should exist")
-		assert.Equal(t, "false", waitFlag.DefValue, "wait flag should default to false")
-
 		skipDaprFlag := startCmd.Flags().Lookup("skip-dapr")
 		assert.NotNil(t, skipDaprFlag, "skip-dapr flag should exist")
 		assert.Equal(t, "false", skipDaprFlag.DefValue, "skip-dapr flag should default to false")
@@ -99,5 +95,18 @@ func TestLocalenvStartCommand(t *testing.T) {
 		// but we can verify the flag is properly registered
 		assert.Equal(t, "skip-dapr-dashboard", flag.Name, "Flag name should be skip-dapr-dashboard")
 		assert.Equal(t, "Skip starting Dapr Dashboard", flag.Usage, "Flag usage should mention skipping Dapr Dashboard")
+	})
+
+	t.Run("Start command should have stream-logs flag", func(t *testing.T) {
+		// Verify that the stream-logs flag exists and can be retrieved
+		flag := startCmd.Flags().Lookup("stream-logs")
+		assert.NotNil(t, flag, "stream-logs flag should exist")
+
+		// Check the flag properties
+		assert.Equal(t, "stream-logs", flag.Name, "Flag name should be stream-logs")
+		assert.Equal(t, "Stream Temporal server logs to terminal", flag.Usage, "Flag usage should mention streaming logs")
+		assert.Equal(t, "false", flag.DefValue, "stream-logs flag should default to false")
+
+		// The actual streaming behavior would require integration tests
 	})
 }

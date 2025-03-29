@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,93 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
+
+// Configuration cache to detect changes between runs
+type ConfigCache struct {
+	DaprDashboardPort int
+	TemporalUIPort    int
+	TemporalGRPCPort  int
+	TemporalNamespace string
+}
+
+// Returns true if current config differs from previous state
+func hasConfigChanged(config LocalEnvConfig, currentCache ConfigCache) (bool, ConfigCache, []string) {
+	changes := []string{}
+	newCache := ConfigCache{
+		DaprDashboardPort: config.Dapr.DashboardPort,
+		TemporalUIPort:    config.Temporal.UIPort,
+		TemporalGRPCPort:  config.Temporal.GRPCPort,
+		TemporalNamespace: config.Temporal.Namespace,
+	}
+
+	hasChanges := false
+
+	// Check for dashboard port change
+	if currentCache.DaprDashboardPort != 0 &&
+		currentCache.DaprDashboardPort != config.Dapr.DashboardPort {
+		changes = append(changes, fmt.Sprintf("Dapr Dashboard port changed: %d → %d",
+			currentCache.DaprDashboardPort, config.Dapr.DashboardPort))
+		hasChanges = true
+	}
+
+	// Check for Temporal UI port change
+	if currentCache.TemporalUIPort != 0 &&
+		currentCache.TemporalUIPort != config.Temporal.UIPort {
+		changes = append(changes, fmt.Sprintf("Temporal UI port changed: %d → %d",
+			currentCache.TemporalUIPort, config.Temporal.UIPort))
+		hasChanges = true
+	}
+
+	// Check for Temporal GRPC port change
+	if currentCache.TemporalGRPCPort != 0 &&
+		currentCache.TemporalGRPCPort != config.Temporal.GRPCPort {
+		changes = append(changes, fmt.Sprintf("Temporal GRPC port changed: %d → %d",
+			currentCache.TemporalGRPCPort, config.Temporal.GRPCPort))
+		hasChanges = true
+	}
+
+	// Check for Temporal namespace change
+	if currentCache.TemporalNamespace != "" &&
+		currentCache.TemporalNamespace != config.Temporal.Namespace {
+		changes = append(changes, fmt.Sprintf("Temporal namespace changed: %s → %s",
+			currentCache.TemporalNamespace, config.Temporal.Namespace))
+		hasChanges = true
+	}
+
+	return hasChanges, newCache, changes
+}
+
+// Reads last used configuration from a cache file
+func loadConfigCache() ConfigCache {
+	cache := ConfigCache{}
+	cacheFile := filepath.Join(os.Getenv("HOME"), ".config", "devhelper-cli", "config-cache.yaml")
+
+	if _, err := os.Stat(cacheFile); err == nil {
+		// Cache file exists, try to read it
+		data, err := os.ReadFile(cacheFile)
+		if err == nil {
+			yaml.Unmarshal(data, &cache)
+		}
+	}
+
+	return cache
+}
+
+// Saves current configuration to a cache file for future comparison
+func saveConfigCache(cache ConfigCache) {
+	cacheDir := filepath.Join(os.Getenv("HOME"), ".config", "devhelper-cli")
+	cacheFile := filepath.Join(cacheDir, "config-cache.yaml")
+
+	// Create directory if it doesn't exist
+	if _, err := os.Stat(cacheDir); os.IsNotExist(err) {
+		os.MkdirAll(cacheDir, 0755)
+	}
+
+	data, err := yaml.Marshal(cache)
+	if err == nil {
+		os.WriteFile(cacheFile, data, 0644)
+	}
+}
 
 // Components to be started
 type Component struct {
@@ -66,6 +154,8 @@ in the correct order.`,
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
 		skipDaprDashboard, _ := cmd.Flags().GetBool("skip-dapr-dashboard")
 		configPath, _ := cmd.Flags().GetString("config")
+		forceRestart, _ := cmd.Flags().GetBool("force-restart")
+		streamLogs, _ := cmd.Flags().GetBool("stream-logs")
 
 		// If no config path is provided, look for localenv.yaml in current directory
 		if configPath == "" {
@@ -93,7 +183,18 @@ in the correct order.`,
 			}
 		} else if verbose {
 			fmt.Printf("⚠️ Configuration file not found at %s\n", configPath)
-			fmt.Println("   Run 'shielddev-cli localenv init' to create a configuration")
+			fmt.Println("   Run 'devhelper-cli localenv init' to create a configuration")
+		}
+
+		// Load previous configuration cache
+		configCache := loadConfigCache()
+
+		// Check if configuration has changed
+		configChanged, newCache, changes := hasConfigChanged(config, configCache)
+
+		// If this is a first run (no previous cache), initialize the config cache
+		if configCache.DaprDashboardPort == 0 && configCache.TemporalUIPort == 0 {
+			saveConfigCache(newCache)
 		}
 
 		// Override config with command line flags
@@ -114,7 +215,16 @@ in the correct order.`,
 				if verbose {
 					fmt.Printf("Temporal server check failed: %v\n", err)
 				}
-				return false
+
+				// Try with explicit server address as fallback
+				checkCmdWithAddress := exec.Command("temporal", "operator", "--address", "localhost:7233", "namespace", "list")
+				if err := checkCmdWithAddress.Run(); err != nil {
+					if verbose {
+						fmt.Printf("Temporal server check with explicit address failed: %v\n", err)
+					}
+					return false
+				}
+				return true
 			}
 			return true
 		}
@@ -266,7 +376,7 @@ in the correct order.`,
 
 		if !allInstalled {
 			fmt.Println("\nSome required components are missing. Please install them and try again.")
-			fmt.Println("Run 'shielddev-cli localenv init' to check required dependencies and create a configuration.")
+			fmt.Println("Run 'devhelper-cli localenv init' to check required dependencies and create a configuration.")
 			os.Exit(1)
 		}
 
@@ -378,11 +488,86 @@ in the correct order.`,
 
 			// Special handling for Dapr Dashboard
 			if comp.Name == "DaprDashboard" {
+				// First check if the desired port is already in use
+				dashboardPort := config.Dapr.DashboardPort
+
+				// Get dashboard PID if it's running
+				dashboardPID := getDaprDashboardPID()
+
+				// Determine if a restart is required
+				restartRequired := forceRestart ||
+					(configChanged && dashboardPID != "" &&
+						(configCache.DaprDashboardPort != dashboardPort))
+
+				// More robust process termination and port cleanup
+				if dashboardPID != "" {
+					if restartRequired {
+						fmt.Printf("Detected configuration change: Dashboard port changed (%d → %d)\n",
+							configCache.DaprDashboardPort, dashboardPort)
+						fmt.Println("Stopping existing Dapr Dashboard...")
+
+						// First try graceful termination with SIGTERM
+						killCmd := exec.Command("kill", dashboardPID)
+						if err := killCmd.Run(); err != nil {
+							fmt.Printf("Warning: Failed to stop Dapr Dashboard gracefully: %v\n", err)
+
+							// If graceful termination fails, try force kill (SIGKILL)
+							forceKillCmd := exec.Command("kill", "-9", dashboardPID)
+							if err := forceKillCmd.Run(); err != nil {
+								fmt.Printf("Error: Failed to force kill Dapr Dashboard: %v\n", err)
+							}
+						}
+
+						// Give more time for the process to fully terminate
+						time.Sleep(2 * time.Second)
+
+						// Check if port is still in use by anything
+						stillInUse := isPortInUse(dashboardPort)
+						if stillInUse {
+							// Try to find any process using this port and kill it
+							cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", dashboardPort), "-t")
+							output, err := cmd.Output()
+							if err == nil && len(output) > 0 {
+								pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+								for _, pid := range pids {
+									fmt.Printf("Forcefully terminating process %s that is still using port %d\n", pid, dashboardPort)
+									exec.Command("kill", "-9", pid).Run()
+								}
+								time.Sleep(1 * time.Second)
+							}
+						}
+
+						// Final verification
+						stillInUse = isPortInUse(dashboardPort)
+						if stillInUse {
+							fmt.Printf("❌ Port %d is still in use after attempts to free it\n", dashboardPort)
+							fmt.Printf("   Try a different port or manually kill the process: lsof -i :%d -t | xargs kill -9\n", dashboardPort)
+							fmt.Println("   Updating localenv.yaml with a new port is recommended.")
+							fmt.Printf("   For example: dapr.dashboardPort: %d\n", dashboardPort+1)
+							continue
+						}
+					} else {
+						// Dashboard is already running with current configuration
+						dashboardURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
+						fmt.Printf("✅ Dapr Dashboard already running at %s\n", dashboardURL)
+						components[i].IsRunning = true
+						continue
+					}
+				}
+
+				// Check if the port is in use by something else
+				if isPortInUse(dashboardPort) {
+					fmt.Printf("❌ Port %d is already in use by another process\n", dashboardPort)
+					fmt.Printf("   Run 'lsof -i :%d' to see which process is using it\n", dashboardPort)
+					fmt.Println("   Update the dashboardPort in localenv.yaml to a different value and try again.")
+					fmt.Printf("   For example: dapr.dashboardPort: %d\n", dashboardPort+1)
+					continue
+				}
+
 				// For Dapr Dashboard, we need special handling to make sure it stays running
 				fmt.Println("Starting DaprDashboard in background mode...")
 
-				// Try the configured port first
-				dashboardPort := config.Dapr.DashboardPort
+				// Start the dashboard
 				dashboardStarted := tryStartDashboard(comp.Command, dashboardPort, nil)
 
 				if dashboardStarted {
@@ -392,19 +577,123 @@ in the correct order.`,
 				} else {
 					fmt.Printf("❌ Failed to start Dapr Dashboard on port %d\n", dashboardPort)
 					fmt.Println("   This could be because the port is already in use.")
+					fmt.Printf("   You can check which process is using the port with: lsof -i :%d\n", dashboardPort)
 					fmt.Println("   Update the dashboardPort in localenv.yaml to a different value and try again.")
-					fmt.Println("   For example: dapr.dashboardPort: 8081")
+					fmt.Printf("   For example: dapr.dashboardPort: %d\n", dashboardPort+1)
 				}
 				continue
 			}
 
 			// Special handling for Temporal server
 			if comp.Name == "Temporal" {
-				// Check if Temporal is already running
-				if checkTemporalServerRunning() {
-					fmt.Println("✅ Temporal is already running, skipping startup.")
-					components[i].IsRunning = true
-					continue
+				// Get Temporal configuration
+				temporalUIPort := config.Temporal.UIPort
+				temporalGRPCPort := config.Temporal.GRPCPort
+				temporalNamespace := config.Temporal.Namespace
+
+				// Check if Temporal is already running and if there are config changes
+				temporalRunning := checkTemporalServerRunning()
+
+				if temporalRunning {
+					// Temporal is already running
+					restartRequired := forceRestart || (configChanged &&
+						(configCache.TemporalUIPort != temporalUIPort ||
+							configCache.TemporalGRPCPort != temporalGRPCPort ||
+							configCache.TemporalNamespace != temporalNamespace))
+
+					if !restartRequired {
+						fmt.Println("✅ Temporal is already running with current configuration, skipping startup.")
+						components[i].IsRunning = true
+						continue
+					}
+
+					// If we need to restart, kill any existing Temporal server process
+					fmt.Println("Detected configuration changes in Temporal settings:")
+					for _, change := range changes {
+						if strings.Contains(change, "Temporal") {
+							fmt.Printf("- %s\n", change)
+						}
+					}
+
+					fmt.Println("Stopping existing Temporal server...")
+					// Find and kill the Temporal process
+					found := false
+					// First look for the main temporal server process
+					cmd := exec.Command("ps", "-ef")
+					output, err := cmd.CombinedOutput()
+					if err == nil {
+						outputLines := strings.Split(string(output), "\n")
+						for _, line := range outputLines {
+							if strings.Contains(line, "temporal server start-dev") && !strings.Contains(line, "grep") {
+								fields := strings.Fields(line)
+								if len(fields) >= 2 {
+									pid := fields[1]
+									fmt.Printf("Stopping Temporal server process (PID: %s)...\n", pid)
+									killCmd := exec.Command("kill", pid)
+									killCmd.Run()
+									found = true
+								}
+							}
+						}
+					}
+
+					// Also check for any processes on the Temporal ports
+					if !found || isPortInUse(temporalUIPort) || isPortInUse(temporalGRPCPort) {
+						fmt.Println("Looking for processes using Temporal ports...")
+
+						// Check UI port
+						uiPortCmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", temporalUIPort), "-t")
+						uiPortOutput, _ := uiPortCmd.Output()
+						if len(uiPortOutput) > 0 {
+							pids := strings.Split(strings.TrimSpace(string(uiPortOutput)), "\n")
+							for _, pid := range pids {
+								fmt.Printf("Forcefully terminating process %s using Temporal UI port %d\n", pid, temporalUIPort)
+								exec.Command("kill", "-9", pid).Run()
+							}
+						}
+
+						// Check GRPC port
+						grpcPortCmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", temporalGRPCPort), "-t")
+						grpcPortOutput, _ := grpcPortCmd.Output()
+						if len(grpcPortOutput) > 0 {
+							pids := strings.Split(strings.TrimSpace(string(grpcPortOutput)), "\n")
+							for _, pid := range pids {
+								fmt.Printf("Forcefully terminating process %s using Temporal GRPC port %d\n", pid, temporalGRPCPort)
+								exec.Command("kill", "-9", pid).Run()
+							}
+						}
+					}
+
+					// Give more time for processes to fully terminate
+					time.Sleep(3 * time.Second)
+
+					// Final verification
+					if isPortInUse(temporalUIPort) {
+						fmt.Printf("❌ Temporal UI port %d is still in use after attempts to free it\n", temporalUIPort)
+						fmt.Printf("   Try manually killing the process: lsof -i :%d -t | xargs kill -9\n", temporalUIPort)
+						continue
+					}
+
+					if isPortInUse(temporalGRPCPort) {
+						fmt.Printf("❌ Temporal GRPC port %d is still in use after attempts to free it\n", temporalGRPCPort)
+						fmt.Printf("   Try manually killing the process: lsof -i :%d -t | xargs kill -9\n", temporalGRPCPort)
+						continue
+					}
+				} else {
+					// Temporal is not running, check if ports are available
+					if isPortInUse(temporalUIPort) {
+						fmt.Printf("❌ Temporal UI port %d is already in use by another process\n", temporalUIPort)
+						fmt.Printf("   Run 'lsof -i :%d' to see which process is using it\n", temporalUIPort)
+						fmt.Println("   Update the UIPort in localenv.yaml to a different value and try again.")
+						continue
+					}
+
+					if isPortInUse(temporalGRPCPort) {
+						fmt.Printf("❌ Temporal GRPC port %d is already in use by another process\n", temporalGRPCPort)
+						fmt.Printf("   Run 'lsof -i :%d' to see which process is using it\n", temporalGRPCPort)
+						fmt.Println("   Update the GRPCPort in localenv.yaml to a different value and try again.")
+						continue
+					}
 				}
 
 				// Start Temporal server in background
@@ -412,17 +701,91 @@ in the correct order.`,
 
 				// Prepare command with namespace flag if configured
 				var temporalCmd *exec.Cmd
-				if configLoaded && config.Components.Temporal && config.Temporal.Namespace != "" && config.Temporal.Namespace != "default" {
-					fmt.Printf("Configuring Temporal with namespace: %s\n", config.Temporal.Namespace)
-					temporalCmd = exec.Command("temporal", "server", "start-dev", "--namespace", config.Temporal.Namespace)
+				if configLoaded && config.Components.Temporal && temporalNamespace != "" && temporalNamespace != "default" {
+					fmt.Printf("Configuring Temporal with namespace: %s\n", temporalNamespace)
+					// Use a more efficient approach - create the namespace first if needed, then start server
+					// This avoids potential issues with the namespace not being created properly during startup
+
+					// First check if the namespace exists
+					namespaceCheckCmd := exec.Command("temporal", "operator", "namespace", "describe", temporalNamespace)
+					if err := namespaceCheckCmd.Run(); err != nil {
+						// Namespace doesn't exist, create it first
+						fmt.Printf("Creating Temporal namespace '%s'...\n", temporalNamespace)
+						createCmd := exec.Command("temporal", "operator", "namespace", "create", temporalNamespace)
+						if output, err := createCmd.CombinedOutput(); err != nil {
+							fmt.Printf("❌ Failed to create namespace: %v\n", err)
+							if verbose {
+								fmt.Printf("Output: %s\n", string(output))
+							}
+						} else {
+							fmt.Printf("✅ Created Temporal namespace '%s'\n", temporalNamespace)
+						}
+					} else {
+						fmt.Printf("✅ Temporal namespace '%s' already exists\n", temporalNamespace)
+					}
+
+					// Start the server normally
+					temporalCmd = exec.Command("temporal", "server", "start-dev")
 				} else {
 					temporalCmd = exec.Command("temporal", "server", "start-dev")
 				}
 
-				// Redirect output to null device
-				devNull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-				temporalCmd.Stdout = devNull
-				temporalCmd.Stderr = devNull
+				// Create logs directory if it doesn't exist
+				logsDir := filepath.Join(os.Getenv("HOME"), ".logs", "devhelper-cli")
+				if _, err := os.Stat(logsDir); os.IsNotExist(err) {
+					os.MkdirAll(logsDir, 0755)
+				}
+
+				logFilePath := filepath.Join(logsDir, "temporal-server.log")
+
+				// Configure logs based on stream-logs flag
+				if streamLogs {
+					// In streaming mode, we'll use a MultiWriter to write to both terminal and file
+					logFile, err := os.OpenFile(
+						logFilePath,
+						os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+						0644,
+					)
+
+					if err == nil {
+						defer logFile.Close()
+
+						// Create a MultiWriter that sends output to both the terminal and log file
+						multiWriter := io.MultiWriter(os.Stdout, logFile)
+						temporalCmd.Stdout = multiWriter
+						temporalCmd.Stderr = multiWriter
+
+						fmt.Println("📃 Streaming Temporal server logs to terminal and writing to log file...")
+						fmt.Printf("📂 Log file: %s\n", logFilePath)
+					} else {
+						// Fallback to just terminal if can't create log file
+						fmt.Printf("⚠️ Warning: Could not create log file: %v\n", err)
+						fmt.Println("📃 Streaming Temporal server logs to terminal only...")
+						temporalCmd.Stdout = os.Stdout
+						temporalCmd.Stderr = os.Stderr
+					}
+				} else {
+					// Standard non-streaming mode, just write to log file
+					logFile, err := os.OpenFile(
+						logFilePath,
+						os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+						0644,
+					)
+
+					if err == nil {
+						defer logFile.Close()
+						temporalCmd.Stdout = logFile
+						temporalCmd.Stderr = logFile
+						fmt.Printf("📂 Temporal server logs will be written to %s\n", logFilePath)
+						fmt.Println("💡 Use --stream-logs flag to see logs in terminal")
+					} else {
+						// Fallback to null device if can't create log file
+						fmt.Printf("⚠️ Warning: Could not create log file: %v\n", err)
+						devNull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+						temporalCmd.Stdout = devNull
+						temporalCmd.Stderr = devNull
+					}
+				}
 
 				// Start Temporal server in background
 				if err := temporalCmd.Start(); err != nil {
@@ -431,12 +794,14 @@ in the correct order.`,
 				}
 
 				// Wait for Temporal to start up
-				fmt.Println("Waiting for Temporal server to start...")
+				fmt.Println("⏳ Waiting for Temporal server to start...")
 				time.Sleep(5 * time.Second)
 
-				// Verify Temporal is running
-				retries := 3
+				// Verify Temporal is running with increased retries and timeout
+				retries := 5                  // Increased from 3
+				retryDelay := 3 * time.Second // Increased from 2
 				temporalStarted := false
+
 				for retry := 0; retry < retries; retry++ {
 					if checkTemporalServerRunning() {
 						fmt.Println("✅ Temporal server started successfully.")
@@ -447,9 +812,10 @@ in the correct order.`,
 
 					if retry < retries-1 {
 						fmt.Println("Waiting for Temporal server to become available...")
-						time.Sleep(2 * time.Second)
+						time.Sleep(retryDelay)
 					} else {
 						fmt.Println("❌ Temporal server did not start properly.")
+						fmt.Println("   Check the logs at " + filepath.Join(logsDir, "temporal-server.log") + " for details.")
 					}
 				}
 
@@ -472,6 +838,9 @@ in the correct order.`,
 			os.Exit(1)
 		}
 
+		// Save current configuration for future comparison
+		saveConfigCache(newCache)
+
 		fmt.Println("\nAll required components are running successfully!")
 	},
 }
@@ -482,6 +851,7 @@ func init() {
 	startCmd.Flags().Bool("skip-dapr", false, "Skip starting Dapr")
 	startCmd.Flags().Bool("skip-temporal", false, "Skip starting Temporal")
 	startCmd.Flags().Bool("skip-dapr-dashboard", false, "Skip starting Dapr Dashboard")
-	startCmd.Flags().Bool("wait", false, "Wait for all components to start")
+	startCmd.Flags().Bool("force-restart", false, "Force restart of components even if already running")
 	startCmd.Flags().StringP("config", "c", "", "Path to localenv configuration file")
+	startCmd.Flags().Bool("stream-logs", false, "Stream Temporal server logs to terminal")
 }

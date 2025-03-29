@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -72,7 +73,7 @@ environment, including:
 			}
 		} else if verbose {
 			fmt.Printf("⚠️ Configuration file not found at %s\n", configPath)
-			fmt.Println("   Run 'shielddev-cli localenv init' to create a configuration")
+			fmt.Println("   Run 'devhelper-cli localenv init' to create a configuration")
 		}
 
 		// Determine which components to stop based on config and flags
@@ -227,7 +228,26 @@ environment, including:
 		if stopTemporal && isCommandAvailable("temporal") {
 			fmt.Println("Stopping Temporal...")
 
-			// Find the Temporal server process
+			// Get Temporal port configuration
+			temporalUIPort := 8233   // Default UI port
+			temporalGRPCPort := 7233 // Default GRPC port
+
+			// Load port values from config if available
+			if configLoaded {
+				if config.Temporal.UIPort != 0 {
+					temporalUIPort = config.Temporal.UIPort
+				}
+				if config.Temporal.GRPCPort != 0 {
+					temporalGRPCPort = config.Temporal.GRPCPort
+				}
+			}
+
+			// Keep track of whether we successfully stopped the server
+			temporalStopped := false
+
+			// Try multiple methods to find and stop Temporal processes
+
+			// Method 1: Find the Temporal server process by name
 			findCmd := exec.Command("pgrep", "-f", "temporal server start-dev")
 			output, err := findCmd.Output()
 
@@ -236,12 +256,28 @@ environment, including:
 				pids := strings.Split(strings.TrimSpace(string(output)), "\n")
 				allKilled := true
 
+				if verbose {
+					fmt.Printf("Found %d Temporal server processes: %s\n", len(pids), strings.Join(pids, ", "))
+				}
+
 				for _, pid := range pids {
+					fmt.Printf("Stopping Temporal server process (PID: %s)...\n", pid)
+
+					// First try graceful termination with SIGTERM
 					killCmd := exec.Command("kill", pid)
-					if err := killCmd.Run(); err != nil {
+					killErr := killCmd.Run()
+
+					if killErr != nil && force {
+						// If that fails and force flag is set, try SIGKILL
+						fmt.Println("  Attempting forceful termination with SIGKILL...")
+						killCmd = exec.Command("kill", "-9", pid)
+						killErr = killCmd.Run()
+					}
+
+					if killErr != nil {
 						allKilled = false
 						if verbose {
-							fmt.Printf("Failed to kill Temporal process %s: %v\n", pid, err)
+							fmt.Printf("Failed to kill Temporal process %s: %v\n", pid, killErr)
 						}
 					} else if verbose {
 						fmt.Printf("Killed Temporal process with PID %s\n", pid)
@@ -249,19 +285,107 @@ environment, including:
 				}
 
 				if allKilled {
-					fmt.Println("✅ Temporal stopped successfully.")
-					stoppedCount++
+					temporalStopped = true
 				} else {
 					fmt.Println("❌ Failed to stop some Temporal processes.")
 					if force {
 						fmt.Println("   Continuing due to --force flag.")
 					}
 				}
-			} else {
+			} else if verbose {
+				fmt.Println("No Temporal server processes found by name search.")
+			}
+
+			// Method 2: Find processes using the Temporal UI port
+			uiPortCmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", temporalUIPort), "-t")
+			uiPortOutput, _ := uiPortCmd.Output()
+
+			if len(uiPortOutput) > 0 {
+				pids := strings.Split(strings.TrimSpace(string(uiPortOutput)), "\n")
+
 				if verbose {
-					fmt.Println("No running Temporal server processes found.")
-				} else {
-					fmt.Println("❌ Failed to stop Temporal: no running processes found.")
+					fmt.Printf("Found %d processes using Temporal UI port %d: %s\n",
+						len(pids), temporalUIPort, strings.Join(pids, ", "))
+				}
+
+				for _, pid := range pids {
+					fmt.Printf("Stopping process using Temporal UI port %d (PID: %s)...\n", temporalUIPort, pid)
+
+					// Try to kill the process, with force if requested
+					killCmd := exec.Command("kill", pid)
+					killErr := killCmd.Run()
+
+					if killErr != nil && force {
+						killCmd = exec.Command("kill", "-9", pid)
+						killErr = killCmd.Run()
+					}
+
+					if killErr == nil {
+						temporalStopped = true
+					}
+				}
+			}
+
+			// Method 3: Find processes using the Temporal GRPC port
+			grpcPortCmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", temporalGRPCPort), "-t")
+			grpcPortOutput, _ := grpcPortCmd.Output()
+
+			if len(grpcPortOutput) > 0 {
+				pids := strings.Split(strings.TrimSpace(string(grpcPortOutput)), "\n")
+
+				if verbose {
+					fmt.Printf("Found %d processes using Temporal GRPC port %d: %s\n",
+						len(pids), temporalGRPCPort, strings.Join(pids, ", "))
+				}
+
+				for _, pid := range pids {
+					fmt.Printf("Stopping process using Temporal GRPC port %d (PID: %s)...\n", temporalGRPCPort, pid)
+
+					// Try to kill the process, with force if requested
+					killCmd := exec.Command("kill", pid)
+					killErr := killCmd.Run()
+
+					if killErr != nil && force {
+						killCmd = exec.Command("kill", "-9", pid)
+						killErr = killCmd.Run()
+					}
+
+					if killErr == nil {
+						temporalStopped = true
+					}
+				}
+			}
+
+			// Verify ports are actually free
+			time.Sleep(2 * time.Second)
+			uiPortInUse := isPortInUse(temporalUIPort)
+			grpcPortInUse := isPortInUse(temporalGRPCPort)
+
+			if uiPortInUse || grpcPortInUse {
+				if uiPortInUse {
+					fmt.Printf("❌ Temporal UI port %d is still in use\n", temporalUIPort)
+					fmt.Printf("   Try manually killing the process: lsof -i :%d -t | xargs kill -9\n", temporalUIPort)
+				}
+
+				if grpcPortInUse {
+					fmt.Printf("❌ Temporal GRPC port %d is still in use\n", temporalGRPCPort)
+					fmt.Printf("   Try manually killing the process: lsof -i :%d -t | xargs kill -9\n", temporalGRPCPort)
+				}
+
+				if force {
+					fmt.Println("   Continuing due to --force flag.")
+				}
+			}
+
+			if temporalStopped {
+				fmt.Println("✅ Temporal stopped successfully.")
+				stoppedCount++
+			} else {
+				fmt.Println("❌ Failed to find or stop Temporal server processes.")
+				if verbose {
+					fmt.Println("   If Temporal is still running, you can try:")
+					fmt.Printf("   lsof -i :%d -t | xargs kill -9\n", temporalUIPort)
+					fmt.Printf("   lsof -i :%d -t | xargs kill -9\n", temporalGRPCPort)
 				}
 			}
 		} else if !stopTemporal && verbose {

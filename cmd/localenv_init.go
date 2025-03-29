@@ -150,7 +150,7 @@ This command should be run once before using other localenv commands.`,
 			listCmd := exec.Command(daprPath, "list")
 			if err := listCmd.Run(); err != nil {
 				fmt.Println("⚠️  Dapr CLI is installed but Dapr may not be initialized")
-				fmt.Println("   Dapr will be initialized when you run 'shielddev-cli localenv start'")
+				fmt.Println("   Dapr will be initialized when you run 'devhelper-cli localenv start'")
 			} else {
 				fmt.Println("   Dapr is initialized and ready to use")
 			}
@@ -160,7 +160,7 @@ This command should be run once before using other localenv commands.`,
 			if err := dashboardCmd.Run(); err == nil {
 				fmt.Println("✅ Dapr Dashboard: Available")
 				fmt.Println("   Run with: 'dapr dashboard'")
-				fmt.Println("   Or use 'shielddev-cli localenv start' with the Dapr Dashboard enabled")
+				fmt.Println("   Or use 'devhelper-cli localenv start' with the Dapr Dashboard enabled")
 
 				// Enable Dapr Dashboard by default if available
 				config.Components.DaprDashboard = true
@@ -195,7 +195,7 @@ This command should be run once before using other localenv commands.`,
 		}
 
 		fmt.Printf("\n✅ Configuration written to %s\n", configPath)
-		fmt.Println("\nYou can now use 'shielddev-cli localenv start' to start the local environment")
+		fmt.Println("\nYou can now use 'devhelper-cli localenv start' to start the local environment")
 		fmt.Println("or edit the configuration file to customize enabled components.")
 
 		// Print a summary of enabled components

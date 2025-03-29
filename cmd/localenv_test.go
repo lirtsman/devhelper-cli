@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"bitbucket.org/shielddev/shielddev-cli/internal/test"
+	"github.com/lirtsman/devhelper-cli/internal/test"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -90,7 +90,7 @@ func TestLocalenvFlags(t *testing.T) {
 		assert.NotNil(t, startCmd.Flags().Lookup("skip-temporal"), "skip-temporal flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("skip-dapr-dashboard"), "skip-dapr-dashboard flag should exist")
 		assert.NotNil(t, startCmd.Flags().Lookup("config"), "config flag should exist")
-		assert.NotNil(t, startCmd.Flags().Lookup("wait"), "wait flag should exist")
+		assert.NotNil(t, startCmd.Flags().Lookup("stream-logs"), "stream-logs flag should exist")
 	})
 
 	t.Run("Stop command should have skip flags", func(t *testing.T) {
@@ -103,6 +103,17 @@ func TestLocalenvFlags(t *testing.T) {
 	t.Run("Init command should have proper flags", func(t *testing.T) {
 		assert.NotNil(t, localenvInitCmd.Flags().Lookup("force"), "force flag should exist")
 		assert.NotNil(t, localenvInitCmd.Flags().Lookup("verbose"), "verbose flag should exist")
+	})
+
+	t.Run("Logs command should have proper flags", func(t *testing.T) {
+		assert.NotNil(t, logsCmd.Flags().Lookup("follow"), "follow flag should exist")
+		assert.NotNil(t, logsCmd.Flags().Lookup("lines"), "lines flag should exist")
+
+		followFlag := logsCmd.Flags().Lookup("follow")
+		assert.Equal(t, "f", followFlag.Shorthand, "follow flag should have shorthand f")
+
+		linesFlag := logsCmd.Flags().Lookup("lines")
+		assert.Equal(t, "n", linesFlag.Shorthand, "lines flag should have shorthand n")
 	})
 
 	t.Run("Verbose flag should be available to all commands", func(t *testing.T) {
@@ -119,12 +130,16 @@ func TestLocalenvCommands(t *testing.T) {
 			"stop":   false,
 			"status": false,
 			"init":   false,
+			"logs":   false,
 		}
 
 		// Check each registered command
 		for _, cmd := range localenvCmd.Commands() {
 			if _, ok := foundCmds[cmd.Use]; ok {
 				foundCmds[cmd.Use] = true
+			} else if cmd.Use == "logs [component]" {
+				// Special case for logs command which has a more complex Use pattern
+				foundCmds["logs"] = true
 			}
 		}
 

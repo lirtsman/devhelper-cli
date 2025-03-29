@@ -31,10 +31,10 @@ var (
 // versionCmd represents the version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print the version number of shielddev-cli",
-	Long:  `All software has versions. This is shielddev-cli's.`,
+	Short: "Print the version number of devhelper-cli",
+	Long:  `All software has versions. This is devhelper-cli's.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("shielddev-cli version: %s\n", Version)
+		fmt.Printf("devhelper-cli version: %s\n", Version)
 		fmt.Printf("Build Date: %s\n", BuildDate)
 		fmt.Printf("Git Commit: %s\n", Commit)
 	},

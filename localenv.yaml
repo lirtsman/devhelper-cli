@@ -12,5 +12,5 @@ temporal:
     uiPort: 8233
     grpcPort: 7233
 dapr:
-    dashboardPort: 8080
+    dashboardPort: 8083
     zipkinPort: 9411

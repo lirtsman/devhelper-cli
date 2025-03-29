@@ -1,4 +1,4 @@
-module bitbucket.org/shielddev/shielddev-cli
+module github.com/lirtsman/devhelper-cli
 
 go 1.24.1
 

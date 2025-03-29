@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,7 +72,7 @@ environment are running, including:
 			}
 		} else if verbose {
 			fmt.Printf("⚠️ Configuration file not found at %s\n", configPath)
-			fmt.Println("   Run 'shielddev-cli localenv init' to create a configuration")
+			fmt.Println("   Run 'devhelper-cli localenv init' to create a configuration")
 		}
 
 		// Define status checks for each component
@@ -140,7 +141,7 @@ environment are running, including:
 
 		if !allToolsInstalled {
 			fmt.Println("\n❌ Some required tools are not installed.")
-			fmt.Println("Run 'shielddev-cli localenv init' to check required dependencies and create a configuration.")
+			fmt.Println("Run 'devhelper-cli localenv init' to check required dependencies and create a configuration.")
 			return
 		}
 
@@ -157,7 +158,17 @@ environment are running, including:
 		// Check Kind functionality
 		kindWorking := checkToolFunctionality("kind", []string{"get", "clusters"}, verbose)
 		if kindWorking {
-			fmt.Println("✅ Kind: Clusters configured")
+			// Execute kind get clusters and check if any clusters are listed
+			cmd := exec.Command("kind", "get", "clusters")
+			output, err := cmd.Output()
+			outputStr := strings.TrimSpace(string(output))
+
+			if err == nil && outputStr != "" {
+				fmt.Println("✅ Kind: Clusters configured")
+			} else {
+				fmt.Println("✅ Kind: Tool working, but no clusters configured")
+				fmt.Println("   Note: Kubernetes functionality is not required for local development.")
+			}
 		} else {
 			fmt.Println("❌ Kind: No clusters available")
 			fmt.Println("   Note: Kubernetes functionality is not required for local development.")
@@ -187,7 +198,7 @@ environment are running, including:
 				_, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".dapr", "bin", "daprd"))
 				if err != nil {
 					fmt.Printf("❌ %s: Not initialized\n", comp.Name)
-					fmt.Println("   Run 'shielddev-cli localenv start' to initialize Dapr")
+					fmt.Println("   Run 'devhelper-cli localenv start' to initialize Dapr")
 					allRunning = false
 					continue
 				}
@@ -292,7 +303,7 @@ environment are running, including:
 
 		if !anyEnabled {
 			fmt.Println("ℹ️ No components are enabled in the configuration.")
-			fmt.Println("   Edit localenv.yaml to enable components or run 'shielddev-cli localenv init' to create a new config.")
+			fmt.Println("   Edit localenv.yaml to enable components or run 'devhelper-cli localenv init' to create a new config.")
 			return
 		}
 
@@ -368,7 +379,7 @@ environment are running, including:
 			}
 		} else {
 			fmt.Println("⚠️  Some components are not running.")
-			fmt.Println("Run 'shielddev-cli localenv start' to start the environment.")
+			fmt.Println("Run 'devhelper-cli localenv start' to start the environment.")
 		}
 	},
 }
@@ -443,6 +454,7 @@ func getDaprDashboardURL(configLoaded bool, config LocalEnvConfig) string {
 
 // Helper function to check if Dapr Dashboard is running and get its PID
 func getDaprDashboardPID() string {
+	// First try to find the process using ps command
 	cmd := exec.Command("ps", "-ef")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
@@ -456,7 +468,35 @@ func getDaprDashboardPID() string {
 			}
 		}
 	}
+
+	// If we can't find it with ps, try a different approach using lsof
+	// Look for the 'dashboard' process on common Dapr Dashboard ports
+	commonPorts := []string{"8080", "8081", "8082", "8083", "8084", "8085"}
+
+	for _, port := range commonPorts {
+		cmd = exec.Command("lsof", "-i", ":"+port, "-sTCP:LISTEN")
+		output, err = cmd.CombinedOutput()
+		if err == nil && len(output) > 0 {
+			outputLines := strings.Split(string(output), "\n")
+			for _, line := range outputLines {
+				if strings.HasPrefix(line, "dashboard") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						return fields[1] // Return PID
+					}
+				}
+			}
+		}
+	}
+
 	return ""
+}
+
+// Helper function to check if a specific port is in use
+func isPortInUse(port int) bool {
+	cmd := exec.Command("lsof", "-i", ":"+strconv.Itoa(port), "-sTCP:LISTEN")
+	output, err := cmd.CombinedOutput()
+	return err == nil && len(output) > 0
 }
 
 // Helper function to check if Dapr Dashboard is accessible

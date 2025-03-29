@@ -15,7 +15,7 @@ limitations under the License.
 */
 package main
 
-import "bitbucket.org/shielddev/shielddev-cli/cmd"
+import "github.com/lirtsman/devhelper-cli/cmd"
 
 func main() {
 	cmd.Execute()

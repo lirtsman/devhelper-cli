@@ -30,7 +30,7 @@ var deployCmd = &cobra.Command{
 This command allows you to deploy various ShieldDev resources such as
 applications, services, or infrastructure components to your target environment.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Use one of the deploy subcommands. Run 'shielddev-cli deploy --help' for usage.")
+		fmt.Println("Use one of the deploy subcommands. Run 'devhelper-cli deploy --help' for usage.")
 	},
 }
 

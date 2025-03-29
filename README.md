@@ -12,68 +12,98 @@ ShieldDev CLI is a powerful tool designed to streamline and automate ShieldDev o
 
 ```bash
 # Clone the repository
-git clone https://bitbucket.org/shielddev/shielddev-cli.git
-cd shielddev-cli
+git clone https://github.com/lirtsman/devhelper-cli.git
+cd devhelper-cli
 
 # Build the CLI
-go build -o shielddev-cli
+go build -o devhelper-cli
 
 # Move to a location in your PATH (optional)
-sudo mv shielddev-cli /usr/local/bin/
+sudo mv devhelper-cli /usr/local/bin/
 ```
 
 ### Using Go
 
 ```bash
-go install bitbucket.org/shielddev/shielddev-cli@latest
+go install github.com/lirtsman/devhelper-cli@latest
 ```
+
+## Development
+
+### Testing
+
+DevHelper CLI uses Go's built-in testing framework with additional support from:
+- [Testify](https://github.com/stretchr/testify) for assertions and mocking
+- Go's standard testing coverage tools
+
+To run tests:
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage information
+make test-coverage
+
+# Generate coverage report in HTML format
+make test-coverage-html
+
+# Show function-level coverage stats
+make test-coverage-func
+```
+
+Coverage reports are generated in the `./coverage` directory:
+- `coverage.out`: Raw coverage data
+- `coverage.html`: HTML report with color-coded coverage visualization
+
+For more details about testing guidelines, refer to the [TESTING.md](TESTING.md) document.
 
 ## Usage
 
 ```bash
 # Display help information
-shielddev-cli --help
+devhelper-cli --help
 
 # Show version
-shielddev-cli version
+devhelper-cli version
 
 # Deploy an application
-shielddev-cli deploy app myapp --env prod --version 1.2.3
+devhelper-cli deploy app myapp --env prod --version 1.2.3
 
 # Deploy a service
-shielddev-cli deploy service myservice --env staging
+devhelper-cli deploy service myservice --env staging
 
 # Check status of all resources
-shielddev-cli status
+devhelper-cli status
 
 # Check detailed status of applications in production
-shielddev-cli status app --detailed --env prod
+devhelper-cli status app --detailed --env prod
 
 # Initialize local development environment
-shielddev-cli localenv init
+devhelper-cli localenv init
 
 # Start local development environment
-shielddev-cli localenv start
+devhelper-cli localenv start
 
 # Check local environment status
-shielddev-cli localenv status
+devhelper-cli localenv status
 
 # Stop local development environment
-shielddev-cli localenv stop
+devhelper-cli localenv stop
 ```
 
 ## Configuration
 
 ShieldDev CLI can be configured using:
 
-1. Configuration file: `$HOME/.shielddev-cli.yaml`
+1. Configuration file: `$HOME/.devhelper-cli.yaml`
 2. Environment variables: All environment variables should be prefixed with `SHIELDDEV_`
 3. Command-line flags
 
 Example configuration file:
 
 ```yaml
-# ~/.shielddev-cli.yaml
+# ~/.devhelper-cli.yaml
 verbose: true
 api:
   endpoint: https://api.shielddev.example.com
@@ -107,7 +137,7 @@ dapr:
   zipkinIP: localhost          # Zipkin IP/hostname
 ```
 
-This configuration is created when you run `shielddev-cli localenv init` and can be customized:
+This configuration is created when you run `devhelper-cli localenv init` and can be customized:
 
 - `components` - Controls which components will be started (true) or disabled (false)
 - `paths` - Stores the paths to required tools, useful for validation on subsequent starts
@@ -124,7 +154,7 @@ This configuration is created when you run `shielddev-cli localenv init` and can
 
 ### Global Flags
 
-- `--config`: Path to config file (default is $HOME/.shielddev-cli.yaml)
+- `--config`: Path to config file (default is $HOME/.devhelper-cli.yaml)
 - `--verbose`: Enable verbose output
 
 ### Available Commands
@@ -170,7 +200,7 @@ To use the `localenv` commands, the following tools must be installed and proper
 
 2. **Kind (Kubernetes in Docker)**: Required for local Kubernetes clusters
    - Install with: `curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 && chmod +x ./kind && sudo mv ./kind /usr/local/bin/`
-   - At least one cluster must be created before using shielddev-cli: `kind create cluster --name my-cluster`
+   - At least one cluster must be created before using devhelper-cli: `kind create cluster --name my-cluster`
    - Kind is a CLI tool that creates and manages Kubernetes clusters running in Podman containers
    - Or follow instructions at [Kind's documentation](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
 
@@ -186,13 +216,13 @@ To use the `localenv` commands, the following tools must be installed and proper
 
 ## Local Development Environment
 
-When you run `shielddev-cli localenv init`, the CLI:
+When you run `devhelper-cli localenv init`, the CLI:
 
 1. Checks for required tools (Podman, Kind, Dapr CLI, Temporal CLI)
 2. Validates their functionality
 3. Creates a configuration file (localenv.yaml) that remembers the tools and enabled components
 
-When you run `shielddev-cli localenv start`, the CLI:
+When you run `devhelper-cli localenv start`, the CLI:
 
 1. Loads the configuration file if it exists
 2. Verifies Podman is available and can run containers
@@ -289,37 +319,6 @@ Dapr is initialized with `dapr init --container-runtime podman`, which provides 
   # Check Dapr status in Kubernetes
   dapr status -k
   ```
-
-## Development
-
-### Testing
-
-The CLI includes a comprehensive test suite to ensure functionality works as expected. Tests are written using Go's standard testing package along with the Testify assertion library.
-
-To run tests:
-
-```bash
-# Run all tests
-go test ./...
-
-# Run tests with verbose output
-go test -v ./...
-
-# Run specific tests
-go test -v ./cmd -run TestLocalenv
-```
-
-The test suite includes:
-
-- **Command structure tests**: Verify commands and subcommands exist with correct names and descriptions.
-- **Flag validation tests**: Ensure all command flags are properly defined with correct default values.
-- **Dependency validation tests**: Check that commands properly validate required external tools.
-- **Test utilities**: The `internal/test` package provides helper functions for testing CLI commands.
-
-For testing the CLI, we use a combination of:
-- Unit tests for individual function behavior
-- Integration tests for command structure and flag handling
-- Mocking for external tools and command execution
 
 ## License
 

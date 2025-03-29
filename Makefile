@@ -1,28 +1,51 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.1.0")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
-LDFLAGS := -ldflags "-X bitbucket.org/shielddev/shielddev-cli/cmd.Version=$(VERSION) -X bitbucket.org/shielddev/shielddev-cli/cmd.BuildDate=$(BUILD_DATE) -X bitbucket.org/shielddev/shielddev-cli/cmd.Commit=$(COMMIT)"
+LDFLAGS := -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=$(VERSION) -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=$(BUILD_DATE) -X github.com/lirtsman/devhelper-cli/cmd.Commit=$(COMMIT)"
 GOBIN := $(shell go env GOPATH)/bin
+COVERAGE_DIR := ./coverage
+COVERAGE_PROFILE := $(COVERAGE_DIR)/coverage.out
+COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 
 .PHONY: all
 all: build
 
 .PHONY: build
 build:
-	go build $(LDFLAGS) -o shielddev-cli
+	go build $(LDFLAGS) -o devhelper-cli
 
 .PHONY: install
 install: build
-	cp shielddev-cli $(GOBIN)/shielddev-cli
+	cp devhelper-cli $(GOBIN)/devhelper-cli
 
 .PHONY: clean
 clean:
-	rm -f shielddev-cli
+	rm -f devhelper-cli
 	go clean
+	rm -rf $(COVERAGE_DIR)
 
 .PHONY: test
 test:
 	go test -v ./...
+
+.PHONY: test-coverage
+test-coverage: prepare-coverage
+	go test -coverprofile=$(COVERAGE_PROFILE) ./...
+	@echo "Coverage profile written to $(COVERAGE_PROFILE)"
+
+.PHONY: test-coverage-html
+test-coverage-html: test-coverage
+	go tool cover -html=$(COVERAGE_PROFILE) -o $(COVERAGE_HTML)
+	@echo "HTML coverage report generated at $(COVERAGE_HTML)"
+	@echo "Open $(COVERAGE_HTML) in your browser to view the report"
+
+.PHONY: test-coverage-func
+test-coverage-func: test-coverage
+	go tool cover -func=$(COVERAGE_PROFILE)
+
+.PHONY: prepare-coverage
+prepare-coverage:
+	mkdir -p $(COVERAGE_DIR)
 
 .PHONY: lint
 lint:
@@ -45,13 +68,16 @@ release: clean build
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  all        - Build the application (default)"
-	@echo "  build      - Build the application"
-	@echo "  install    - Install the application to GOPATH/bin"
-	@echo "  clean      - Remove build artifacts"
-	@echo "  test       - Run tests"
-	@echo "  lint       - Run linters"
-	@echo "  fmt        - Format code"
-	@echo "  deps       - Install dependencies"
-	@echo "  release    - Build a release version"
-	@echo "  help       - Show this help message" 
+	@echo "  all              - Build the application (default)"
+	@echo "  build            - Build the application"
+	@echo "  install          - Install the application to GOPATH/bin"
+	@echo "  clean            - Remove build artifacts"
+	@echo "  test             - Run tests"
+	@echo "  test-coverage    - Run tests with coverage and output to file"
+	@echo "  test-coverage-html - Generate HTML coverage report"
+	@echo "  test-coverage-func - Show function-level coverage stats"
+	@echo "  lint             - Run linters"
+	@echo "  fmt              - Format code"
+	@echo "  deps             - Install dependencies"
+	@echo "  release          - Build a release version"
+	@echo "  help             - Show this help message" 
