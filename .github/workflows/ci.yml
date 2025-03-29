@@ -24,19 +24,10 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
-          # Use a clean cache key strategy to avoid tar errors
+          # Completely disable caching to avoid "Cannot open: File exists" errors
           cache: false
 
-      # Set up manual caching with better control
-      - name: Go Cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.go-version }}-
+      # Removed manual caching step completely
 
       - name: Install dependencies
         run: go mod download
@@ -63,19 +54,10 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
-          # Use a clean cache key strategy to avoid tar errors
+          # Completely disable caching to avoid "Cannot open: File exists" errors
           cache: false
           
-      # Set up manual caching with better control
-      - name: Go Cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-1.21-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-1.21-
+      # Removed manual caching step completely
 
       - name: Install dependencies
         run: go mod download
@@ -119,19 +101,10 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: ${{ matrix.go-version }}
-          # Use a clean cache key strategy to avoid tar errors
+          # Completely disable caching to avoid "Cannot open: File exists" errors
           cache: false
           
-      # Set up manual caching with better control
-      - name: Go Cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-${{ matrix.go-version }}-
+      # Removed manual caching step completely
 
       - name: Install dependencies
         run: go mod download
