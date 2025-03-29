@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Test
+        run: make test
+
+  release:
+    name: Create Release
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        
+      - name: Create GitHub release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          body: |
+            Release ${{ github.ref_name }}
+            
+            Please refer to [CHANGELOG.md](https://github.com/lirtsman/devhelper-cli/blob/main/CHANGELOG.md) for details.
+
+  build:
+    name: Build and Upload Release Assets
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            output_name: devhelper-cli-linux-amd64
+            asset_name: devhelper-cli-linux-amd64
+          - os: macos-latest
+            output_name: devhelper-cli-darwin-amd64
+            asset_name: devhelper-cli-darwin-amd64
+          - os: windows-latest
+            output_name: devhelper-cli-windows-amd64.exe
+            asset_name: devhelper-cli-windows-amd64.exe
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Get tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Build
+        run: |
+          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=$(date -u +'%Y-%m-%dT%H:%M:%SZ') -X github.com/lirtsman/devhelper-cli/cmd.Commit=$(git rev-parse HEAD)" -o ${{ matrix.output_name }}
+        shell: bash
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.release.outputs.upload_url }}
+          asset_path: ./${{ matrix.output_name }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: application/octet-stream 

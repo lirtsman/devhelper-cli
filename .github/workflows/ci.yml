@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go-version: ['1.21']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Required for the version determination
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Test with coverage
+        run: make test-coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          cache: true
+          
+      - name: Install dependencies
+        run: |
+          go mod download
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Run linting
+        run: make lint
+
+  build:
+    name: Build
+    needs: [test, lint]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go-version: ['1.21']
+        include:
+          - os: ubuntu-latest
+            output_name: devhelper-cli-linux-amd64
+            asset_name: devhelper-cli-linux-amd64
+          - os: macos-latest
+            output_name: devhelper-cli-darwin-amd64
+            asset_name: devhelper-cli-darwin-amd64
+          - os: windows-latest
+            output_name: devhelper-cli-windows-amd64.exe
+            asset_name: devhelper-cli-windows-amd64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Build
+        run: |
+          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=$(git describe --tags --always --dirty 2>/dev/null || echo 'v0.1.0') -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=$(date -u +"%Y-%m-%dT%H:%M:%SZ") -X github.com/lirtsman/devhelper-cli/cmd.Commit=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')" -o ${{ matrix.output_name }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.output_name }}
+          retention-days: 7 

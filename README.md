@@ -28,6 +28,10 @@ sudo mv devhelper-cli /usr/local/bin/
 go install github.com/lirtsman/devhelper-cli@latest
 ```
 
+### From GitHub Releases
+
+You can also download pre-built binaries from the [GitHub Releases page](https://github.com/lirtsman/devhelper-cli/releases).
+
 ## Development
 
 ### Testing
@@ -57,6 +61,54 @@ Coverage reports are generated in the `./coverage` directory:
 - `coverage.html`: HTML report with color-coded coverage visualization
 
 For more details about testing guidelines, refer to the [TESTING.md](TESTING.md) document.
+
+### CI/CD
+
+This project uses GitHub Actions for continuous integration and delivery:
+
+- **CI Workflow**: Runs on all pull requests to `main` and `develop` branches to ensure code quality
+  - Builds the application on multiple platforms
+  - Runs all tests with coverage reporting
+  - Performs code linting
+
+- **Release Workflow**: Triggered when a tag is pushed
+  - Creates a GitHub Release
+  - Builds binaries for multiple platforms
+  - Attaches binaries to the release
+
+- **Format Workflow**: Automatically formats Go code on push
+
+### Contributing
+
+We welcome contributions to the DevHelper CLI! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed information on how to contribute to the project, including:
+
+- Branching strategy
+- Versioning approach
+- Commit message format
+- Pull request process
+- Development setup
+- Release process
+
+#### Branching Strategy
+
+We follow a modified GitFlow branching strategy:
+
+- `main` - Production code, tagged with releases
+- `develop` - Integration branch for features
+- Feature branches - `feature/description` for new features
+- Bugfix branches - `bugfix/description` for bug fixes
+- Release branches - `release/vX.Y.Z` for release preparation
+- Hotfix branches - `hotfix/vX.Y.Z` for urgent fixes
+
+#### Versioning
+
+We follow [Semantic Versioning](https://semver.org/) for version numbers:
+
+- **MAJOR** version for incompatible API changes (X.y.z)
+- **MINOR** version for backward-compatible functionality (x.Y.z)
+- **PATCH** version for backward-compatible bug fixes (x.y.Z)
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
 
 ## Usage
 
