@@ -25,4 +25,4 @@ class DevhelperCli < Formula
     # Add a test to ensure the binary works correctly
     assert_match "ShieldDev CLI", shell_output("#{bin}/devhelper-cli --help", 0)
   end
-end 
+end # End of file
