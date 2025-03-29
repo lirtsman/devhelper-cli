@@ -453,14 +453,22 @@ var stopCmd = &cobra.Command{
 
 		// Stop OpenSearch if enabled
 		if !skipOpenSearch && (!configLoaded || config.Components.OpenSearch) {
+			fmt.Println("\n=== Stopping OpenSearch Dashboard ===")
+			stopDashboardCmd := exec.Command("podman", "rm", "-f", "opensearch-dashboard")
+			if err := stopDashboardCmd.Run(); err != nil {
+				fmt.Printf("❌ Failed to stop OpenSearch Dashboard: %v\n", err)
+			} else {
+				fmt.Println("✅ OpenSearch Dashboard stopped")
+			}
+
 			fmt.Println("\n=== Stopping OpenSearch ===")
 
 			// Check if OpenSearch container is running
-			checkCmd := exec.Command("docker", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+			checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
 			output, err := checkCmd.CombinedOutput()
 			if err == nil && strings.Contains(string(output), "opensearch-node") {
 				// Stop and remove the container
-				stopCmd := exec.Command("docker", "rm", "-f", "opensearch-node")
+				stopCmd := exec.Command("podman", "rm", "-f", "opensearch-node")
 				if err := stopCmd.Run(); err != nil {
 					fmt.Printf("❌ Failed to stop OpenSearch container: %v\n", err)
 					if !force {

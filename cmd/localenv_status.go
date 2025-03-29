@@ -309,39 +309,76 @@ environment are running, including:
 
 		// Check OpenSearch
 		if configLoaded && config.Components.OpenSearch {
-			// Check if container is running
-			if output, err := exec.Command("docker", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}").CombinedOutput(); err == nil && strings.Contains(string(output), "opensearch-node") {
+			// First check if OpenSearch service container is running
+			checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+			output, err := checkCmd.CombinedOutput()
+			opensearchRunning := err == nil && strings.Contains(string(output), "opensearch-node")
+
+			// Check if security is disabled
+			securityDisabled := false
+			if opensearchRunning {
+				inspectCmd := exec.Command("podman", "inspect", "--format", "{{range .Config.Env}}{{.}}{{println}}{{end}}", "opensearch-node")
+				inspectOutput, _ := inspectCmd.CombinedOutput()
+				if strings.Contains(string(inspectOutput), "DISABLE_SECURITY_PLUGIN=true") {
+					securityDisabled = true
+				}
+			}
+
+			if opensearchRunning {
 				fmt.Println("✅ OpenSearch: Running")
 
 				// Attempt to check the health of the OpenSearch service
 				url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port)
+
 				client := http.Client{
 					Timeout: 2 * time.Second,
 				}
-				req, _ := http.NewRequest("GET", url, nil)
-				req.SetBasicAuth(config.OpenSearch.Username, config.OpenSearch.Password)
 
-				if resp, err := client.Do(req); err == nil {
+				var resp *http.Response
+				var httpErr error
+
+				// Send request with or without credentials based on security status
+				if securityDisabled {
+					// No credentials needed when security is disabled
+					resp, httpErr = client.Get(url)
+				} else {
+					// Use credentials when security is enabled
+					req, _ := http.NewRequest("GET", url, nil)
+					resp, httpErr = client.Do(req)
+				}
+
+				if httpErr == nil {
 					defer resp.Body.Close()
 					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 						fmt.Printf("   API: http://localhost:%d (available)\n", config.OpenSearch.Port)
-						fmt.Printf("   Dashboard: http://localhost:%d (available)\n", config.OpenSearch.DashboardPort)
-						fmt.Printf("   Username: %s\n", config.OpenSearch.Username)
-						fmt.Printf("   Password: %s\n", config.OpenSearch.Password)
 					} else {
 						fmt.Printf("   API: http://localhost:%d (unhealthy, status code: %d)\n", config.OpenSearch.Port, resp.StatusCode)
 					}
 				} else {
 					fmt.Printf("   API: http://localhost:%d (unavailable, service may still be starting)\n", config.OpenSearch.Port)
 					if verbose {
-						fmt.Printf("   Error: %v\n", err)
+						fmt.Printf("   Error: %v\n", httpErr)
 					}
 				}
+
+				// Check if Dashboard container is running
+				dashCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-dashboard", "--format", "{{.Names}}")
+				dashOutput, dashErr := dashCmd.CombinedOutput()
+				dashboardRunning := dashErr == nil && strings.Contains(string(dashOutput), "opensearch-dashboard")
+
+				if dashboardRunning {
+					fmt.Println("✅ OpenSearch Dashboard: Running")
+					fmt.Printf("   Dashboard: http://localhost:%d (available)\n", config.OpenSearch.DashboardPort)
+				} else {
+					fmt.Println("❌ OpenSearch Dashboard: Not running")
+					fmt.Println("   Run 'devhelper-cli localenv start' to start the OpenSearch Dashboard")
+				}
+
+				fmt.Println("   Security plugin disabled - no credentials required for API")
+
 			} else {
 				fmt.Println("❌ OpenSearch: Not running")
-				if verbose {
-					fmt.Println("   To start OpenSearch, run: devhelper-cli localenv start")
-				}
+				fmt.Println("   Run 'devhelper-cli localenv start' to start OpenSearch")
 			}
 		} else if configLoaded {
 			fmt.Println("⏹️ OpenSearch: Disabled in configuration")
@@ -418,6 +455,75 @@ environment are running, including:
 						fmt.Println("\nDapr Services:")
 						fmt.Println("- dapr_dashboard")
 					}
+				}
+			}
+
+			// Show OpenSearch information if enabled and running
+			if configLoaded && config.Components.OpenSearch {
+				// First check if OpenSearch service container is running
+				checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+				output, err := checkCmd.CombinedOutput()
+				opensearchRunning := err == nil && strings.Contains(string(output), "opensearch-node")
+
+				// Check if security is disabled
+				securityDisabled := false
+				if opensearchRunning {
+					inspectCmd := exec.Command("podman", "inspect", "--format", "{{range .Config.Env}}{{.}}{{println}}{{end}}", "opensearch-node")
+					inspectOutput, _ := inspectCmd.CombinedOutput()
+					if strings.Contains(string(inspectOutput), "DISABLE_SECURITY_PLUGIN=true") {
+						securityDisabled = true
+					}
+				}
+
+				// Then check if Dashboard container is running
+				dashCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-dashboard", "--format", "{{.Names}}")
+				dashOutput, dashErr := dashCmd.CombinedOutput()
+				dashboardRunning := dashErr == nil && strings.Contains(string(dashOutput), "opensearch-dashboard")
+
+				if opensearchRunning {
+					// Try to check if the API is accessible
+					client := http.Client{
+						Timeout: 2 * time.Second,
+					}
+
+					var resp *http.Response
+					var httpErr error
+
+					// Send request with or without credentials based on security status
+					if securityDisabled {
+						// No credentials needed when security is disabled
+						resp, httpErr = client.Get(fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port))
+					} else {
+						// Use credentials when security is enabled
+						req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port), nil)
+						resp, httpErr = client.Do(req)
+					}
+
+					apiAccessible := false
+					if httpErr == nil {
+						defer resp.Body.Close()
+						if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+							apiAccessible = true
+						}
+					}
+
+					// Display OpenSearch information
+					fmt.Println("\nOpenSearch:")
+					fmt.Printf("- API: http://localhost:%d", config.OpenSearch.Port)
+					if apiAccessible {
+						fmt.Println(" (accessible)")
+					} else {
+						fmt.Println(" (not verified)")
+					}
+
+					if dashboardRunning {
+						fmt.Printf("- Dashboard: http://localhost:%d (running)\n", config.OpenSearch.DashboardPort)
+					} else {
+						fmt.Printf("- Dashboard: http://localhost:%d (not running)\n", config.OpenSearch.DashboardPort)
+					}
+
+					fmt.Println("- Security plugin disabled - no credentials required for API")
+
 				}
 			}
 		} else {

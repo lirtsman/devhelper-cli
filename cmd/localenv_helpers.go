@@ -51,6 +51,16 @@ func getDaprDashboardRequirement(configLoaded bool, configValue bool, skipFlag b
 	return !skipFlag
 }
 
+func getOpenSearchRequirement(configLoaded bool, configValue bool, skipFlag bool) bool {
+	if skipFlag {
+		return false
+	}
+	if configLoaded {
+		return configValue
+	}
+	return true // OpenSearch is enabled by default if no config
+}
+
 func tryStartDashboard(command string, port int, logFile *os.File) bool {
 	return tryStartDashboardWithTimeout(command, port, logFile, 3*time.Second)
 }

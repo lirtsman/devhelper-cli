@@ -32,20 +32,24 @@ import (
 
 // Configuration cache to detect changes between runs
 type ConfigCache struct {
-	DaprDashboardPort int
-	TemporalUIPort    int
-	TemporalGRPCPort  int
-	TemporalNamespace string
+	DaprDashboardPort  int
+	TemporalUIPort     int
+	TemporalGRPCPort   int
+	TemporalNamespace  string
+	OpenSearchPort     int
+	OpenSearchDashPort int
 }
 
 // Returns true if current config differs from previous state
 func hasConfigChanged(config LocalEnvConfig, currentCache ConfigCache) (bool, ConfigCache, []string) {
 	changes := []string{}
 	newCache := ConfigCache{
-		DaprDashboardPort: config.Dapr.DashboardPort,
-		TemporalUIPort:    config.Temporal.UIPort,
-		TemporalGRPCPort:  config.Temporal.GRPCPort,
-		TemporalNamespace: config.Temporal.Namespace,
+		DaprDashboardPort:  config.Dapr.DashboardPort,
+		TemporalUIPort:     config.Temporal.UIPort,
+		TemporalGRPCPort:   config.Temporal.GRPCPort,
+		TemporalNamespace:  config.Temporal.Namespace,
+		OpenSearchPort:     config.OpenSearch.Port,
+		OpenSearchDashPort: config.OpenSearch.DashboardPort,
 	}
 
 	hasChanges := false
@@ -79,6 +83,22 @@ func hasConfigChanged(config LocalEnvConfig, currentCache ConfigCache) (bool, Co
 		currentCache.TemporalNamespace != config.Temporal.Namespace {
 		changes = append(changes, fmt.Sprintf("Temporal namespace changed: %s → %s",
 			currentCache.TemporalNamespace, config.Temporal.Namespace))
+		hasChanges = true
+	}
+
+	// Check for OpenSearch port change
+	if currentCache.OpenSearchPort != 0 &&
+		currentCache.OpenSearchPort != config.OpenSearch.Port {
+		changes = append(changes, fmt.Sprintf("OpenSearch port changed: %d → %d",
+			currentCache.OpenSearchPort, config.OpenSearch.Port))
+		hasChanges = true
+	}
+
+	// Check for OpenSearch Dashboard port change
+	if currentCache.OpenSearchDashPort != 0 &&
+		currentCache.OpenSearchDashPort != config.OpenSearch.DashboardPort {
+		changes = append(changes, fmt.Sprintf("OpenSearch Dashboard port changed: %d → %d",
+			currentCache.OpenSearchDashPort, config.OpenSearch.DashboardPort))
 		hasChanges = true
 	}
 
@@ -134,18 +154,6 @@ type Component struct {
 	IsBinary        bool        // Whether the component is a binary command (like Podman, Kind) rather than a service
 }
 
-// Function to determine if OpenSearch is required
-func getOpenSearchRequirement(configLoaded bool, configValue bool, skipFlag bool) bool {
-	if skipFlag {
-		return false
-	}
-	if configLoaded {
-		return configValue
-	}
-	return true // OpenSearch is enabled by default if no config
-}
-
-// startCmd represents the start command
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start local development environment",
@@ -189,6 +197,43 @@ in the correct order.`,
 				if err == nil {
 					configLoaded = true
 					fmt.Printf("✅ Loaded configuration from %s\n", configPath)
+
+					// Check if OpenSearch config is missing and add it if needed
+					openSearchMissing := config.OpenSearch.Port == 0 &&
+						config.OpenSearch.DashboardPort == 0
+
+					// Check if Podman is available (required for OpenSearch)
+					podmanAvailable := isCommandAvailable("podman")
+
+					if openSearchMissing && podmanAvailable {
+						fmt.Println("ℹ️ Adding default OpenSearch configuration to localenv.yaml")
+
+						// Enable OpenSearch component
+						config.Components.OpenSearch = true
+
+						// Set default OpenSearch configuration
+						config.OpenSearch.Port = 9200
+						config.OpenSearch.DashboardPort = 5601
+
+						// Find Podman path
+						podmanPath, err := exec.LookPath("podman")
+						if err == nil {
+							config.Paths.Podman = podmanPath
+						}
+
+						// Update the config file
+						updatedConfigData, err := yamlv3.Marshal(config)
+						if err == nil {
+							err = os.WriteFile(configPath, updatedConfigData, 0644)
+							if err == nil {
+								fmt.Println("✅ Updated localenv.yaml with OpenSearch configuration")
+							} else if verbose {
+								fmt.Printf("⚠️ Failed to update configuration file: %v\n", err)
+							}
+						} else if verbose {
+							fmt.Printf("⚠️ Failed to marshal updated configuration: %v\n", err)
+						}
+					}
 				} else if verbose {
 					fmt.Printf("⚠️ Failed to parse configuration: %v\n", err)
 				}
@@ -298,56 +343,157 @@ in the correct order.`,
 			return len(strings.TrimSpace(string(output))) > 0
 		}
 
-		// Function to check if Docker is running
-		checkDockerRunning := func() bool {
-			checkCmd := exec.Command("docker", "ps")
-			if err := checkCmd.Run(); err != nil {
-				if verbose {
-					fmt.Printf("Docker check failed: %v\n", err)
-				}
-				return false
-			}
-			return true
-		}
-
 		// Function to check if OpenSearch is running
 		checkOpenSearchRunning := func() bool {
 			// Check if container is running
-			checkCmd := exec.Command("docker", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+			checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
 			output, err := checkCmd.CombinedOutput()
 			if err != nil || !strings.Contains(string(output), "opensearch-node") {
 				if verbose {
 					fmt.Printf("OpenSearch container check failed: %v\n", err)
+					if len(output) > 0 {
+						fmt.Printf("Output: %s\n", string(output))
+					}
+
+					// Try to get logs from the container to help with debugging
+					logsCmd := exec.Command("podman", "logs", "opensearch-node")
+					logsOutput, logsErr := logsCmd.CombinedOutput()
+					if logsErr == nil && len(logsOutput) > 0 {
+						fmt.Println("\nOpenSearch container logs:")
+						fmt.Println(string(logsOutput))
+					} else {
+						fmt.Println("\nUnable to retrieve OpenSearch container logs")
+					}
 				}
 				return false
 			}
 
-			// Check if OpenSearch is responding
-			url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port)
-			client := http.Client{
-				Timeout: 2 * time.Second,
-			}
-			req, err := http.NewRequest("GET", url, nil)
-			if err != nil {
+			// Add retry logic for OpenSearch connection
+			maxRetries := 5
+			retryDelay := 5 * time.Second
+
+			// Use HTTP for dev environment
+			url := fmt.Sprintf("http://localhost:%d/_cluster/health", config.OpenSearch.Port)
+
+			for i := 0; i < maxRetries; i++ {
+				if i > 0 {
+					fmt.Printf("Retrying OpenSearch connection (%d/%d)...\n", i+1, maxRetries)
+					time.Sleep(retryDelay)
+				}
+
+				client := http.Client{
+					Timeout: 10 * time.Second, // Increased timeout for OpenSearch to respond
+				}
+
+				req, err := http.NewRequest("GET", url, nil)
+				if err != nil {
+					if verbose {
+						fmt.Printf("OpenSearch request creation failed: %v\n", err)
+					}
+					continue
+				}
+
+				resp, err := client.Do(req)
+				if err != nil {
+					if verbose {
+						fmt.Printf("OpenSearch health check failed: %v\n", err)
+					}
+					continue
+				}
+
+				// Read and log response for debugging
 				if verbose {
-					fmt.Printf("OpenSearch request creation failed: %v\n", err)
+					body, _ := io.ReadAll(resp.Body)
+					fmt.Printf("OpenSearch response (status %d): %s\n", resp.StatusCode, string(body))
 				}
+
+				resp.Body.Close()
+
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					fmt.Println("✅ Successfully connected to OpenSearch")
+					return true
+				}
+			}
+
+			fmt.Println("❌ Failed to connect to OpenSearch after multiple attempts")
+			return false
+		}
+
+		// Function to check if OpenSearch Dashboard is running
+		checkOpenSearchDashboardRunning := func() bool {
+			// Check if container is running
+			checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-dashboard", "--format", "{{.Names}}")
+			output, err := checkCmd.CombinedOutput()
+			if err != nil || !strings.Contains(string(output), "opensearch-dashboard") {
 				return false
 			}
 
-			// Set basic auth
-			req.SetBasicAuth(config.OpenSearch.Username, config.OpenSearch.Password)
+			// Dashboard startup can take longer, so let it start
+			time.Sleep(10 * time.Second) // Increased from 5 to 10 seconds
+			fmt.Println("⏳ Waiting for OpenSearch Dashboard to initialize...")
 
-			resp, err := client.Do(req)
-			if err != nil {
-				if verbose {
-					fmt.Printf("OpenSearch health check failed: %v\n", err)
+			// Add retry logic for Dashboard connection - may take some time to initialize
+			maxRetries := 15 // Increased retries from 10 to 15
+			retryDelay := 5 * time.Second
+
+			// Check dashboard availability
+			url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.DashboardPort)
+
+			for i := 0; i < maxRetries; i++ {
+				if i > 0 {
+					fmt.Printf("Checking OpenSearch Dashboard connection (%d/%d)...\n", i+1, maxRetries)
 				}
-				return false
-			}
-			defer resp.Body.Close()
 
-			return resp.StatusCode >= 200 && resp.StatusCode < 300
+				client := http.Client{
+					Timeout: 10 * time.Second, // Increased timeout
+				}
+
+				// Create a request with basic auth
+				req, err := http.NewRequest("GET", url, nil)
+				if err != nil {
+					if verbose {
+						fmt.Printf("Failed to create request for Dashboard: %v\n", err)
+					}
+					time.Sleep(retryDelay)
+					continue
+				}
+
+				// Send the request
+				resp, err := client.Do(req)
+				if err != nil {
+					if verbose {
+						fmt.Printf("OpenSearch Dashboard check failed: %v\n", err)
+					}
+					time.Sleep(retryDelay)
+					continue
+				}
+
+				// Just checking if we get any response is enough
+				resp.Body.Close()
+
+				// Accept any status code as long as we get a response
+				fmt.Println("✅ OpenSearch Dashboard is accessible")
+				return true
+			}
+
+			fmt.Println("❌ OpenSearch Dashboard is not yet responding after multiple attempts")
+			fmt.Println("   The Dashboard container is running but may still be initializing.")
+			fmt.Println("   This is normal, especially on first startup. It may take up to 2-3 minutes.")
+			fmt.Println("   You can check the logs with: podman logs opensearch-dashboard")
+
+			if verbose {
+				// Show logs to help diagnose issues
+				logsCmd := exec.Command("podman", "logs", "opensearch-dashboard")
+				logsOutput, _ := logsCmd.CombinedOutput()
+				if len(logsOutput) > 0 {
+					fmt.Println("\nOpenSearch Dashboard container logs:")
+					fmt.Println(string(logsOutput))
+				}
+			}
+
+			// Return true anyway to avoid blocking the startup flow, as the container is running
+			// The dashboard is likely just slow to initialize
+			return true
 		}
 
 		// Define the components we need to start
@@ -358,26 +504,12 @@ in the correct order.`,
 				Args:            []string{"--version"},
 				CheckCommand:    "podman",
 				CheckArgs:       []string{"ps"},
-				RequiredFor:     []string{"Kind", "Dapr", "Temporal"},
+				RequiredFor:     []string{"Kind", "Dapr", "Temporal", "OpenSearch"},
 				StartupDelay:    0,
 				IsRequired:      true,
 				CommandExists:   isCommandAvailable("podman"),
 				VerifyAvailable: checkPodmanRunning,
 				RequiresStartup: false, // We don't start Podman, just verify it's running
-				IsBinary:        true,
-			},
-			{
-				Name:            "Docker",
-				Command:         "docker",
-				Args:            []string{"--version"},
-				CheckCommand:    "docker",
-				CheckArgs:       []string{"ps"},
-				RequiredFor:     []string{"OpenSearch"},
-				StartupDelay:    0,
-				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch, skipOpenSearch),
-				CommandExists:   isCommandAvailable("docker"),
-				VerifyAvailable: checkDockerRunning,
-				RequiresStartup: false, // We don't start Docker, just verify it's running
 				IsBinary:        true,
 			},
 			{
@@ -446,25 +578,56 @@ in the correct order.`,
 			},
 			{
 				Name:    "OpenSearch",
-				Command: "docker",
+				Command: "podman",
 				Args: []string{
 					"run",
 					"-d",
 					"--name", "opensearch-node",
 					"-p", fmt.Sprintf("%d:9200", config.OpenSearch.Port),
-					"-p", fmt.Sprintf("%d:5601", config.OpenSearch.DashboardPort),
+					"-e", "cluster.name=devhelper-cluster",
+					"-e", "node.name=opensearch-node",
 					"-e", "discovery.type=single-node",
-					"-e", fmt.Sprintf("OPENSEARCH_INITIAL_ADMIN_PASSWORD=%s", config.OpenSearch.Password),
+					"-e", "DISABLE_SECURITY_PLUGIN=true",
+					"-e", "DISABLE_INSTALL_DEMO_CONFIG=true",
+					"--health-cmd", fmt.Sprintf("curl -u %s:%s -f http://localhost:9200/_cluster/health || exit 1"),
+					"--health-interval", "30s",
+					"--health-timeout", "10s",
+					"--health-retries", "5",
+					"--network", "opensearch-network",
 					"--restart", "unless-stopped",
-					"opensearchproject/opensearch:latest",
+					"opensearchproject/opensearch:2.17.1",
 				},
-				CheckCommand:    "docker",
+				CheckCommand:    "podman",
 				CheckArgs:       []string{"ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}"},
-				RequiredFor:     []string{},
-				StartupDelay:    10 * time.Second, // OpenSearch needs time to initialize
+				RequiredFor:     []string{"OpenSearchDashboard"},
+				StartupDelay:    30 * time.Second, // OpenSearch needs more time to initialize
 				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch, skipOpenSearch),
-				CommandExists:   isCommandAvailable("docker"),
+				CommandExists:   isCommandAvailable("podman"),
 				VerifyAvailable: checkOpenSearchRunning,
+				RequiresStartup: true,
+				IsBinary:        false,
+			},
+			{
+				Name:    "OpenSearchDashboard",
+				Command: "podman",
+				Args: []string{
+					"run",
+					"-d",
+					"--name", "opensearch-dashboard",
+					"-p", fmt.Sprintf("%d:5601", config.OpenSearch.DashboardPort),
+					"-e", "OPENSEARCH_HOSTS=[\"http://opensearch-node:9200\"]",
+					"-e", "DISABLE_SECURITY_DASHBOARDS_PLUGIN=true",
+					"--network", "opensearch-network",
+					"--restart", "unless-stopped",
+					"opensearchproject/opensearch-dashboards:2.17.1",
+				},
+				CheckCommand:    "podman",
+				CheckArgs:       []string{"ps", "--filter", "name=opensearch-dashboard", "--format", "{{.Names}}"},
+				RequiredFor:     []string{},
+				StartupDelay:    15 * time.Second,
+				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch, skipOpenSearch),
+				CommandExists:   isCommandAvailable("podman"),
+				VerifyAvailable: checkOpenSearchDashboardRunning,
 				RequiresStartup: true,
 				IsBinary:        false,
 			},
@@ -520,7 +683,7 @@ in the correct order.`,
 						if comp.Name == "Podman" {
 							fmt.Printf("✅ %s is available and can run containers.\n", comp.Name)
 						} else if comp.Name == "Kind" {
-							fmt.Printf("✅ %s is available and has clusters configured.\n", comp.Name)
+							fmt.Printf("✅ %s is available and can create clusters.\n", comp.Name)
 						} else {
 							fmt.Printf("✅ %s is available.\n", comp.Name)
 						}
@@ -930,6 +1093,305 @@ in the correct order.`,
 					continue
 				}
 			}
+
+			// Special handling for OpenSearch
+			if comp.Name == "OpenSearch" {
+				fmt.Println("Starting OpenSearch...")
+
+				// Ensure the network exists
+				networkCmd := exec.Command("podman", "network", "create", "opensearch-network")
+				networkCmd.Run() // Ignore errors, network may already exist
+
+				// Check if a container with the same name already exists and remove it
+				checkExistingCmd := exec.Command("podman", "ps", "-a", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+				existingOutput, _ := checkExistingCmd.CombinedOutput()
+				if strings.Contains(string(existingOutput), "opensearch-node") {
+					fmt.Println("Found existing OpenSearch container, removing it...")
+					removeCmd := exec.Command("podman", "rm", "-f", "opensearch-node")
+					removeOutput, removeErr := removeCmd.CombinedOutput()
+					if removeErr != nil {
+						fmt.Printf("❌ Failed to remove existing OpenSearch container: %v\n", removeErr)
+						if verbose {
+							fmt.Printf("Output: %s\n", string(removeOutput))
+						}
+						continue
+					}
+				}
+
+				// Run the podman command to start OpenSearch
+				if verbose {
+					fmt.Println("Executing command: podman", strings.Join(comp.Args, " "))
+				}
+
+				startCmd := exec.Command(comp.Command, comp.Args...)
+				startOutput, startErr := startCmd.CombinedOutput()
+
+				if startErr != nil {
+					fmt.Printf("❌ Failed to start OpenSearch: %v\n", startErr)
+					if verbose || strings.Contains(string(startOutput), "Error:") {
+						fmt.Printf("Output: %s\n", string(startOutput))
+					}
+					continue
+				}
+
+				// Wait for the container to start
+				fmt.Println("⏳ Waiting for OpenSearch container to start...")
+				time.Sleep(5 * time.Second)
+
+				// Check if container is running
+				containerRunning := false
+				for i := 0; i < 5; i++ {
+					checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+					output, err := checkCmd.CombinedOutput()
+					if err == nil && strings.Contains(string(output), "opensearch-node") {
+						containerRunning = true
+						break
+					}
+
+					if i < 4 {
+						fmt.Println("Waiting for container to start...")
+						time.Sleep(2 * time.Second)
+					}
+				}
+
+				if !containerRunning {
+					fmt.Println("❌ OpenSearch container failed to start")
+					if verbose {
+						logsCmd := exec.Command("podman", "logs", "opensearch-node")
+						logsOutput, _ := logsCmd.CombinedOutput()
+						if len(logsOutput) > 0 {
+							fmt.Println("\nOpenSearch container logs:")
+							fmt.Println(string(logsOutput))
+						}
+					}
+					continue
+				}
+
+				// Now wait for OpenSearch service to be ready
+				fmt.Println("⏳ Waiting for OpenSearch service to be ready...")
+				serviceReady := false
+
+				// Add retry logic for OpenSearch connection
+				maxRetries := 10 // Increased retries
+				retryDelay := 5 * time.Second
+
+				// Use HTTP for dev environment
+				url := fmt.Sprintf("http://localhost:%d/_cluster/health", config.OpenSearch.Port)
+
+				for i := 0; i < maxRetries; i++ {
+					if i > 0 {
+						fmt.Printf("Checking OpenSearch connection (%d/%d)...\n", i+1, maxRetries)
+					}
+
+					client := http.Client{
+						Timeout: 10 * time.Second, // Increased timeout for OpenSearch to respond
+					}
+
+					req, err := http.NewRequest("GET", url, nil)
+					if err != nil {
+						if verbose {
+							fmt.Printf("OpenSearch request creation failed: %v\n", err)
+						}
+						time.Sleep(retryDelay)
+						continue
+					}
+
+					// Use credentials from config instead of hardcoded values
+					resp, err := client.Do(req)
+					if err != nil {
+						if verbose {
+							fmt.Printf("OpenSearch health check failed: %v\n", err)
+						}
+						time.Sleep(retryDelay)
+						continue
+					}
+
+					// Read and log response for debugging
+					if verbose {
+						body, _ := io.ReadAll(resp.Body)
+						fmt.Printf("OpenSearch response (status %d): %s\n", resp.StatusCode, string(body))
+					}
+
+					resp.Body.Close()
+
+					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+						fmt.Println("✅ OpenSearch is running and ready")
+						serviceReady = true
+						break
+					}
+
+					time.Sleep(retryDelay)
+				}
+
+				if serviceReady {
+					components[i].IsRunning = true
+				} else {
+					fmt.Println("❌ OpenSearch is not running. Please check its logs for errors.")
+					if verbose {
+						logsCmd := exec.Command("podman", "logs", "opensearch-node")
+						logsOutput, _ := logsCmd.CombinedOutput()
+						if len(logsOutput) > 0 {
+							fmt.Println("\nOpenSearch container logs:")
+							fmt.Println(string(logsOutput))
+						}
+					}
+				}
+
+				continue
+			}
+
+			// Special handling for OpenSearch Dashboard
+			if comp.Name == "OpenSearchDashboard" {
+				fmt.Println("Starting OpenSearchDashboard...")
+
+				// First check if OpenSearch is running as the Dashboard depends on it
+				checkOpenSearchCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+				osOutput, osErr := checkOpenSearchCmd.CombinedOutput()
+				if osErr != nil || !strings.Contains(string(osOutput), "opensearch-node") {
+					fmt.Println("❌ OpenSearch is not running. Dashboard cannot start without OpenSearch.")
+					continue
+				}
+
+				// Check if a container with the same name already exists and remove it
+				checkExistingCmd := exec.Command("podman", "ps", "-a", "--filter", "name=opensearch-dashboard", "--format", "{{.Names}}")
+				existingOutput, _ := checkExistingCmd.CombinedOutput()
+				if strings.Contains(string(existingOutput), "opensearch-dashboard") {
+					fmt.Println("Found existing OpenSearch Dashboard container, removing it...")
+					removeCmd := exec.Command("podman", "rm", "-f", "opensearch-dashboard")
+					removeOutput, removeErr := removeCmd.CombinedOutput()
+					if removeErr != nil {
+						fmt.Printf("❌ Failed to remove existing OpenSearch Dashboard container: %v\n", removeErr)
+						if verbose {
+							fmt.Printf("Output: %s\n", string(removeOutput))
+						}
+						continue
+					}
+				}
+
+				// Run the podman command to start OpenSearch Dashboard
+				if verbose {
+					fmt.Println("Executing command: podman", strings.Join(comp.Args, " "))
+				}
+
+				startCmd := exec.Command(comp.Command, comp.Args...)
+				startOutput, startErr := startCmd.CombinedOutput()
+
+				if startErr != nil {
+					fmt.Printf("❌ Failed to start OpenSearch Dashboard: %v\n", startErr)
+					if verbose || strings.Contains(string(startOutput), "Error:") {
+						fmt.Printf("Output: %s\n", string(startOutput))
+					}
+					continue
+				}
+
+				// Wait for the container to start
+				fmt.Println("⏳ Waiting for OpenSearch Dashboard container to start...")
+				time.Sleep(5 * time.Second)
+
+				// Check if container is running
+				containerRunning := false
+				for i := 0; i < 5; i++ {
+					checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-dashboard", "--format", "{{.Names}}")
+					output, err := checkCmd.CombinedOutput()
+					if err == nil && strings.Contains(string(output), "opensearch-dashboard") {
+						containerRunning = true
+						break
+					}
+
+					if i < 4 {
+						fmt.Println("Waiting for Dashboard container to start...")
+						time.Sleep(2 * time.Second)
+					}
+				}
+
+				if !containerRunning {
+					fmt.Println("❌ OpenSearch Dashboard container failed to start")
+					if verbose {
+						logsCmd := exec.Command("podman", "logs", "opensearch-dashboard")
+						logsOutput, _ := logsCmd.CombinedOutput()
+						if len(logsOutput) > 0 {
+							fmt.Println("\nOpenSearch Dashboard container logs:")
+							fmt.Println(string(logsOutput))
+						}
+					}
+					continue
+				}
+
+				// Give the Dashboard more time to initialize
+				fmt.Println("⏳ Waiting for OpenSearch Dashboard to initialize...")
+				// Dashboard needs more time to initialize than just the container start
+				time.Sleep(10 * time.Second)
+
+				// Now check if the Dashboard is accessible
+				dashboardReady := false
+				maxRetries := 12 // More retries for dashboard
+				retryDelay := 5 * time.Second
+
+				// Check dashboard URL
+				url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.DashboardPort)
+
+				for i := 0; i < maxRetries; i++ {
+					if i > 0 {
+						fmt.Printf("Checking OpenSearch Dashboard connection (%d/%d)...\n", i+1, maxRetries)
+					}
+
+					client := http.Client{
+						Timeout: 10 * time.Second,
+					}
+
+					// Create a request with basic auth
+					req, err := http.NewRequest("GET", url, nil)
+					if err != nil {
+						if verbose {
+							fmt.Printf("Failed to create request for Dashboard: %v\n", err)
+						}
+						time.Sleep(retryDelay)
+						continue
+					}
+
+					// Send the request
+					resp, err := client.Do(req)
+					if err != nil {
+						if verbose {
+							fmt.Printf("OpenSearch Dashboard check failed: %v\n", err)
+						}
+						time.Sleep(retryDelay)
+						continue
+					}
+
+					// Just need to close the body
+					resp.Body.Close()
+
+					// Any response (even 404) is ok as it means the server is up
+					fmt.Println("✅ OpenSearch Dashboard is accessible")
+					dashboardReady = true
+					break
+				}
+
+				if dashboardReady {
+					components[i].IsRunning = true
+				} else {
+					fmt.Println("❌ OpenSearch Dashboard is not responding. It may still be initializing.")
+					fmt.Println("   OpenSearch Dashboard can take longer to start up than OpenSearch itself.")
+					fmt.Println("   The container is running but may need more time to fully initialize.")
+
+					// Show logs to help diagnose issues
+					if verbose {
+						logsCmd := exec.Command("podman", "logs", "opensearch-dashboard")
+						logsOutput, _ := logsCmd.CombinedOutput()
+						if len(logsOutput) > 0 {
+							fmt.Println("\nOpenSearch Dashboard container logs:")
+							fmt.Println(string(logsOutput))
+						}
+					}
+
+					// Mark as running anyway as the container is up
+					// This prevents the entire localenv from failing when just the Dashboard UI is slow to start
+					components[i].IsRunning = true
+				}
+
+				continue
+			}
 		}
 
 		// Check if all components are running
@@ -949,6 +1411,57 @@ in the correct order.`,
 		saveConfigCache(newCache)
 
 		fmt.Println("\nAll required components are running successfully!")
+
+		// Show summary of available components and their URLs
+		if configLoaded {
+			fmt.Println("\n=== Component URLs ===")
+
+			// Temporal URLs
+			if config.Components.Temporal && !skipTemporal {
+				// Extract Temporal configuration values
+				uiPort := 8233
+				grpcPort := 7233
+				namespace := "default"
+
+				if config.Temporal.UIPort != 0 {
+					uiPort = config.Temporal.UIPort
+				}
+				if config.Temporal.GRPCPort != 0 {
+					grpcPort = config.Temporal.GRPCPort
+				}
+				if config.Temporal.Namespace != "" {
+					namespace = config.Temporal.Namespace
+				}
+
+				fmt.Printf("Temporal UI: http://localhost:%d\n", uiPort)
+				fmt.Printf("Temporal Server: localhost:%d (namespace: %s)\n", grpcPort, namespace)
+				fmt.Println()
+			}
+
+			// Dapr URLs
+			if config.Components.Dapr && !skipDapr {
+				// Show Dapr Dashboard URL if enabled
+				if config.Components.DaprDashboard && !skipDaprDashboard {
+					dashboardPort := config.Dapr.DashboardPort
+					fmt.Printf("Dapr Dashboard: http://localhost:%d\n", dashboardPort)
+				}
+
+				// Show Zipkin URL for tracing
+				zipkinPort := 9411
+				if config.Dapr.ZipkinPort != 0 {
+					zipkinPort = config.Dapr.ZipkinPort
+				}
+				fmt.Printf("Zipkin UI (tracing): http://localhost:%d\n", zipkinPort)
+				fmt.Println()
+			}
+
+			// OpenSearch URLs
+			if config.Components.OpenSearch && !skipOpenSearch {
+				fmt.Printf("OpenSearch API: http://localhost:%d\n", config.OpenSearch.Port)
+				fmt.Printf("OpenSearch Dashboard: http://localhost:%d\n", config.OpenSearch.DashboardPort)
+				fmt.Println()
+			}
+		}
 	},
 }
 

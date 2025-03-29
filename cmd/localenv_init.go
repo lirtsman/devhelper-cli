@@ -38,7 +38,6 @@ type LocalEnvConfig struct {
 		Kind     string `yaml:"kind"`
 		Dapr     string `yaml:"dapr"`
 		Temporal string `yaml:"temporal"`
-		Docker   string `yaml:"docker"`
 	} `yaml:"paths"`
 	Temporal struct {
 		Namespace string `yaml:"namespace"`
@@ -50,10 +49,8 @@ type LocalEnvConfig struct {
 		ZipkinPort    int `yaml:"zipkinPort"`
 	} `yaml:"dapr"`
 	OpenSearch struct {
-		Port          int    `yaml:"port"`
-		DashboardPort int    `yaml:"dashboardPort"`
-		Username      string `yaml:"username"`
-		Password      string `yaml:"password"`
+		Port          int `yaml:"port"`
+		DashboardPort int `yaml:"dashboardPort"`
 	} `yaml:"openSearch"`
 }
 
@@ -99,8 +96,6 @@ This command should be run once before using other localenv commands.`,
 		// Set default OpenSearch configuration
 		config.OpenSearch.Port = 9200
 		config.OpenSearch.DashboardPort = 5601
-		config.OpenSearch.Username = "admin"
-		config.OpenSearch.Password = "admin"
 
 		// Check for required tools and record their paths
 		fmt.Println("\n=== Validating Required Tools ===")
@@ -197,22 +192,22 @@ This command should be run once before using other localenv commands.`,
 			config.Paths.Temporal = temporalPath
 		}
 
-		// Check Docker (for OpenSearch)
-		dockerPath, dockerErr := validateTool("docker", "--version", verbose)
-		if dockerErr != nil {
-			fmt.Printf("❌ Docker: %v\n", dockerErr)
-			fmt.Println("   Please install Docker from: https://docs.docker.com/get-docker/")
-			fmt.Println("   Note: Docker is required for running OpenSearch")
+		// Check Podman (for OpenSearch)
+		podmanPath, podmanErr = validateTool("podman", "--version", verbose)
+		if podmanErr != nil {
+			fmt.Printf("❌ Podman: %v\n", podmanErr)
+			fmt.Println("   Please install Podman from: https://podman.io/getting-started/installation")
+			fmt.Println("   Note: Podman is required for running OpenSearch")
 			config.Components.OpenSearch = false
 		} else {
-			fmt.Printf("✅ Docker: Found at %s\n", dockerPath)
-			config.Paths.Docker = dockerPath
+			fmt.Printf("✅ Podman: Found at %s\n", podmanPath)
+			config.Paths.Podman = podmanPath
 
-			// Check if Docker is running
-			cmd := exec.Command(dockerPath, "ps")
+			// Check if Podman is running
+			cmd := exec.Command(podmanPath, "ps")
 			if err := cmd.Run(); err != nil {
-				fmt.Println("⚠️  Docker is installed but may not be running")
-				fmt.Println("   Start Docker and try again")
+				fmt.Println("⚠️  Podman is installed but may not be running")
+				fmt.Println("   Start Podman and try again")
 				config.Components.OpenSearch = false
 			}
 		}
@@ -256,7 +251,7 @@ This command should be run once before using other localenv commands.`,
 		if config.Components.OpenSearch {
 			fmt.Println("✅ OpenSearch: Enabled")
 		} else {
-			fmt.Println("❌ OpenSearch: Disabled (install Docker to enable)")
+			fmt.Println("❌ OpenSearch: Disabled (install Podman to enable)")
 		}
 	},
 }
