@@ -188,8 +188,6 @@ paths:
   kind: /usr/local/bin/kind
   dapr: /usr/local/bin/dapr
   temporal: /usr/local/bin/temporal
-  docker: /usr/local/bin/docker
-clusterName: devhelper-local
 temporal:
   namespace: default            # Default namespace to use
   uiPort: 8233                  # Web UI port
@@ -197,8 +195,6 @@ temporal:
 opensearch:
   port: 9200                    # OpenSearch API port
   dashboardPort: 5601           # OpenSearch Dashboards port
-  username: admin               # Default admin username
-  password: admin               # Default admin password
 ```
 
 ## Development

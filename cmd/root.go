@@ -31,10 +31,10 @@ var rootCmd = &cobra.Command{
 	Use:   "devhelper-cli",
 	Short: "A CLI tool for Shield operations",
 	Long: `devhelper-cli is a comprehensive command line interface tool
-designed to streamline and automate Shield operations.
+designed to streamline and automate Shield development operations.
 
-This tool provides various commands to help developers and operators
-manage Shield resources efficiently from the command line.`,
+This tool provides various commands to help developers
+provision local and remote environments efficiently from the command line.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
@@ -98,7 +98,7 @@ func initConfig() {
 		fmt.Println("Using config file:", viper.ConfigFileUsed())
 	}
 
-	// Read environment variables prefixed with SHIELDDEV_
-	viper.SetEnvPrefix("SHIELDDEV")
+	// Read environment variables prefixed with DEVHELPER_
+	viper.SetEnvPrefix("DEVHELPER")
 	viper.AutomaticEnv() // read in environment variables that match
 }

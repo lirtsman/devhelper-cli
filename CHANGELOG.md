@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 * Fix tar extraction issues in Format workflow and add troubleshooting documentation (a4af48c)
 * Refactor project branding from ShieldDev to Shield across all files, including updates to documentation and command descriptions. (af50eec)
-* Fix environment variable prefix in README (SHIELDDEV_ → DEVHELPER_) (429371a)
+* Fix environment variable prefix in README (DEVHELPER_ → DEVHELPER_) (429371a)
 * Update README.md with improved documentation and latest features (f3b8717)
 * Update coverage comment to trigger language statistics update (b35dfb5)
 * Add .gitattributes to fix language statistics (8996383)
