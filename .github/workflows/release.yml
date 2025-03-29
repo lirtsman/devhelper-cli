@@ -44,16 +44,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-            goos: linux
+          - goos: linux
             goarch: amd64
             output_name: devhelper-cli-linux-amd64
-          - os: ubuntu-latest
-            goos: darwin
+          - goos: darwin
             goarch: amd64
             output_name: devhelper-cli-darwin-amd64
-          - os: ubuntu-latest
-            goos: windows
+          - goos: windows
             goarch: amd64
             output_name: devhelper-cli-windows-amd64.exe
     steps:
@@ -90,22 +87,78 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version.outputs.COMMIT }}" -o ${{ matrix.output_name }}
+          echo "Building for $GOOS/$GOARCH"
+          go build -v -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version.outputs.COMMIT }}" -o ${{ matrix.output_name }}
+          # Make executable for Linux/macOS builds
+          if [ "$GOOS" != "windows" ]; then chmod +x ${{ matrix.output_name }}; fi
+          ls -la
 
-      - name: Create Release and Upload Assets
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output_name }}
+          path: ${{ matrix.output_name }}
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+      
+      - name: Display structure of downloaded files
+        run: ls -R ./artifacts
+
+      - name: Move artifacts to root directory
+        run: |
+          mkdir -p ./release-assets
+          cp ./artifacts/devhelper-cli-linux-amd64/devhelper-cli-linux-amd64 ./release-assets/
+          cp ./artifacts/devhelper-cli-darwin-amd64/devhelper-cli-darwin-amd64 ./release-assets/
+          cp ./artifacts/devhelper-cli-windows-amd64.exe/devhelper-cli-windows-amd64.exe ./release-assets/
+          chmod +x ./release-assets/devhelper-cli-linux-amd64
+          chmod +x ./release-assets/devhelper-cli-darwin-amd64
+          ls -la ./release-assets
+
+      - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: success() && startsWith(github.ref, 'refs/tags/')
         with:
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
           body: |
-            Release ${{ github.ref_name }}
+            # DevHelper CLI ${{ github.ref_name }}
             
+            ## Installation Instructions
+            
+            ### Linux
+            ```bash
+            curl -L https://github.com/lirtsman/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-linux-amd64 -o /usr/local/bin/devhelper-cli
+            chmod +x /usr/local/bin/devhelper-cli
+            ```
+            
+            ### macOS
+            ```bash
+            curl -L https://github.com/lirtsman/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-darwin-amd64 -o /usr/local/bin/devhelper-cli
+            chmod +x /usr/local/bin/devhelper-cli
+            ```
+            
+            ### Windows
+            Download the `devhelper-cli-windows-amd64.exe` file and run it from the command line.
+            
+            ## Changes
             Please refer to [CHANGELOG.md](https://github.com/lirtsman/devhelper-cli/blob/main/CHANGELOG.md) for details.
           files: |
-            devhelper-cli-linux-amd64
-            devhelper-cli-darwin-amd64
-            devhelper-cli-windows-amd64.exe
+            ./release-assets/devhelper-cli-linux-amd64
+            ./release-assets/devhelper-cli-darwin-amd64
+            ./release-assets/devhelper-cli-windows-amd64.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 

@@ -30,7 +30,57 @@ go install github.com/lirtsman/devhelper-cli@latest
 
 ### From GitHub Releases
 
-You can also download pre-built binaries from the [GitHub Releases page](https://github.com/lirtsman/devhelper-cli/releases).
+You can download pre-built binaries from the [GitHub Releases page](https://github.com/lirtsman/devhelper-cli/releases).
+
+#### Linux
+
+```bash
+# Download the latest release
+curl -L "https://github.com/lirtsman/devhelper-cli/releases/latest/download/devhelper-cli-linux-amd64" -o devhelper-cli
+
+# Make it executable
+chmod +x devhelper-cli
+
+# Move to a location in your PATH
+sudo mv devhelper-cli /usr/local/bin/
+
+# Verify installation
+devhelper-cli version
+```
+
+#### macOS
+
+```bash
+# Download the latest release
+curl -L "https://github.com/lirtsman/devhelper-cli/releases/latest/download/devhelper-cli-darwin-amd64" -o devhelper-cli
+
+# Make it executable
+chmod +x devhelper-cli
+
+# Move to a location in your PATH
+sudo mv devhelper-cli /usr/local/bin/
+
+# Verify installation
+devhelper-cli version
+```
+
+#### Windows
+
+1. Download `devhelper-cli-windows-amd64.exe` from the [latest release](https://github.com/lirtsman/devhelper-cli/releases/latest)
+2. Rename it to `devhelper-cli.exe` (optional)
+3. Add it to a location in your PATH or use it from any directory by providing the full path
+
+### Upgrading
+
+To upgrade to the latest version:
+
+```bash
+# Linux/macOS
+curl -L "https://github.com/lirtsman/devhelper-cli/releases/latest/download/devhelper-cli-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64" -o /usr/local/bin/devhelper-cli
+chmod +x /usr/local/bin/devhelper-cli
+```
+
+For Windows, download the new version from the [latest release](https://github.com/lirtsman/devhelper-cli/releases/latest) and replace your existing executable.
 
 ## Development
 
