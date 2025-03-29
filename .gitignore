@@ -43,7 +43,7 @@ Thumbs.db
 /homebrew-devhelper-cli/
 
 # Other temporary files that might have been created
-/source.tar.gz # Coverage reports
+/source.tar.gz # Coverage reports - excluded from language stats
 coverage.html
 coverage/
 *.coverprofile
