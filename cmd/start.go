@@ -18,6 +18,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,6 +134,17 @@ type Component struct {
 	IsBinary        bool        // Whether the component is a binary command (like Podman, Kind) rather than a service
 }
 
+// Function to determine if OpenSearch is required
+func getOpenSearchRequirement(configLoaded bool, configValue bool, skipFlag bool) bool {
+	if skipFlag {
+		return false
+	}
+	if configLoaded {
+		return configValue
+	}
+	return true // OpenSearch is enabled by default if no config
+}
+
 // startCmd represents the start command
 var startCmd = &cobra.Command{
 	Use:   "start",
@@ -142,6 +154,7 @@ for Shield application development including:
 
 - Dapr runtime
 - Temporal server
+- OpenSearch (for search and analytics)
 - Required dependencies
 
 This command will check for necessary dependencies and start them
@@ -153,6 +166,7 @@ in the correct order.`,
 		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
 		skipDaprDashboard, _ := cmd.Flags().GetBool("skip-dapr-dashboard")
+		skipOpenSearch, _ := cmd.Flags().GetBool("skip-opensearch")
 		configPath, _ := cmd.Flags().GetString("config")
 		forceRestart, _ := cmd.Flags().GetBool("force-restart")
 		streamLogs, _ := cmd.Flags().GetBool("stream-logs")
@@ -206,6 +220,9 @@ in the correct order.`,
 		}
 		if skipDaprDashboard {
 			config.Components.DaprDashboard = false
+		}
+		if skipOpenSearch {
+			config.Components.OpenSearch = false
 		}
 
 		// Function to check if Temporal server is accessible
@@ -281,6 +298,58 @@ in the correct order.`,
 			return len(strings.TrimSpace(string(output))) > 0
 		}
 
+		// Function to check if Docker is running
+		checkDockerRunning := func() bool {
+			checkCmd := exec.Command("docker", "ps")
+			if err := checkCmd.Run(); err != nil {
+				if verbose {
+					fmt.Printf("Docker check failed: %v\n", err)
+				}
+				return false
+			}
+			return true
+		}
+
+		// Function to check if OpenSearch is running
+		checkOpenSearchRunning := func() bool {
+			// Check if container is running
+			checkCmd := exec.Command("docker", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+			output, err := checkCmd.CombinedOutput()
+			if err != nil || !strings.Contains(string(output), "opensearch-node") {
+				if verbose {
+					fmt.Printf("OpenSearch container check failed: %v\n", err)
+				}
+				return false
+			}
+
+			// Check if OpenSearch is responding
+			url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port)
+			client := http.Client{
+				Timeout: 2 * time.Second,
+			}
+			req, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				if verbose {
+					fmt.Printf("OpenSearch request creation failed: %v\n", err)
+				}
+				return false
+			}
+
+			// Set basic auth
+			req.SetBasicAuth(config.OpenSearch.Username, config.OpenSearch.Password)
+
+			resp, err := client.Do(req)
+			if err != nil {
+				if verbose {
+					fmt.Printf("OpenSearch health check failed: %v\n", err)
+				}
+				return false
+			}
+			defer resp.Body.Close()
+
+			return resp.StatusCode >= 200 && resp.StatusCode < 300
+		}
+
 		// Define the components we need to start
 		components := []Component{
 			{
@@ -295,6 +364,20 @@ in the correct order.`,
 				CommandExists:   isCommandAvailable("podman"),
 				VerifyAvailable: checkPodmanRunning,
 				RequiresStartup: false, // We don't start Podman, just verify it's running
+				IsBinary:        true,
+			},
+			{
+				Name:            "Docker",
+				Command:         "docker",
+				Args:            []string{"--version"},
+				CheckCommand:    "docker",
+				CheckArgs:       []string{"ps"},
+				RequiredFor:     []string{"OpenSearch"},
+				StartupDelay:    0,
+				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch, skipOpenSearch),
+				CommandExists:   isCommandAvailable("docker"),
+				VerifyAvailable: checkDockerRunning,
+				RequiresStartup: false, // We don't start Docker, just verify it's running
 				IsBinary:        true,
 			},
 			{
@@ -359,6 +442,30 @@ in the correct order.`,
 				CommandExists:   isCommandAvailable("temporal"),
 				VerifyAvailable: checkTemporalServerRunning,
 				RequiresStartup: true, // Temporal needs to be started
+				IsBinary:        false,
+			},
+			{
+				Name:    "OpenSearch",
+				Command: "docker",
+				Args: []string{
+					"run",
+					"-d",
+					"--name", "opensearch-node",
+					"-p", fmt.Sprintf("%d:9200", config.OpenSearch.Port),
+					"-p", fmt.Sprintf("%d:5601", config.OpenSearch.DashboardPort),
+					"-e", "discovery.type=single-node",
+					"-e", fmt.Sprintf("OPENSEARCH_INITIAL_ADMIN_PASSWORD=%s", config.OpenSearch.Password),
+					"--restart", "unless-stopped",
+					"opensearchproject/opensearch:latest",
+				},
+				CheckCommand:    "docker",
+				CheckArgs:       []string{"ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}"},
+				RequiredFor:     []string{},
+				StartupDelay:    10 * time.Second, // OpenSearch needs time to initialize
+				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch, skipOpenSearch),
+				CommandExists:   isCommandAvailable("docker"),
+				VerifyAvailable: checkOpenSearchRunning,
+				RequiresStartup: true,
 				IsBinary:        false,
 			},
 		}
@@ -851,6 +958,7 @@ func init() {
 	startCmd.Flags().Bool("skip-dapr", false, "Skip starting Dapr")
 	startCmd.Flags().Bool("skip-temporal", false, "Skip starting Temporal")
 	startCmd.Flags().Bool("skip-dapr-dashboard", false, "Skip starting Dapr Dashboard")
+	startCmd.Flags().Bool("skip-opensearch", false, "Skip starting OpenSearch")
 	startCmd.Flags().Bool("force-restart", false, "Force restart of components even if already running")
 	startCmd.Flags().StringP("config", "c", "", "Path to localenv configuration file")
 	startCmd.Flags().Bool("stream-logs", false, "Stream Temporal server logs to terminal")

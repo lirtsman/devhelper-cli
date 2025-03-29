@@ -31,12 +31,14 @@ type LocalEnvConfig struct {
 		Dapr          bool `yaml:"dapr"`
 		Temporal      bool `yaml:"temporal"`
 		DaprDashboard bool `yaml:"daprDashboard"`
+		OpenSearch    bool `yaml:"openSearch"`
 	} `yaml:"components"`
 	Paths struct {
 		Podman   string `yaml:"podman"`
 		Kind     string `yaml:"kind"`
 		Dapr     string `yaml:"dapr"`
 		Temporal string `yaml:"temporal"`
+		Docker   string `yaml:"docker"`
 	} `yaml:"paths"`
 	Temporal struct {
 		Namespace string `yaml:"namespace"`
@@ -47,6 +49,12 @@ type LocalEnvConfig struct {
 		DashboardPort int `yaml:"dashboardPort"`
 		ZipkinPort    int `yaml:"zipkinPort"`
 	} `yaml:"dapr"`
+	OpenSearch struct {
+		Port          int    `yaml:"port"`
+		DashboardPort int    `yaml:"dashboardPort"`
+		Username      string `yaml:"username"`
+		Password      string `yaml:"password"`
+	} `yaml:"openSearch"`
 }
 
 // initCmd represents the init command
@@ -77,6 +85,7 @@ This command should be run once before using other localenv commands.`,
 		config.Components.Dapr = true
 		config.Components.Temporal = true
 		config.Components.DaprDashboard = false // Disabled by default since it requires separate installation
+		config.Components.OpenSearch = true     // Enable OpenSearch by default
 
 		// Set default Temporal configuration
 		config.Temporal.Namespace = "default"
@@ -86,6 +95,12 @@ This command should be run once before using other localenv commands.`,
 		// Set default Dapr configuration
 		config.Dapr.DashboardPort = 8080
 		config.Dapr.ZipkinPort = 9411
+
+		// Set default OpenSearch configuration
+		config.OpenSearch.Port = 9200
+		config.OpenSearch.DashboardPort = 5601
+		config.OpenSearch.Username = "admin"
+		config.OpenSearch.Password = "admin"
 
 		// Check for required tools and record their paths
 		fmt.Println("\n=== Validating Required Tools ===")
@@ -182,6 +197,26 @@ This command should be run once before using other localenv commands.`,
 			config.Paths.Temporal = temporalPath
 		}
 
+		// Check Docker (for OpenSearch)
+		dockerPath, dockerErr := validateTool("docker", "--version", verbose)
+		if dockerErr != nil {
+			fmt.Printf("❌ Docker: %v\n", dockerErr)
+			fmt.Println("   Please install Docker from: https://docs.docker.com/get-docker/")
+			fmt.Println("   Note: Docker is required for running OpenSearch")
+			config.Components.OpenSearch = false
+		} else {
+			fmt.Printf("✅ Docker: Found at %s\n", dockerPath)
+			config.Paths.Docker = dockerPath
+
+			// Check if Docker is running
+			cmd := exec.Command(dockerPath, "ps")
+			if err := cmd.Run(); err != nil {
+				fmt.Println("⚠️  Docker is installed but may not be running")
+				fmt.Println("   Start Docker and try again")
+				config.Components.OpenSearch = false
+			}
+		}
+
 		// Write configuration to file
 		configData, err := yamlv3.Marshal(config)
 		if err != nil {
@@ -216,6 +251,12 @@ This command should be run once before using other localenv commands.`,
 			fmt.Println("✅ Temporal: Enabled")
 		} else {
 			fmt.Println("❌ Temporal: Disabled (install Temporal CLI to enable)")
+		}
+
+		if config.Components.OpenSearch {
+			fmt.Println("✅ OpenSearch: Enabled")
+		} else {
+			fmt.Println("❌ OpenSearch: Disabled (install Docker to enable)")
 		}
 	},
 }

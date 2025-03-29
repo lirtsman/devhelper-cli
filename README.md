@@ -13,6 +13,7 @@ DevHelper CLI is a powerful tool designed to streamline and automate Shield oper
 - **Configuration**: Flexible configuration via files, environment variables, or flags
 - **Cross-Platform**: Works on Linux, macOS, and Windows
 - **Resource Status**: Check the status of all your resources in one place
+- **Integrated Search**: OpenSearch integration for powerful search and analytics capabilities
 
 ## Installation
 
@@ -141,11 +142,17 @@ devhelper-cli localenv init
 # Start local development environment
 devhelper-cli localenv start
 
+# Start without OpenSearch
+devhelper-cli localenv start --skip-opensearch
+
 # Check local environment status
 devhelper-cli localenv status
 
 # Stop local development environment
 devhelper-cli localenv stop
+
+# Stop only OpenSearch
+devhelper-cli localenv stop --skip-dapr --skip-temporal
 ```
 
 ## Configuration
@@ -175,16 +182,23 @@ The local development environment can be configured using `localenv.yaml` in you
 components:
   dapr: true
   temporal: true
+  openSearch: true
 paths:
   podman: /usr/local/bin/podman
   kind: /usr/local/bin/kind
   dapr: /usr/local/bin/dapr
   temporal: /usr/local/bin/temporal
+  docker: /usr/local/bin/docker
 clusterName: devhelper-local
 temporal:
   namespace: default            # Default namespace to use
   uiPort: 8233                  # Web UI port
   frontendIP: localhost         # Frontend IP/hostname
+opensearch:
+  port: 9200                    # OpenSearch API port
+  dashboardPort: 5601           # OpenSearch Dashboards port
+  username: admin               # Default admin username
+  password: admin               # Default admin password
 ```
 
 ## Development

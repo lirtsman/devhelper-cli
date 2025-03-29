@@ -30,13 +30,11 @@ import (
 var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop local development environment",
-	Long: `Stop the local development environment components.
-
-This command will stop all running components in the local development
-environment, including:
+	Long: `Stop the local development environment components including:
 - Dapr runtime
 - Temporal server
-- Related processes`,
+- OpenSearch
+- Related services and containers`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Stopping local development environment...")
 
@@ -44,6 +42,7 @@ environment, including:
 		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
 		skipDaprDashboard, _ := cmd.Flags().GetBool("skip-dapr-dashboard")
+		skipOpenSearch, _ := cmd.Flags().GetBool("skip-opensearch")
 		force, _ := cmd.Flags().GetBool("force")
 		configPath, _ := cmd.Flags().GetString("config")
 
@@ -73,7 +72,6 @@ environment, including:
 			}
 		} else if verbose {
 			fmt.Printf("⚠️ Configuration file not found at %s\n", configPath)
-			fmt.Println("   Run 'devhelper-cli localenv init' to create a configuration")
 		}
 
 		// Determine which components to stop based on config and flags
@@ -453,6 +451,31 @@ environment, including:
 			fmt.Println("⏭️  Skipping Dapr (disabled in config or by flag).")
 		}
 
+		// Stop OpenSearch if enabled
+		if !skipOpenSearch && (!configLoaded || config.Components.OpenSearch) {
+			fmt.Println("\n=== Stopping OpenSearch ===")
+
+			// Check if OpenSearch container is running
+			checkCmd := exec.Command("docker", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
+			output, err := checkCmd.CombinedOutput()
+			if err == nil && strings.Contains(string(output), "opensearch-node") {
+				// Stop and remove the container
+				stopCmd := exec.Command("docker", "rm", "-f", "opensearch-node")
+				if err := stopCmd.Run(); err != nil {
+					fmt.Printf("❌ Failed to stop OpenSearch container: %v\n", err)
+					if !force {
+						return
+					}
+				} else {
+					fmt.Println("✅ OpenSearch stopped")
+				}
+			} else {
+				fmt.Println("ℹ️ OpenSearch is not running")
+			}
+		} else {
+			fmt.Println("\nℹ️ Skipping OpenSearch")
+		}
+
 		if stoppedCount > 0 {
 			fmt.Println("\n✅ Local development environment has been stopped.")
 		} else {
@@ -468,6 +491,7 @@ func init() {
 	stopCmd.Flags().Bool("skip-dapr", false, "Skip stopping Dapr runtime")
 	stopCmd.Flags().Bool("skip-temporal", false, "Skip stopping Temporal server")
 	stopCmd.Flags().Bool("skip-dapr-dashboard", false, "Skip stopping Dapr Dashboard")
+	stopCmd.Flags().Bool("skip-opensearch", false, "Skip stopping OpenSearch")
 	stopCmd.Flags().Bool("force", false, "Force stop all components even if errors occur")
 	stopCmd.Flags().StringP("config", "c", "", "Path to environment configuration file (default: localenv.yaml)")
 }

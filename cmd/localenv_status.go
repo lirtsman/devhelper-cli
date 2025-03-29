@@ -307,6 +307,49 @@ environment are running, including:
 			return
 		}
 
+		// Check OpenSearch
+		if configLoaded && config.Components.OpenSearch {
+			// Check if container is running
+			if output, err := exec.Command("docker", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}").CombinedOutput(); err == nil && strings.Contains(string(output), "opensearch-node") {
+				fmt.Println("✅ OpenSearch: Running")
+
+				// Attempt to check the health of the OpenSearch service
+				url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port)
+				client := http.Client{
+					Timeout: 2 * time.Second,
+				}
+				req, _ := http.NewRequest("GET", url, nil)
+				req.SetBasicAuth(config.OpenSearch.Username, config.OpenSearch.Password)
+
+				if resp, err := client.Do(req); err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+						fmt.Printf("   API: http://localhost:%d (available)\n", config.OpenSearch.Port)
+						fmt.Printf("   Dashboard: http://localhost:%d (available)\n", config.OpenSearch.DashboardPort)
+						fmt.Printf("   Username: %s\n", config.OpenSearch.Username)
+						fmt.Printf("   Password: %s\n", config.OpenSearch.Password)
+					} else {
+						fmt.Printf("   API: http://localhost:%d (unhealthy, status code: %d)\n", config.OpenSearch.Port, resp.StatusCode)
+					}
+				} else {
+					fmt.Printf("   API: http://localhost:%d (unavailable, service may still be starting)\n", config.OpenSearch.Port)
+					if verbose {
+						fmt.Printf("   Error: %v\n", err)
+					}
+				}
+			} else {
+				fmt.Println("❌ OpenSearch: Not running")
+				if verbose {
+					fmt.Println("   To start OpenSearch, run: devhelper-cli localenv start")
+				}
+			}
+		} else if configLoaded {
+			fmt.Println("⏹️ OpenSearch: Disabled in configuration")
+		} else {
+			fmt.Println("⚠️ OpenSearch: No configuration found")
+			fmt.Println("   Run 'devhelper-cli localenv init' to create a configuration")
+		}
+
 		fmt.Println("\n=== Summary ===")
 		if allRunning {
 			fmt.Println("✅ All components are running properly.")
