@@ -156,6 +156,10 @@ jobs:
       # Update CHANGELOG.md
       - name: Update CHANGELOG.md
         run: |
+          # Ensure we're on the main branch by fetching and checking it out
+          git fetch origin main
+          git checkout main
+          
           # Check if CHANGELOG.md exists
           if [ ! -f "CHANGELOG.md" ]; then
             # Create new CHANGELOG.md if it doesn't exist
