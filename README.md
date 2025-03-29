@@ -1,10 +1,10 @@
 # DevHelper CLI
 
-A comprehensive command-line interface for ShieldDev operations.
+A comprehensive command-line interface for Shield operations.
 
 ## Overview
 
-DevHelper CLI is a powerful tool designed to streamline and automate ShieldDev operations. It provides various commands to help developers and operators manage ShieldDev resources efficiently from the command line.
+DevHelper CLI is a powerful tool designed to streamline and automate Shield operations. It provides various commands to help developers and operators manage Shield resources efficiently from the command line.
 
 ## Features
 
@@ -162,7 +162,7 @@ Example configuration file:
 # ~/.devhelper-cli.yaml
 verbose: true
 api:
-  endpoint: https://api.shielddev.example.com
+  endpoint: https://api.devhelper.example.com
   token: YOUR_API_TOKEN
 ```
 
@@ -180,7 +180,7 @@ paths:
   kind: /usr/local/bin/kind
   dapr: /usr/local/bin/dapr
   temporal: /usr/local/bin/temporal
-clusterName: shielddev-local
+clusterName: devhelper-local
 temporal:
   namespace: default            # Default namespace to use
   uiPort: 8233                  # Web UI port
@@ -296,6 +296,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgements
 
-- The ShieldDev team for their support and contributions
+- The Shield team for their support and contributions
 - The Go community for their excellent tools and libraries
 - All contributors who have helped make this project better 

@@ -1,5 +1,5 @@
 /*
-Copyright © 2023 ShieldDev
+Copyright © 2023 Shield
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -138,7 +138,7 @@ var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start local development environment",
 	Long: `Start a local development environment with all necessary components
-for ShieldDev application development including:
+for Shield application development including:
 
 - Dapr runtime
 - Temporal server

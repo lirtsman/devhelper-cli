@@ -50,7 +50,7 @@ jobs:
           cd homebrew-tap/Formula
           cat > devhelper-cli.rb << EOF
           class DevhelperCli < Formula
-            desc "A comprehensive command-line interface for ShieldDev operations"
+            desc "A comprehensive command-line interface for Shield operations"
             homepage "https://github.com/lirtsman/devhelper-cli"
             url "https://github.com/lirtsman/devhelper-cli/archive/refs/tags/${{ steps.release_info.outputs.VERSION }}.tar.gz"
             sha256 "${{ steps.sha256.outputs.SHA256 }}"

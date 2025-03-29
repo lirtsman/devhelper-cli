@@ -1,5 +1,5 @@
 /*
-Copyright © 2023 ShieldDev
+Copyright © 2023 Shield
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@ import (
 // deployCmd represents the deploy command
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
-	Short: "Deploy ShieldDev resources",
-	Long: `Deploy ShieldDev resources to the target environment.
+	Short: "Deploy Shield resources",
+	Long: `Deploy Shield resources to the target environment.
 	
-This command allows you to deploy various ShieldDev resources such as
+This command allows you to deploy various Shield resources such as
 applications, services, or infrastructure components to your target environment.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Use one of the deploy subcommands. Run 'devhelper-cli deploy --help' for usage.")
@@ -38,7 +38,7 @@ applications, services, or infrastructure components to your target environment.
 var deployAppCmd = &cobra.Command{
 	Use:   "app [name]",
 	Short: "Deploy an application",
-	Long: `Deploy a ShieldDev application to the target environment.
+	Long: `Deploy a Shield application to the target environment.
 	
 This command deploys a specified application with its configuration 
 to the target environment.`,
@@ -56,7 +56,7 @@ to the target environment.`,
 var deployServiceCmd = &cobra.Command{
 	Use:   "service [name]",
 	Short: "Deploy a service",
-	Long: `Deploy a ShieldDev service to the target environment.
+	Long: `Deploy a Shield service to the target environment.
 	
 This command deploys a specified service with its configuration 
 to the target environment.`,

@@ -1,5 +1,5 @@
 /*
-Copyright © 2023 ShieldDev
+Copyright © 2023 Shield
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ var isCommandAvailable = func(command string) bool {
 var localenvCmd = &cobra.Command{
 	Use:   "localenv",
 	Short: "Manage local development environment",
-	Long: `Manage the local development environment for ShieldDev applications.
+	Long: `Manage the local development environment for Shield applications.
 
 The localenv command provides functionality to start, stop, and manage 
 local development components including:
@@ -44,7 +44,7 @@ local development components including:
 - Temporal server
 - Required dependencies and infrastructure
 
-This allows developers to run and test ShieldDev applications locally.`,
+This allows developers to run and test Shield applications locally.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Use one of the localenv subcommands. Run 'devhelper-cli localenv --help' for usage.")
 	},

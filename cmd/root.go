@@ -1,5 +1,5 @@
 /*
-Copyright © 2023 ShieldDev
+Copyright © 2023 Shield
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,12 +29,12 @@ var cfgFile string
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "devhelper-cli",
-	Short: "A CLI tool for ShieldDev operations",
+	Short: "A CLI tool for Shield operations",
 	Long: `devhelper-cli is a comprehensive command line interface tool
-designed to streamline and automate ShieldDev operations.
+designed to streamline and automate Shield operations.
 
 This tool provides various commands to help developers and operators
-manage ShieldDev resources efficiently from the command line.`,
+manage Shield resources efficiently from the command line.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
@@ -85,10 +85,10 @@ func initConfig() {
 		if err == nil {
 			viper.AddConfigPath(cwd)
 
-			// And in a .shielddev directory if it exists
-			shielddevDir := filepath.Join(cwd, ".shielddev")
-			if _, err := os.Stat(shielddevDir); err == nil {
-				viper.AddConfigPath(shielddevDir)
+			// And in a .devhelper directory if it exists
+			devhelperDir := filepath.Join(cwd, ".devhelper")
+			if _, err := os.Stat(devhelperDir); err == nil {
+				viper.AddConfigPath(devhelperDir)
 			}
 		}
 	}
