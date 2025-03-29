@@ -3,6 +3,12 @@ name: Update Homebrew Formula
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to update formula for (e.g., v0.1.2)'
+        required: true
+        default: 'v0.1.2'
 
 jobs:
   update-homebrew-formula:
@@ -16,7 +22,12 @@ jobs:
       - name: Get release info
         id: release_info
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
+          # Use input version if workflow was manually triggered, otherwise use the release tag
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "TARBALL_URL=https://github.com/lirtsman/devhelper-cli/archive/refs/tags/${VERSION}.tar.gz" >> $GITHUB_OUTPUT
 
