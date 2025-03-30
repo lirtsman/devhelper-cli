@@ -971,34 +971,15 @@ in the correct order.`,
 
 				// Prepare command with namespace flag if configured
 				var temporalCmd *exec.Cmd
+				temporalNamespaceToCreate := ""
 				if configLoaded && config.Components.Temporal && temporalNamespace != "" && temporalNamespace != "default" {
 					fmt.Printf("Configuring Temporal with namespace: %s\n", temporalNamespace)
-					// Use a more efficient approach - create the namespace first if needed, then start server
-					// This avoids potential issues with the namespace not being created properly during startup
-
-					// First check if the namespace exists
-					namespaceCheckCmd := exec.Command("temporal", "operator", "namespace", "describe", temporalNamespace)
-					if err := namespaceCheckCmd.Run(); err != nil {
-						// Namespace doesn't exist, create it first
-						fmt.Printf("Creating Temporal namespace '%s'...\n", temporalNamespace)
-						createCmd := exec.Command("temporal", "operator", "namespace", "create", temporalNamespace)
-						if output, err := createCmd.CombinedOutput(); err != nil {
-							fmt.Printf("❌ Failed to create namespace: %v\n", err)
-							if verbose {
-								fmt.Printf("Output: %s\n", string(output))
-							}
-						} else {
-							fmt.Printf("✅ Created Temporal namespace '%s'\n", temporalNamespace)
-						}
-					} else {
-						fmt.Printf("✅ Temporal namespace '%s' already exists\n", temporalNamespace)
-					}
-
-					// Start the server normally
-					temporalCmd = exec.Command("temporal", "server", "start-dev")
-				} else {
-					temporalCmd = exec.Command("temporal", "server", "start-dev")
+					// Store the namespace name for creation after server starts
+					temporalNamespaceToCreate = temporalNamespace
 				}
+
+				// Start the server normally
+				temporalCmd = exec.Command("temporal", "server", "start-dev")
 
 				// Create logs directory if it doesn't exist
 				logsDir := filepath.Join(os.Getenv("HOME"), ".logs", "devhelper-cli")
@@ -1077,6 +1058,28 @@ in the correct order.`,
 						fmt.Println("✅ Temporal server started successfully.")
 						components[i].IsRunning = true
 						temporalStarted = true
+
+						// Create the custom namespace if needed, now that the server is running
+						if temporalNamespaceToCreate != "" {
+							// First check if the namespace exists
+							namespaceCheckCmd := exec.Command("temporal", "operator", "namespace", "describe", "--namespace", temporalNamespaceToCreate)
+							if err := namespaceCheckCmd.Run(); err != nil {
+								// Namespace doesn't exist, create it now
+								fmt.Printf("Creating Temporal namespace '%s'...\n", temporalNamespaceToCreate)
+								createCmd := exec.Command("temporal", "operator", "namespace", "create", "--namespace", temporalNamespaceToCreate)
+								if output, err := createCmd.CombinedOutput(); err != nil {
+									fmt.Printf("❌ Failed to create namespace: %v\n", err)
+									if verbose {
+										fmt.Printf("Output: %s\n", string(output))
+									}
+								} else {
+									fmt.Printf("✅ Created Temporal namespace '%s'\n", temporalNamespaceToCreate)
+								}
+							} else {
+								fmt.Printf("✅ Temporal namespace '%s' already exists\n", temporalNamespaceToCreate)
+							}
+						}
+
 						break
 					}
 
