@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0] - 2025-03-30
+
+* Prepare for v0.3.0 release (27febca)
+* Update CHANGELOG.md to document the addition of the `--clean-logs` flag for the `localenv stop` command, enhancing log management capabilities. Revise README.md to reflect changes in tool descriptions and features, including improved local environment management and log handling instructions. [skip ci] (e08a544)
+* Enhance local environment configuration management by introducing structured tool version requirements and improving component initialization logic. Refactor validation functions to support version detection and auto-installation of required tools. Update configuration structure to better encapsulate tool paths and versions, ensuring a more robust setup process for Dapr, Temporal, and OpenSearch components. (906422a)
+* Refactor Temporal namespace creation logic in localenv_start.go to occur after server startup, improving reliability and user feedback during setup. (3c058f9)
+* Update CHANGELOG.md for v0.2.3 (cb36cfd)
+
 ## [Unreleased]
 
 ### Added
