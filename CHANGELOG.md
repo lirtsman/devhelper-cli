@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.2.3] - 2025-03-30
+
+* Update health check command in localenv_start.go to use default admin credentials for OpenSearch. (99d4744)
+* Add localenv.yaml to .gitignore to exclude local environment configuration files from version control. (70efde8)
+* Update CHANGELOG.md, remove localenv.yaml, and refine README.md documentation. Adjust environment variable prefix in code and documentation to DEVHELPER_. (640911f)
+* Add OpenSearch and OpenSearch Dashboard support to local environment, including configuration management, health checks, and improved logging. Replace Docker with Podman for container management and update related commands and status checks. (6735981)
+* Add commands to start and stop local development environment components including Dapr, Temporal, and OpenSearch. Implement configuration loading, process management, and logging for improved user experience. (1ea78d8)
+* Add OpenSearch support to local environment (18b0e83)
+* Update CHANGELOG.md for v0.2.2 (ba01dcd)
+
 ## [v0.2.2] - 2025-03-29
 
 * Fix tar extraction issues in Format workflow and add troubleshooting documentation (a4af48c)
