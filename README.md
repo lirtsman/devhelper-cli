@@ -1,19 +1,19 @@
 # DevHelper CLI
 
-A comprehensive command-line interface for Shield operations.
+A comprehensive command-line tool for managing development environments.
 
 ## Overview
 
-DevHelper CLI is a powerful tool designed to streamline and automate Shield operations. It provides various commands to help developers and operators manage Shield resources efficiently from the command line.
+DevHelper CLI is designed to streamline and automate the setup and management of local development environments. It provides developers with a unified interface to manage various tools and components needed for development, making it easier to maintain consistent environments across teams.
 
 ## Features
 
-- **Deployment Management**: Deploy applications and services to different environments
-- **Local Development**: Initialize, start, and manage local development environments
-- **Configuration**: Flexible configuration via files, environment variables, or flags
+- **Local Environment Management**: Initialize, start, stop, and manage local development environments with a single command
+- **Component Integration**: Seamlessly work with Dapr, Temporal, and OpenSearch
+- **Log Management**: View, follow, and clean logs for various components
+- **Configuration**: Flexible configuration via YAML files for consistent environments
 - **Cross-Platform**: Works on Linux, macOS, and Windows
-- **Resource Status**: Check the status of all your resources in one place
-- **Integrated Search**: OpenSearch integration for powerful search and analytics capabilities
+- **Container Support**: Integration with Podman for container orchestration
 
 ## Installation
 
@@ -124,18 +124,6 @@ devhelper-cli --help
 # Show version information (including build date and commit hash)
 devhelper-cli version
 
-# Deploy an application
-devhelper-cli deploy app myapp --env prod --version 1.2.3
-
-# Deploy a service
-devhelper-cli deploy service myservice --env staging
-
-# Check status of all resources
-devhelper-cli status
-
-# Check detailed status of applications in production
-devhelper-cli status app --detailed --env prod
-
 # Initialize local development environment
 devhelper-cli localenv init
 
@@ -145,14 +133,26 @@ devhelper-cli localenv start
 # Start without OpenSearch
 devhelper-cli localenv start --skip-opensearch
 
+# Stream Temporal server logs to terminal
+devhelper-cli localenv start --stream-logs
+
 # Check local environment status
 devhelper-cli localenv status
 
 # Stop local development environment
 devhelper-cli localenv stop
 
-# Stop only OpenSearch
+# Stop specific components
 devhelper-cli localenv stop --skip-dapr --skip-temporal
+
+# Stop and clean up log files
+devhelper-cli localenv stop --clean-logs
+
+# View component logs
+devhelper-cli localenv logs temporal
+
+# Follow component logs in real-time
+devhelper-cli localenv logs temporal -f
 ```
 
 ## Configuration
@@ -163,39 +163,82 @@ DevHelper CLI can be configured using:
 2. Environment variables: All environment variables should be prefixed with `DEVHELPER_`
 3. Command-line flags
 
-Example configuration file:
-
-```yaml
-# ~/.devhelper-cli.yaml
-verbose: true
-api:
-  endpoint: https://api.devhelper.example.com
-  token: YOUR_API_TOKEN
-```
-
 ### Local Environment Configuration
 
 The local development environment can be configured using `localenv.yaml` in your project directory:
 
 ```yaml
 # localenv.yaml
+tools:
+  podman:
+    path: /usr/local/bin/podman
+    version: 5.4.1
+  kind:
+    path: /usr/local/bin/kind
+    version: ""
+  daprCli:
+    path: /usr/local/bin/dapr
+    version: 1.14.1
+  temporalCli:
+    path: /usr/local/bin/temporal
+    version: 1.2.0
 components:
-  dapr: true
-  temporal: true
-  openSearch: true
-paths:
-  podman: /usr/local/bin/podman
-  kind: /usr/local/bin/kind
-  dapr: /usr/local/bin/dapr
-  temporal: /usr/local/bin/temporal
-temporal:
-  namespace: default            # Default namespace to use
-  uiPort: 8233                  # Web UI port
-  frontendIP: localhost         # Frontend IP/hostname
-opensearch:
-  port: 9200                    # OpenSearch API port
-  dashboardPort: 5601           # OpenSearch Dashboards port
+  dapr:
+    enabled: true
+    dashboard: true
+    dashboardPort: 8080
+    zipkinPort: 9411
+  temporal:
+    enabled: true
+    namespace: default
+    uiPort: 8233
+    grpcPort: 7233
+  openSearch:
+    enabled: true
+    version: 2.17.1
+    port: 9200
+    dashboardPort: 5601
 ```
+
+## Supported Components
+
+DevHelper CLI supports several key components for local development:
+
+### Dapr
+- Runtime initialization and management
+- Dashboard access and configuration
+- Component integration
+
+### Temporal
+- Server initialization and management
+- UI and gRPC endpoint configuration
+- Namespace management
+
+### OpenSearch
+- Container management via Podman
+- Dashboard configuration
+- Security and access settings
+
+## Roadmap
+
+DevHelper CLI is actively being developed with several planned features on the horizon:
+
+### Remote Environment Management
+- **Remote Deployment**: Ability to deploy applications to remote development environments
+- **Environment Synchronization**: Keep local and remote environments in sync
+- **Remote Debugging**: Tools for debugging applications in remote environments
+
+### Project Initialization
+- **Repository Templates**: Initialize new projects with proper repository structure and boilerplate
+- **Framework Integration**: Quick setup for common frameworks and libraries
+- **Best Practice Enforcement**: Built-in configurations that follow best practices
+
+### Release Management
+- **App-of-Apps Integration**: Prepare new components for releases through pull requests to app-of-apps
+- **Deployment Configuration**: Generate proper deployment configurations automatically
+- **Release Automation**: Streamline the process of creating and deploying new releases
+
+These features are still in development and will be rolled out in future releases.
 
 ## Development
 
@@ -266,8 +309,6 @@ This project uses GitHub Actions for continuous integration and delivery:
   - Automatically updates the Homebrew formula
   - Updates the CHANGELOG.md with commit details
 
-- **Homebrew Update Workflow**: Automatically updates the Homebrew formula when a new release is published
-
 ### Contributing
 
 We welcome contributions to the DevHelper CLI! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed information on how to contribute to the project, including:
@@ -312,51 +353,40 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Troubleshooting
 
-### CI/CD Pipeline Issues
+### Log Management
 
-#### Tar Extraction Failures
+If you encounter issues with log files:
 
-If you encounter errors like:
-```
-Failed to restore: "/usr/bin/tar" failed with error: The process '/usr/bin/tar' failed with exit code 2
-```
+1. **View Logs**: Use `devhelper-cli localenv logs [component]` to view current logs
+2. **Rotate Logs**: Use `--clean-logs` with the stop command to delete log files when stopping components
+3. **Follow Logs**: Use the `-f` flag with the logs command to follow logs in real-time
+4. **Log Locations**: Log files are stored in `~/.logs/devhelper-cli/`
 
+### Component Issues
+
+#### Dapr
+
+If Dapr fails to start:
+1. Check Dapr installation with `dapr --version`
+2. Verify Podman is running with `podman ps`
+3. Check logs with `devhelper-cli localenv logs dapr`
+
+#### Temporal
+
+If Temporal fails to start:
+1. Check if ports are already in use (default 8233 for UI, 7233 for gRPC)
+2. Verify installation with `temporal --version`
+3. Check logs with `devhelper-cli localenv logs temporal`
+
+#### OpenSearch
+
+If OpenSearch fails to start:
+1. Verify Podman is running with `podman ps`
+2. Check if ports 9200 and 5601 are available
+3. Check container logs with `podman logs opensearch-node`
 This typically indicates an issue with archive extraction in the pipeline. Common fixes include:
 
 1. **Check archive integrity**: Ensure the source archive isn't corrupted during upload
 2. **Verify storage permissions**: Ensure the CI runner has proper permissions to read/write to storage
 3. **Check disk space**: Make sure the runner has sufficient disk space for extraction
-4. **Examine CI cache**: Try clearing the CI cache, as cached archives might be corrupted
-
-#### Format Workflow Specific Issues
-
-If you see this error in the Format workflow:
-
-```
-Annotations
-1 warning
-Format
-Failed to restore: "/usr/bin/tar" failed with error: The process '/usr/bin/tar' failed with exit code 2
-```
-
-This is likely related to Go's module cache. To fix this:
-
-1. **Disable Go caching in the Format workflow**:
-   - Edit `.github/workflows/format.yml`
-   - Change the `setup-go` action configuration:
-   ```yaml
-   - name: Set up Go
-     uses: actions/setup-go@v4
-     with:
-       go-version: '1.21'
-       cache: false  # Change from true to false
-   ```
-
-2. **Alternative: Update the Format workflow to use a newer actions/setup-go version**:
-   ```yaml
-   - name: Set up Go
-     uses: actions/setup-go@v4
-     with:
-       go-version: '1.21'
-       cache-dependency-path: go.sum
-   ``` 
+4. **Examine CI cache**: Try clearing the CI cache, as cached archives might be corrupted 

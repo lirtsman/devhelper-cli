@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Add `--clean-logs` flag to `localenv stop` command to remove log files when stopping components
+
 ## [v0.2.3] - 2025-03-30
 
 * Update health check command in localenv_start.go to use default admin credentials for OpenSearch. (99d4744)
@@ -30,14 +35,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-- GitHub Actions workflow for CI/CD
-- Test coverage reporting
-- Automated releases
-- Code formatting
-
 ## [0.1.0] - 2023-03-29
 
 ### Added
@@ -47,5 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configuration handling
 - Test framework
 
-[Unreleased]: https://github.com/lirtsman/devhelper-cli/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/lirtsman/devhelper-cli/compare/v0.2.3...HEAD
+[v0.2.3]: https://github.com/lirtsman/devhelper-cli/compare/v0.2.2...v0.2.3
+[v0.2.2]: https://github.com/lirtsman/devhelper-cli/compare/v0.2.1...v0.2.2
+[v0.2.1]: https://github.com/lirtsman/devhelper-cli/compare/v0.1.0...v0.2.1
 [0.1.0]: https://github.com/lirtsman/devhelper-cli/releases/tag/v0.1.0 
