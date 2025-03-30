@@ -117,24 +117,12 @@ func TestLocalenvStartCommand(t *testing.T) {
 func TestConfigCacheFunctions(t *testing.T) {
 	t.Run("hasConfigChanged should detect no changes", func(t *testing.T) {
 		// Given the same configuration
-		currentConfig := LocalEnvConfig{
-			Dapr: struct {
-				DashboardPort int `yaml:"dashboardPort"`
-				ZipkinPort    int `yaml:"zipkinPort"`
-			}{
-				DashboardPort: 8080,
-				ZipkinPort:    9411,
-			},
-			Temporal: struct {
-				Namespace string `yaml:"namespace"`
-				UIPort    int    `yaml:"uiPort"`
-				GRPCPort  int    `yaml:"grpcPort"`
-			}{
-				Namespace: "default",
-				UIPort:    8233,
-				GRPCPort:  7233,
-			},
-		}
+		currentConfig := LocalEnvConfig{}
+		currentConfig.Components.Dapr.DashboardPort = 8080
+		currentConfig.Components.Dapr.ZipkinPort = 9411
+		currentConfig.Components.Temporal.Namespace = "default"
+		currentConfig.Components.Temporal.UIPort = 8233
+		currentConfig.Components.Temporal.GRPCPort = 7233
 
 		currentCache := ConfigCache{
 			DaprDashboardPort: 8080,
@@ -154,15 +142,9 @@ func TestConfigCacheFunctions(t *testing.T) {
 
 	t.Run("hasConfigChanged should detect Dapr dashboard port change", func(t *testing.T) {
 		// Given a configuration with changed Dapr dashboard port
-		currentConfig := LocalEnvConfig{
-			Dapr: struct {
-				DashboardPort int `yaml:"dashboardPort"`
-				ZipkinPort    int `yaml:"zipkinPort"`
-			}{
-				DashboardPort: 8081, // Changed port
-				ZipkinPort:    9411,
-			},
-		}
+		currentConfig := LocalEnvConfig{}
+		currentConfig.Components.Dapr.DashboardPort = 8081 // Changed port
+		currentConfig.Components.Dapr.ZipkinPort = 9411
 
 		currentCache := ConfigCache{
 			DaprDashboardPort: 8080, // Original port
@@ -182,24 +164,12 @@ func TestConfigCacheFunctions(t *testing.T) {
 
 	t.Run("hasConfigChanged should detect Temporal UI port change", func(t *testing.T) {
 		// Given a configuration with changed Temporal UI port
-		currentConfig := LocalEnvConfig{
-			Dapr: struct {
-				DashboardPort int `yaml:"dashboardPort"`
-				ZipkinPort    int `yaml:"zipkinPort"`
-			}{
-				DashboardPort: 8080, // Match cache value to avoid detecting unrelated changes
-				ZipkinPort:    9411,
-			},
-			Temporal: struct {
-				Namespace string `yaml:"namespace"`
-				UIPort    int    `yaml:"uiPort"`
-				GRPCPort  int    `yaml:"grpcPort"`
-			}{
-				Namespace: "default",
-				UIPort:    8234, // Changed port
-				GRPCPort:  7233,
-			},
-		}
+		currentConfig := LocalEnvConfig{}
+		currentConfig.Components.Dapr.DashboardPort = 8080 // Match cache value to avoid detecting unrelated changes
+		currentConfig.Components.Dapr.ZipkinPort = 9411
+		currentConfig.Components.Temporal.Namespace = "default"
+		currentConfig.Components.Temporal.UIPort = 8234 // Changed port
+		currentConfig.Components.Temporal.GRPCPort = 7233
 
 		currentCache := ConfigCache{
 			DaprDashboardPort: 8080,
@@ -219,24 +189,12 @@ func TestConfigCacheFunctions(t *testing.T) {
 
 	t.Run("hasConfigChanged should detect Temporal namespace change", func(t *testing.T) {
 		// Given a configuration with changed Temporal namespace
-		currentConfig := LocalEnvConfig{
-			Dapr: struct {
-				DashboardPort int `yaml:"dashboardPort"`
-				ZipkinPort    int `yaml:"zipkinPort"`
-			}{
-				DashboardPort: 8080, // Match cache value to avoid detecting unrelated changes
-				ZipkinPort:    9411,
-			},
-			Temporal: struct {
-				Namespace string `yaml:"namespace"`
-				UIPort    int    `yaml:"uiPort"`
-				GRPCPort  int    `yaml:"grpcPort"`
-			}{
-				Namespace: "testing", // Changed namespace
-				UIPort:    8233,
-				GRPCPort:  7233,
-			},
-		}
+		currentConfig := LocalEnvConfig{}
+		currentConfig.Components.Dapr.DashboardPort = 8080 // Match cache value to avoid detecting unrelated changes
+		currentConfig.Components.Dapr.ZipkinPort = 9411
+		currentConfig.Components.Temporal.Namespace = "testing" // Changed namespace
+		currentConfig.Components.Temporal.UIPort = 8233
+		currentConfig.Components.Temporal.GRPCPort = 7233
 
 		currentCache := ConfigCache{
 			DaprDashboardPort: 8080,
@@ -256,24 +214,12 @@ func TestConfigCacheFunctions(t *testing.T) {
 
 	t.Run("hasConfigChanged should handle empty cache", func(t *testing.T) {
 		// Given a configuration and an empty cache (first run)
-		currentConfig := LocalEnvConfig{
-			Dapr: struct {
-				DashboardPort int `yaml:"dashboardPort"`
-				ZipkinPort    int `yaml:"zipkinPort"`
-			}{
-				DashboardPort: 8080,
-				ZipkinPort:    9411,
-			},
-			Temporal: struct {
-				Namespace string `yaml:"namespace"`
-				UIPort    int    `yaml:"uiPort"`
-				GRPCPort  int    `yaml:"grpcPort"`
-			}{
-				Namespace: "default",
-				UIPort:    8233,
-				GRPCPort:  7233,
-			},
-		}
+		currentConfig := LocalEnvConfig{}
+		currentConfig.Components.Dapr.DashboardPort = 8080
+		currentConfig.Components.Dapr.ZipkinPort = 9411
+		currentConfig.Components.Temporal.Namespace = "default"
+		currentConfig.Components.Temporal.UIPort = 8233
+		currentConfig.Components.Temporal.GRPCPort = 7233
 
 		currentCache := ConfigCache{} // Empty cache
 

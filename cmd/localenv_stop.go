@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ var stopCmd = &cobra.Command{
 		skipDaprDashboard, _ := cmd.Flags().GetBool("skip-dapr-dashboard")
 		skipOpenSearch, _ := cmd.Flags().GetBool("skip-opensearch")
 		force, _ := cmd.Flags().GetBool("force")
+		cleanLogs, _ := cmd.Flags().GetBool("clean-logs")
 		configPath, _ := cmd.Flags().GetString("config")
 
 		// If no config path is provided, look for localenv.yaml in current directory
@@ -81,13 +83,13 @@ var stopCmd = &cobra.Command{
 
 		if configLoaded {
 			// If config is loaded, only stop enabled components (unless explicitly skipped)
-			if !config.Components.Dapr {
+			if !config.Components.Dapr.Enabled {
 				stopDapr = false
 			}
-			if !config.Components.Temporal {
+			if !config.Components.Temporal.Enabled {
 				stopTemporal = false
 			}
-			if !config.Components.DaprDashboard {
+			if !config.Components.Dapr.Dashboard {
 				stopDaprDashboard = false
 			}
 		}
@@ -146,8 +148,8 @@ var stopCmd = &cobra.Command{
 			}
 
 			// Method 3: Try using lsof to find processes using the dashboard port
-			if configLoaded && config.Dapr.DashboardPort > 0 {
-				portStr := fmt.Sprintf("%d", config.Dapr.DashboardPort)
+			if configLoaded && config.Components.Dapr.DashboardPort > 0 {
+				portStr := fmt.Sprintf("%d", config.Components.Dapr.DashboardPort)
 				lsofCmd := exec.Command("lsof", "-i", fmt.Sprintf(":%s", portStr))
 				lsofOutput, lsofErr := lsofCmd.Output()
 
@@ -232,11 +234,11 @@ var stopCmd = &cobra.Command{
 
 			// Load port values from config if available
 			if configLoaded {
-				if config.Temporal.UIPort != 0 {
-					temporalUIPort = config.Temporal.UIPort
+				if config.Components.Temporal.UIPort != 0 {
+					temporalUIPort = config.Components.Temporal.UIPort
 				}
-				if config.Temporal.GRPCPort != 0 {
-					temporalGRPCPort = config.Temporal.GRPCPort
+				if config.Components.Temporal.GRPCPort != 0 {
+					temporalGRPCPort = config.Components.Temporal.GRPCPort
 				}
 			}
 
@@ -377,6 +379,25 @@ var stopCmd = &cobra.Command{
 
 			if temporalStopped {
 				fmt.Println("✅ Temporal stopped successfully.")
+
+				// Clean up Temporal server logs
+				logsDir := filepath.Join(os.Getenv("HOME"), ".logs", "devhelper-cli")
+				logFilePath := filepath.Join(logsDir, "temporal-server.log")
+
+				if _, err := os.Stat(logFilePath); err == nil {
+					// Log file exists, clean it up
+					if cleanLogs {
+						if err := os.Remove(logFilePath); err != nil {
+							fmt.Printf("⚠️ Failed to remove log file: %v\n", err)
+						} else {
+							fmt.Printf("✅ Removed Temporal server log file: %s\n", logFilePath)
+						}
+					} else {
+						fmt.Printf("ℹ️ Temporal server logs are available at: %s\n", logFilePath)
+						fmt.Println("   Use --clean-logs flag to remove logs when stopping")
+					}
+				}
+
 				stoppedCount++
 			} else {
 				fmt.Println("❌ Failed to find or stop Temporal server processes.")
@@ -452,7 +473,7 @@ var stopCmd = &cobra.Command{
 		}
 
 		// Stop OpenSearch if enabled
-		if !skipOpenSearch && (!configLoaded || config.Components.OpenSearch) {
+		if !skipOpenSearch && (!configLoaded || config.Components.OpenSearch.Enabled) {
 			fmt.Println("\n=== Stopping OpenSearch Dashboard ===")
 			stopDashboardCmd := exec.Command("podman", "rm", "-f", "opensearch-dashboard")
 			if err := stopDashboardCmd.Run(); err != nil {
@@ -501,5 +522,6 @@ func init() {
 	stopCmd.Flags().Bool("skip-dapr-dashboard", false, "Skip stopping Dapr Dashboard")
 	stopCmd.Flags().Bool("skip-opensearch", false, "Skip stopping OpenSearch")
 	stopCmd.Flags().Bool("force", false, "Force stop all components even if errors occur")
+	stopCmd.Flags().Bool("clean-logs", false, "Remove log files when stopping components")
 	stopCmd.Flags().StringP("config", "c", "", "Path to environment configuration file (default: localenv.yaml)")
 }

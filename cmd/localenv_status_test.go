@@ -89,7 +89,7 @@ func TestStatusHelperFunctions(t *testing.T) {
 		assert.Equal(t, []string{"operator", "namespace", "describe", "default"}, result, "Default namespace should be used")
 
 		// Test with custom namespace in config
-		config.Temporal.Namespace = "customns"
+		config.Components.Temporal.Namespace = "customns"
 		result = getTemporalNamespaceArgs(true, config)
 		assert.Equal(t, []string{"operator", "namespace", "describe", "customns"}, result, "Custom namespace should be used")
 	})
@@ -101,7 +101,7 @@ func TestStatusHelperFunctions(t *testing.T) {
 		assert.Equal(t, "http://localhost:8233", result, "Default UI port should be used")
 
 		// Test with custom port
-		config.Temporal.UIPort = 9000
+		config.Components.Temporal.UIPort = 9000
 		result = getTemporalUIURL(true, config)
 		assert.Equal(t, "http://localhost:9000", result, "Custom UI port should be used")
 	})
@@ -113,7 +113,7 @@ func TestStatusHelperFunctions(t *testing.T) {
 		assert.Equal(t, "http://localhost:8080", result, "Default dashboard port should be used")
 
 		// Test with custom port
-		config.Dapr.DashboardPort = 9000
+		config.Components.Dapr.DashboardPort = 9000
 		result = getDaprDashboardURL(true, config)
 		assert.Equal(t, "http://localhost:9000", result, "Custom dashboard port should be used")
 	})
@@ -130,7 +130,7 @@ func TestStatusHelperFunctions(t *testing.T) {
 		// Since we can't easily mock isDaprDashboardAvailable, we'll test the function
 		// based on the actual system state
 		config := LocalEnvConfig{}
-		config.Dapr.DashboardPort = 9000
+		config.Components.Dapr.DashboardPort = 9000
 
 		// The actual result depends on whether the dapr dashboard command is available
 		// on the system where the test is running
@@ -149,7 +149,7 @@ func TestStatusHelperFunctions(t *testing.T) {
 		assert.Equal(t, "http://localhost:9411", result, "Default Zipkin port should be used")
 
 		// Test with custom port
-		config.Dapr.ZipkinPort = 9000
+		config.Components.Dapr.ZipkinPort = 9000
 		result = getZipkinURL(true, config)
 		assert.Equal(t, "http://localhost:9000", result, "Custom Zipkin port should be used")
 	})

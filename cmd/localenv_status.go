@@ -108,7 +108,7 @@ environment are running, including:
 				CheckCommand: "dapr",
 				CheckArgs:    []string{"list"},
 				Available:    isCommandAvailable("dapr"),
-				Enabled:      getDaprStatusRequirement(configLoaded, config.Components.Dapr),
+				Enabled:      getDaprStatusRequirement(configLoaded, config.Components.Dapr.Enabled),
 				WebUIURL:     getDaprWebUIURL(configLoaded, config),
 				CheckUI:      isDaprDashboardAvailable(),
 				IsBinary:     false,
@@ -118,7 +118,7 @@ environment are running, including:
 				CheckCommand: "temporal",
 				CheckArgs:    getTemporalNamespaceArgs(configLoaded, config),
 				Available:    isCommandAvailable("temporal"),
-				Enabled:      getTemporalStatusRequirement(configLoaded, config.Components.Temporal),
+				Enabled:      getTemporalStatusRequirement(configLoaded, config.Components.Temporal.Enabled),
 				WebUIURL:     getTemporalUIURL(configLoaded, config),
 				CheckUI:      true,
 				IsBinary:     false,
@@ -272,12 +272,12 @@ environment are running, including:
 				}
 
 				// Check if the configured namespace exists (if not default)
-				if comp.Name == "Temporal" && configLoaded && config.Components.Temporal && config.Temporal.Namespace != "" && config.Temporal.Namespace != "default" {
-					namespaceCmd := exec.Command("temporal", "operator", "namespace", "describe", config.Temporal.Namespace)
+				if comp.Name == "Temporal" && configLoaded && config.Components.Temporal.Enabled && config.Components.Temporal.Namespace != "" && config.Components.Temporal.Namespace != "default" {
+					namespaceCmd := exec.Command("temporal", "operator", "namespace", "describe", config.Components.Temporal.Namespace)
 					if err := namespaceCmd.Run(); err != nil {
-						fmt.Printf("   ⚠️ Namespace '%s' does not exist. It will be created when starting the environment.\n", config.Temporal.Namespace)
+						fmt.Printf("   ⚠️ Namespace '%s' does not exist. It will be created when starting the environment.\n", config.Components.Temporal.Namespace)
 					} else {
-						fmt.Printf("   ✅ Temporal namespace '%s' exists\n", config.Temporal.Namespace)
+						fmt.Printf("   ✅ Temporal namespace '%s' exists\n", config.Components.Temporal.Namespace)
 					}
 				}
 			}
@@ -308,7 +308,7 @@ environment are running, including:
 		}
 
 		// Check OpenSearch
-		if configLoaded && config.Components.OpenSearch {
+		if configLoaded && config.Components.OpenSearch.Enabled {
 			// First check if OpenSearch service container is running
 			checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
 			output, err := checkCmd.CombinedOutput()
@@ -328,7 +328,7 @@ environment are running, including:
 				fmt.Println("✅ OpenSearch: Running")
 
 				// Attempt to check the health of the OpenSearch service
-				url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port)
+				url := fmt.Sprintf("http://localhost:%d", config.Components.OpenSearch.Port)
 
 				client := http.Client{
 					Timeout: 2 * time.Second,
@@ -350,12 +350,12 @@ environment are running, including:
 				if httpErr == nil {
 					defer resp.Body.Close()
 					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-						fmt.Printf("   API: http://localhost:%d (available)\n", config.OpenSearch.Port)
+						fmt.Printf("   API: http://localhost:%d (available)\n", config.Components.OpenSearch.Port)
 					} else {
-						fmt.Printf("   API: http://localhost:%d (unhealthy, status code: %d)\n", config.OpenSearch.Port, resp.StatusCode)
+						fmt.Printf("   API: http://localhost:%d (unhealthy, status code: %d)\n", config.Components.OpenSearch.Port, resp.StatusCode)
 					}
 				} else {
-					fmt.Printf("   API: http://localhost:%d (unavailable, service may still be starting)\n", config.OpenSearch.Port)
+					fmt.Printf("   API: http://localhost:%d (unavailable, service may still be starting)\n", config.Components.OpenSearch.Port)
 					if verbose {
 						fmt.Printf("   Error: %v\n", httpErr)
 					}
@@ -368,7 +368,7 @@ environment are running, including:
 
 				if dashboardRunning {
 					fmt.Println("✅ OpenSearch Dashboard: Running")
-					fmt.Printf("   Dashboard: http://localhost:%d (available)\n", config.OpenSearch.DashboardPort)
+					fmt.Printf("   Dashboard: http://localhost:%d (available)\n", config.Components.OpenSearch.DashboardPort)
 				} else {
 					fmt.Println("❌ OpenSearch Dashboard: Not running")
 					fmt.Println("   Run 'devhelper-cli localenv start' to start the OpenSearch Dashboard")
@@ -392,20 +392,20 @@ environment are running, including:
 			fmt.Println("✅ All components are running properly.")
 
 			// Show concise component information
-			if configLoaded && config.Components.Temporal {
+			if configLoaded && config.Components.Temporal.Enabled {
 				// Extract Temporal configuration values
 				uiPort := 8233
 				grpcPort := 7233
 				namespace := "default"
 
-				if config.Temporal.UIPort != 0 {
-					uiPort = config.Temporal.UIPort
+				if config.Components.Temporal.UIPort != 0 {
+					uiPort = config.Components.Temporal.UIPort
 				}
-				if config.Temporal.GRPCPort != 0 {
-					grpcPort = config.Temporal.GRPCPort
+				if config.Components.Temporal.GRPCPort != 0 {
+					grpcPort = config.Components.Temporal.GRPCPort
 				}
-				if config.Temporal.Namespace != "" {
-					namespace = config.Temporal.Namespace
+				if config.Components.Temporal.Namespace != "" {
+					namespace = config.Components.Temporal.Namespace
 				}
 
 				fmt.Printf("\nTemporal UI: http://localhost:%d\n", uiPort)
@@ -413,7 +413,7 @@ environment are running, including:
 			}
 
 			// Show Dapr connection information if enabled
-			if configLoaded && config.Components.Dapr {
+			if configLoaded && config.Components.Dapr.Enabled {
 				// Check for Dapr Dashboard
 				if isDaprDashboardAvailable() {
 					dashboardURL := getDaprDashboardURL(configLoaded, config)
@@ -459,7 +459,7 @@ environment are running, including:
 			}
 
 			// Show OpenSearch information if enabled and running
-			if configLoaded && config.Components.OpenSearch {
+			if configLoaded && config.Components.OpenSearch.Enabled {
 				// First check if OpenSearch service container is running
 				checkCmd := exec.Command("podman", "ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}")
 				output, err := checkCmd.CombinedOutput()
@@ -492,10 +492,10 @@ environment are running, including:
 					// Send request with or without credentials based on security status
 					if securityDisabled {
 						// No credentials needed when security is disabled
-						resp, httpErr = client.Get(fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port))
+						resp, httpErr = client.Get(fmt.Sprintf("http://localhost:%d", config.Components.OpenSearch.Port))
 					} else {
 						// Use credentials when security is enabled
-						req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%d", config.OpenSearch.Port), nil)
+						req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%d", config.Components.OpenSearch.Port), nil)
 						resp, httpErr = client.Do(req)
 					}
 
@@ -509,7 +509,7 @@ environment are running, including:
 
 					// Display OpenSearch information
 					fmt.Println("\nOpenSearch:")
-					fmt.Printf("- API: http://localhost:%d", config.OpenSearch.Port)
+					fmt.Printf("- API: http://localhost:%d", config.Components.OpenSearch.Port)
 					if apiAccessible {
 						fmt.Println(" (accessible)")
 					} else {
@@ -517,9 +517,9 @@ environment are running, including:
 					}
 
 					if dashboardRunning {
-						fmt.Printf("- Dashboard: http://localhost:%d (running)\n", config.OpenSearch.DashboardPort)
+						fmt.Printf("- Dashboard: http://localhost:%d (running)\n", config.Components.OpenSearch.DashboardPort)
 					} else {
-						fmt.Printf("- Dashboard: http://localhost:%d (not running)\n", config.OpenSearch.DashboardPort)
+						fmt.Printf("- Dashboard: http://localhost:%d (not running)\n", config.Components.OpenSearch.DashboardPort)
 					}
 
 					fmt.Println("- Security plugin disabled - no credentials required for API")
@@ -547,25 +547,25 @@ func checkToolFunctionality(command string, args []string, verbose bool) bool {
 }
 
 // Helper functions for status command
-func getDaprStatusRequirement(configLoaded bool, configValue bool) bool {
-	if configLoaded {
-		return configValue
+func getDaprStatusRequirement(configLoaded bool, enabled bool) bool {
+	if !configLoaded {
+		return true // Default to enabled if no config
 	}
-	return true
+	return enabled
 }
 
-func getTemporalStatusRequirement(configLoaded bool, configValue bool) bool {
-	if configLoaded {
-		return configValue
+func getTemporalStatusRequirement(configLoaded bool, enabled bool) bool {
+	if !configLoaded {
+		return true // Default to enabled if no config
 	}
-	return true
+	return enabled
 }
 
 // Helper function to get Temporal namespace args
 func getTemporalNamespaceArgs(configLoaded bool, config LocalEnvConfig) []string {
 	namespace := "default"
-	if configLoaded && config.Temporal.Namespace != "" {
-		namespace = config.Temporal.Namespace
+	if configLoaded && config.Components.Temporal.Namespace != "" {
+		namespace = config.Components.Temporal.Namespace
 	}
 	return []string{"operator", "namespace", "describe", namespace}
 }
@@ -574,8 +574,8 @@ func getTemporalNamespaceArgs(configLoaded bool, config LocalEnvConfig) []string
 func getTemporalUIURL(configLoaded bool, config LocalEnvConfig) string {
 	uiPort := 8233
 
-	if configLoaded && config.Temporal.UIPort != 0 {
-		uiPort = config.Temporal.UIPort
+	if configLoaded && config.Components.Temporal.UIPort != 0 {
+		uiPort = config.Components.Temporal.UIPort
 	}
 
 	return fmt.Sprintf("http://localhost:%d", uiPort)
@@ -593,8 +593,8 @@ func isDaprDashboardAvailable() bool {
 func getDaprDashboardURL(configLoaded bool, config LocalEnvConfig) string {
 	dashboardPort := 8080
 
-	if configLoaded && config.Dapr.DashboardPort != 0 {
-		dashboardPort = config.Dapr.DashboardPort
+	if configLoaded && config.Components.Dapr.DashboardPort != 0 {
+		dashboardPort = config.Components.Dapr.DashboardPort
 	}
 
 	// Simply return the configured URL
@@ -674,8 +674,8 @@ func getDaprWebUIURL(configLoaded bool, config LocalEnvConfig) string {
 func getZipkinURL(configLoaded bool, config LocalEnvConfig) string {
 	zipkinPort := 9411
 
-	if configLoaded && config.Dapr.ZipkinPort != 0 {
-		zipkinPort = config.Dapr.ZipkinPort
+	if configLoaded && config.Components.Dapr.ZipkinPort != 0 {
+		zipkinPort = config.Components.Dapr.ZipkinPort
 	}
 
 	return fmt.Sprintf("http://localhost:%d", zipkinPort)

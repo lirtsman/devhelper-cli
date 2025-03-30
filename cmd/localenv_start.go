@@ -16,6 +16,7 @@ limitations under the License.
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,61 +45,61 @@ type ConfigCache struct {
 func hasConfigChanged(config LocalEnvConfig, currentCache ConfigCache) (bool, ConfigCache, []string) {
 	changes := []string{}
 	newCache := ConfigCache{
-		DaprDashboardPort:  config.Dapr.DashboardPort,
-		TemporalUIPort:     config.Temporal.UIPort,
-		TemporalGRPCPort:   config.Temporal.GRPCPort,
-		TemporalNamespace:  config.Temporal.Namespace,
-		OpenSearchPort:     config.OpenSearch.Port,
-		OpenSearchDashPort: config.OpenSearch.DashboardPort,
+		DaprDashboardPort:  config.Components.Dapr.DashboardPort,
+		TemporalUIPort:     config.Components.Temporal.UIPort,
+		TemporalGRPCPort:   config.Components.Temporal.GRPCPort,
+		TemporalNamespace:  config.Components.Temporal.Namespace,
+		OpenSearchPort:     config.Components.OpenSearch.Port,
+		OpenSearchDashPort: config.Components.OpenSearch.DashboardPort,
 	}
 
 	hasChanges := false
 
 	// Check for dashboard port change
 	if currentCache.DaprDashboardPort != 0 &&
-		currentCache.DaprDashboardPort != config.Dapr.DashboardPort {
+		currentCache.DaprDashboardPort != config.Components.Dapr.DashboardPort {
 		changes = append(changes, fmt.Sprintf("Dapr Dashboard port changed: %d → %d",
-			currentCache.DaprDashboardPort, config.Dapr.DashboardPort))
+			currentCache.DaprDashboardPort, config.Components.Dapr.DashboardPort))
 		hasChanges = true
 	}
 
 	// Check for Temporal UI port change
 	if currentCache.TemporalUIPort != 0 &&
-		currentCache.TemporalUIPort != config.Temporal.UIPort {
+		currentCache.TemporalUIPort != config.Components.Temporal.UIPort {
 		changes = append(changes, fmt.Sprintf("Temporal UI port changed: %d → %d",
-			currentCache.TemporalUIPort, config.Temporal.UIPort))
+			currentCache.TemporalUIPort, config.Components.Temporal.UIPort))
 		hasChanges = true
 	}
 
 	// Check for Temporal GRPC port change
 	if currentCache.TemporalGRPCPort != 0 &&
-		currentCache.TemporalGRPCPort != config.Temporal.GRPCPort {
+		currentCache.TemporalGRPCPort != config.Components.Temporal.GRPCPort {
 		changes = append(changes, fmt.Sprintf("Temporal GRPC port changed: %d → %d",
-			currentCache.TemporalGRPCPort, config.Temporal.GRPCPort))
+			currentCache.TemporalGRPCPort, config.Components.Temporal.GRPCPort))
 		hasChanges = true
 	}
 
 	// Check for Temporal namespace change
 	if currentCache.TemporalNamespace != "" &&
-		currentCache.TemporalNamespace != config.Temporal.Namespace {
+		currentCache.TemporalNamespace != config.Components.Temporal.Namespace {
 		changes = append(changes, fmt.Sprintf("Temporal namespace changed: %s → %s",
-			currentCache.TemporalNamespace, config.Temporal.Namespace))
+			currentCache.TemporalNamespace, config.Components.Temporal.Namespace))
 		hasChanges = true
 	}
 
 	// Check for OpenSearch port change
 	if currentCache.OpenSearchPort != 0 &&
-		currentCache.OpenSearchPort != config.OpenSearch.Port {
+		currentCache.OpenSearchPort != config.Components.OpenSearch.Port {
 		changes = append(changes, fmt.Sprintf("OpenSearch port changed: %d → %d",
-			currentCache.OpenSearchPort, config.OpenSearch.Port))
+			currentCache.OpenSearchPort, config.Components.OpenSearch.Port))
 		hasChanges = true
 	}
 
 	// Check for OpenSearch Dashboard port change
 	if currentCache.OpenSearchDashPort != 0 &&
-		currentCache.OpenSearchDashPort != config.OpenSearch.DashboardPort {
+		currentCache.OpenSearchDashPort != config.Components.OpenSearch.DashboardPort {
 		changes = append(changes, fmt.Sprintf("OpenSearch Dashboard port changed: %d → %d",
-			currentCache.OpenSearchDashPort, config.OpenSearch.DashboardPort))
+			currentCache.OpenSearchDashPort, config.Components.OpenSearch.DashboardPort))
 		hasChanges = true
 	}
 
@@ -199,8 +200,8 @@ in the correct order.`,
 					fmt.Printf("✅ Loaded configuration from %s\n", configPath)
 
 					// Check if OpenSearch config is missing and add it if needed
-					openSearchMissing := config.OpenSearch.Port == 0 &&
-						config.OpenSearch.DashboardPort == 0
+					openSearchMissing := config.Components.OpenSearch.Port == 0 &&
+						config.Components.OpenSearch.DashboardPort == 0
 
 					// Check if Podman is available (required for OpenSearch)
 					podmanAvailable := isCommandAvailable("podman")
@@ -209,29 +210,34 @@ in the correct order.`,
 						fmt.Println("ℹ️ Adding default OpenSearch configuration to localenv.yaml")
 
 						// Enable OpenSearch component
-						config.Components.OpenSearch = true
+						config.Components.OpenSearch.Enabled = true
 
 						// Set default OpenSearch configuration
-						config.OpenSearch.Port = 9200
-						config.OpenSearch.DashboardPort = 5601
+						config.Components.OpenSearch.Port = 9200
+						config.Components.OpenSearch.DashboardPort = 5601
 
 						// Find Podman path
 						podmanPath, err := exec.LookPath("podman")
 						if err == nil {
-							config.Paths.Podman = podmanPath
+							config.Tools.Podman.Path = podmanPath
 						}
 
 						// Update the config file
-						updatedConfigData, err := yamlv3.Marshal(config)
-						if err == nil {
-							err = os.WriteFile(configPath, updatedConfigData, 0644)
+						var buf bytes.Buffer
+						encoder := yamlv3.NewEncoder(&buf)
+						encoder.SetIndent(2)
+
+						if err := encoder.Encode(config); err != nil {
+							if verbose {
+								fmt.Printf("⚠️ Failed to marshal updated configuration: %v\n", err)
+							}
+						} else {
+							err = os.WriteFile(configPath, buf.Bytes(), 0644)
 							if err == nil {
 								fmt.Println("✅ Updated localenv.yaml with OpenSearch configuration")
 							} else if verbose {
 								fmt.Printf("⚠️ Failed to update configuration file: %v\n", err)
 							}
-						} else if verbose {
-							fmt.Printf("⚠️ Failed to marshal updated configuration: %v\n", err)
 						}
 					}
 				} else if verbose {
@@ -258,16 +264,16 @@ in the correct order.`,
 
 		// Override config with command line flags
 		if skipDapr {
-			config.Components.Dapr = false
+			config.Components.Dapr.Enabled = false
 		}
 		if skipTemporal {
-			config.Components.Temporal = false
+			config.Components.Temporal.Enabled = false
 		}
 		if skipDaprDashboard {
-			config.Components.DaprDashboard = false
+			config.Components.Dapr.Dashboard = false
 		}
 		if skipOpenSearch {
-			config.Components.OpenSearch = false
+			config.Components.OpenSearch.Enabled = false
 		}
 
 		// Function to check if Temporal server is accessible
@@ -373,7 +379,7 @@ in the correct order.`,
 			retryDelay := 5 * time.Second
 
 			// Use HTTP for dev environment
-			url := fmt.Sprintf("http://localhost:%d/_cluster/health", config.OpenSearch.Port)
+			url := fmt.Sprintf("http://localhost:%d/_cluster/health", config.Components.OpenSearch.Port)
 
 			for i := 0; i < maxRetries; i++ {
 				if i > 0 {
@@ -437,7 +443,7 @@ in the correct order.`,
 			retryDelay := 5 * time.Second
 
 			// Check dashboard availability
-			url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.DashboardPort)
+			url := fmt.Sprintf("http://localhost:%d", config.Components.OpenSearch.DashboardPort)
 
 			for i := 0; i < maxRetries; i++ {
 				if i > 0 {
@@ -534,7 +540,7 @@ in the correct order.`,
 				CheckArgs:       []string{"status"},
 				RequiredFor:     []string{},
 				StartupDelay:    2 * time.Second,
-				IsRequired:      getDaprRequirement(configLoaded, config.Components.Dapr, skipDapr),
+				IsRequired:      getDaprRequirement(configLoaded, config.Components.Dapr.Enabled, skipDapr),
 				CommandExists:   isCommandAvailable("dapr"),
 				VerifyAvailable: checkDaprRunning,
 				RequiresStartup: true, // Dapr needs to be started
@@ -543,12 +549,12 @@ in the correct order.`,
 			{
 				Name:         "DaprDashboard",
 				Command:      "dapr",
-				Args:         []string{"dashboard", "-p", strconv.Itoa(config.Dapr.DashboardPort), "--address", "0.0.0.0"},
+				Args:         []string{"dashboard", "-p", strconv.Itoa(config.Components.Dapr.DashboardPort), "--address", "0.0.0.0"},
 				CheckCommand: "dapr",
 				CheckArgs:    []string{"dashboard", "--help"},
 				RequiredFor:  []string{},
 				StartupDelay: 1 * time.Second,
-				IsRequired:   getDaprDashboardRequirement(configLoaded, config.Components.DaprDashboard, skipDaprDashboard),
+				IsRequired:   getDaprDashboardRequirement(configLoaded, config.Components.Dapr.Dashboard, skipDaprDashboard),
 				CommandExists: func() bool {
 					// Check if dapr dashboard command is available
 					cmd := exec.Command("dapr", "dashboard", "--help")
@@ -570,7 +576,7 @@ in the correct order.`,
 				CheckArgs:       []string{"workflow", "list"},
 				RequiredFor:     []string{},
 				StartupDelay:    5 * time.Second, // Increased delay for Temporal to start fully
-				IsRequired:      getTemporalRequirement(configLoaded, config.Components.Temporal, skipTemporal),
+				IsRequired:      getTemporalRequirement(configLoaded, config.Components.Temporal.Enabled, skipTemporal),
 				CommandExists:   isCommandAvailable("temporal"),
 				VerifyAvailable: checkTemporalServerRunning,
 				RequiresStartup: true, // Temporal needs to be started
@@ -583,7 +589,7 @@ in the correct order.`,
 					"run",
 					"-d",
 					"--name", "opensearch-node",
-					"-p", fmt.Sprintf("%d:9200", config.OpenSearch.Port),
+					"-p", fmt.Sprintf("%d:9200", config.Components.OpenSearch.Port),
 					"-e", "cluster.name=devhelper-cluster",
 					"-e", "node.name=opensearch-node",
 					"-e", "discovery.type=single-node",
@@ -595,13 +601,13 @@ in the correct order.`,
 					"--health-retries", "5",
 					"--network", "opensearch-network",
 					"--restart", "unless-stopped",
-					"opensearchproject/opensearch:2.17.1",
+					fmt.Sprintf("opensearchproject/opensearch:%s", config.Components.OpenSearch.Version),
 				},
 				CheckCommand:    "podman",
 				CheckArgs:       []string{"ps", "--filter", "name=opensearch-node", "--format", "{{.Names}}"},
 				RequiredFor:     []string{"OpenSearchDashboard"},
 				StartupDelay:    30 * time.Second, // OpenSearch needs more time to initialize
-				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch, skipOpenSearch),
+				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch.Enabled, skipOpenSearch),
 				CommandExists:   isCommandAvailable("podman"),
 				VerifyAvailable: checkOpenSearchRunning,
 				RequiresStartup: true,
@@ -614,18 +620,18 @@ in the correct order.`,
 					"run",
 					"-d",
 					"--name", "opensearch-dashboard",
-					"-p", fmt.Sprintf("%d:5601", config.OpenSearch.DashboardPort),
+					"-p", fmt.Sprintf("%d:5601", config.Components.OpenSearch.DashboardPort),
 					"-e", "OPENSEARCH_HOSTS=[\"http://opensearch-node:9200\"]",
 					"-e", "DISABLE_SECURITY_DASHBOARDS_PLUGIN=true",
 					"--network", "opensearch-network",
 					"--restart", "unless-stopped",
-					"opensearchproject/opensearch-dashboards:2.17.1",
+					fmt.Sprintf("opensearchproject/opensearch-dashboards:%s", config.Components.OpenSearch.Version),
 				},
 				CheckCommand:    "podman",
 				CheckArgs:       []string{"ps", "--filter", "name=opensearch-dashboard", "--format", "{{.Names}}"},
 				RequiredFor:     []string{},
 				StartupDelay:    15 * time.Second,
-				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch, skipOpenSearch),
+				IsRequired:      getOpenSearchRequirement(configLoaded, config.Components.OpenSearch.Enabled, skipOpenSearch),
 				CommandExists:   isCommandAvailable("podman"),
 				VerifyAvailable: checkOpenSearchDashboardRunning,
 				RequiresStartup: true,
@@ -759,7 +765,7 @@ in the correct order.`,
 			// Special handling for Dapr Dashboard
 			if comp.Name == "DaprDashboard" {
 				// First check if the desired port is already in use
-				dashboardPort := config.Dapr.DashboardPort
+				dashboardPort := config.Components.Dapr.DashboardPort
 
 				// Get dashboard PID if it's running
 				dashboardPID := getDaprDashboardPID()
@@ -857,9 +863,9 @@ in the correct order.`,
 			// Special handling for Temporal server
 			if comp.Name == "Temporal" {
 				// Get Temporal configuration
-				temporalUIPort := config.Temporal.UIPort
-				temporalGRPCPort := config.Temporal.GRPCPort
-				temporalNamespace := config.Temporal.Namespace
+				temporalUIPort := config.Components.Temporal.UIPort
+				temporalGRPCPort := config.Components.Temporal.GRPCPort
+				temporalNamespace := config.Components.Temporal.Namespace
 
 				// Check if Temporal is already running and if there are config changes
 				temporalRunning := checkTemporalServerRunning()
@@ -972,7 +978,7 @@ in the correct order.`,
 				// Prepare command with namespace flag if configured
 				var temporalCmd *exec.Cmd
 				temporalNamespaceToCreate := ""
-				if configLoaded && config.Components.Temporal && temporalNamespace != "" && temporalNamespace != "default" {
+				if configLoaded && config.Components.Temporal.Enabled && temporalNamespace != "" && temporalNamespace != "default" {
 					fmt.Printf("Configuring Temporal with namespace: %s\n", temporalNamespace)
 					// Store the namespace name for creation after server starts
 					temporalNamespaceToCreate = temporalNamespace
@@ -1179,7 +1185,7 @@ in the correct order.`,
 				retryDelay := 5 * time.Second
 
 				// Use HTTP for dev environment
-				url := fmt.Sprintf("http://localhost:%d/_cluster/health", config.OpenSearch.Port)
+				url := fmt.Sprintf("http://localhost:%d/_cluster/health", config.Components.OpenSearch.Port)
 
 				for i := 0; i < maxRetries; i++ {
 					if i > 0 {
@@ -1331,7 +1337,7 @@ in the correct order.`,
 				retryDelay := 5 * time.Second
 
 				// Check dashboard URL
-				url := fmt.Sprintf("http://localhost:%d", config.OpenSearch.DashboardPort)
+				url := fmt.Sprintf("http://localhost:%d", config.Components.OpenSearch.DashboardPort)
 
 				for i := 0; i < maxRetries; i++ {
 					if i > 0 {
@@ -1420,20 +1426,20 @@ in the correct order.`,
 			fmt.Println("\n=== Component URLs ===")
 
 			// Temporal URLs
-			if config.Components.Temporal && !skipTemporal {
+			if config.Components.Temporal.Enabled && !skipTemporal {
 				// Extract Temporal configuration values
 				uiPort := 8233
 				grpcPort := 7233
 				namespace := "default"
 
-				if config.Temporal.UIPort != 0 {
-					uiPort = config.Temporal.UIPort
+				if config.Components.Temporal.UIPort != 0 {
+					uiPort = config.Components.Temporal.UIPort
 				}
-				if config.Temporal.GRPCPort != 0 {
-					grpcPort = config.Temporal.GRPCPort
+				if config.Components.Temporal.GRPCPort != 0 {
+					grpcPort = config.Components.Temporal.GRPCPort
 				}
-				if config.Temporal.Namespace != "" {
-					namespace = config.Temporal.Namespace
+				if config.Components.Temporal.Namespace != "" {
+					namespace = config.Components.Temporal.Namespace
 				}
 
 				fmt.Printf("Temporal UI: http://localhost:%d\n", uiPort)
@@ -1442,26 +1448,26 @@ in the correct order.`,
 			}
 
 			// Dapr URLs
-			if config.Components.Dapr && !skipDapr {
+			if config.Components.Dapr.Enabled && !skipDapr {
 				// Show Dapr Dashboard URL if enabled
-				if config.Components.DaprDashboard && !skipDaprDashboard {
-					dashboardPort := config.Dapr.DashboardPort
+				if config.Components.Dapr.Dashboard && !skipDaprDashboard {
+					dashboardPort := config.Components.Dapr.DashboardPort
 					fmt.Printf("Dapr Dashboard: http://localhost:%d\n", dashboardPort)
 				}
 
 				// Show Zipkin URL for tracing
 				zipkinPort := 9411
-				if config.Dapr.ZipkinPort != 0 {
-					zipkinPort = config.Dapr.ZipkinPort
+				if config.Components.Dapr.ZipkinPort != 0 {
+					zipkinPort = config.Components.Dapr.ZipkinPort
 				}
 				fmt.Printf("Zipkin UI (tracing): http://localhost:%d\n", zipkinPort)
 				fmt.Println()
 			}
 
 			// OpenSearch URLs
-			if config.Components.OpenSearch && !skipOpenSearch {
-				fmt.Printf("OpenSearch API: http://localhost:%d\n", config.OpenSearch.Port)
-				fmt.Printf("OpenSearch Dashboard: http://localhost:%d\n", config.OpenSearch.DashboardPort)
+			if config.Components.OpenSearch.Enabled && !skipOpenSearch {
+				fmt.Printf("OpenSearch API: http://localhost:%d\n", config.Components.OpenSearch.Port)
+				fmt.Printf("OpenSearch Dashboard: http://localhost:%d\n", config.Components.OpenSearch.DashboardPort)
 				fmt.Println()
 			}
 		}
