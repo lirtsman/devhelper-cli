@@ -1,4 +1,4 @@
-module github.com/lirtsman/devhelper-cli
+module github.com/ShieldFC-RD/devhelper-cli
 
 go 1.23.0
 

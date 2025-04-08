@@ -139,13 +139,13 @@ jobs:
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: |
-          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version_windows.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version_windows.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version_windows.outputs.COMMIT }}" -o ${{ matrix.output_name }}
+          go build -ldflags "-X github.com/ShieldFC-RD/devhelper-cli/cmd.Version=${{ steps.get_version_windows.outputs.VERSION }} -X github.com/ShieldFC-RD/devhelper-cli/cmd.BuildDate=${{ steps.get_version_windows.outputs.BUILD_DATE }} -X github.com/ShieldFC-RD/devhelper-cli/cmd.Commit=${{ steps.get_version_windows.outputs.COMMIT }}" -o ${{ matrix.output_name }}
 
       # Build for Unix-like systems
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
-          go build -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version_unix.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version_unix.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version_unix.outputs.COMMIT }}" -o ${{ matrix.output_name }}
+          go build -ldflags "-X github.com/ShieldFC-RD/devhelper-cli/cmd.Version=${{ steps.get_version_unix.outputs.VERSION }} -X github.com/ShieldFC-RD/devhelper-cli/cmd.BuildDate=${{ steps.get_version_unix.outputs.BUILD_DATE }} -X github.com/ShieldFC-RD/devhelper-cli/cmd.Commit=${{ steps.get_version_unix.outputs.COMMIT }}" -o ${{ matrix.output_name }}
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

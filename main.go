@@ -15,7 +15,7 @@ limitations under the License.
 */
 package main
 
-import "github.com/lirtsman/devhelper-cli/cmd"
+import "github.com/ShieldFC-RD/devhelper-cli/cmd"
 
 func main() {
 	cmd.Execute()

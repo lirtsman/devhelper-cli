@@ -36,7 +36,7 @@ devhelper-cli version
 
 ```bash
 # Clone the repository
-git clone https://github.com/lirtsman/devhelper-cli.git
+git clone https://github.com/ShieldFC-RD/devhelper-cli.git
 cd devhelper-cli
 
 # Build the CLI
@@ -49,18 +49,18 @@ sudo mv devhelper-cli /usr/local/bin/
 ### Using Go
 
 ```bash
-go install github.com/lirtsman/devhelper-cli@latest
+go install github.com/ShieldFC-RD/devhelper-cli@latest
 ```
 
 ### From GitHub Releases
 
-You can download pre-built binaries from the [GitHub Releases page](https://github.com/lirtsman/devhelper-cli/releases).
+You can download pre-built binaries from the [GitHub Releases page](https://github.com/ShieldFC-RD/devhelper-cli/releases).
 
 #### Linux
 
 ```bash
 # Download the latest release
-curl -L "https://github.com/lirtsman/devhelper-cli/releases/latest/download/devhelper-cli-linux-amd64" -o devhelper-cli
+curl -L "https://github.com/ShieldFC-RD/devhelper-cli/releases/latest/download/devhelper-cli-linux-amd64" -o devhelper-cli
 
 # Make it executable
 chmod +x devhelper-cli
@@ -76,7 +76,7 @@ devhelper-cli version
 
 ```bash
 # Download the latest release
-curl -L "https://github.com/lirtsman/devhelper-cli/releases/latest/download/devhelper-cli-darwin-amd64" -o devhelper-cli
+curl -L "https://github.com/ShieldFC-RD/devhelper-cli/releases/latest/download/devhelper-cli-darwin-amd64" -o devhelper-cli
 
 # Make it executable
 chmod +x devhelper-cli
@@ -90,7 +90,7 @@ devhelper-cli version
 
 #### Windows
 
-1. Download `devhelper-cli-windows-amd64.exe` from the [latest release](https://github.com/lirtsman/devhelper-cli/releases/latest)
+1. Download `devhelper-cli-windows-amd64.exe` from the [latest release](https://github.com/ShieldFC-RD/devhelper-cli/releases/latest)
 2. Rename it to `devhelper-cli.exe` (optional)
 3. Add it to a location in your PATH or use it from any directory by providing the full path
 
@@ -109,11 +109,11 @@ brew upgrade devhelper-cli
 
 ```bash
 # Linux/macOS
-curl -L "https://github.com/lirtsman/devhelper-cli/releases/latest/download/devhelper-cli-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64" -o /usr/local/bin/devhelper-cli
+curl -L "https://github.com/ShieldFC-RD/devhelper-cli/releases/latest/download/devhelper-cli-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64" -o /usr/local/bin/devhelper-cli
 chmod +x /usr/local/bin/devhelper-cli
 ```
 
-For Windows, download the new version from the [latest release](https://github.com/lirtsman/devhelper-cli/releases/latest) and replace your existing executable.
+For Windows, download the new version from the [latest release](https://github.com/ShieldFC-RD/devhelper-cli/releases/latest) and replace your existing executable.
 
 ## Usage
 
@@ -254,7 +254,7 @@ For detailed information about the development process, environment setup, and k
 
 ```bash
 # Clone the repository
-git clone https://github.com/lirtsman/devhelper-cli.git
+git clone https://github.com/ShieldFC-RD/devhelper-cli.git
 cd devhelper-cli
 
 # Install dependencies

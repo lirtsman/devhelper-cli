@@ -106,7 +106,7 @@ When creating a Pull Request, please:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/lirtsman/devhelper-cli.git
+   git clone https://github.com/ShieldFC-RD/devhelper-cli.git
    cd devhelper-cli
    ```
 

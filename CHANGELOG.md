@@ -52,8 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configuration handling
 - Test framework
 
-[Unreleased]: https://github.com/lirtsman/devhelper-cli/compare/v0.2.3...HEAD
-[v0.2.3]: https://github.com/lirtsman/devhelper-cli/compare/v0.2.2...v0.2.3
-[v0.2.2]: https://github.com/lirtsman/devhelper-cli/compare/v0.2.1...v0.2.2
-[v0.2.1]: https://github.com/lirtsman/devhelper-cli/compare/v0.1.0...v0.2.1
-[0.1.0]: https://github.com/lirtsman/devhelper-cli/releases/tag/v0.1.0 
+[Unreleased]: https://github.com/ShieldFC-RD/devhelper-cli/compare/v0.2.3...HEAD
+[v0.2.3]: https://github.com/ShieldFC-RD/devhelper-cli/compare/v0.2.2...v0.2.3
+[v0.2.2]: https://github.com/ShieldFC-RD/devhelper-cli/compare/v0.2.1...v0.2.2
+[v0.2.1]: https://github.com/ShieldFC-RD/devhelper-cli/compare/v0.1.0...v0.2.1
+[0.1.0]: https://github.com/ShieldFC-RD/devhelper-cli/releases/tag/v0.1.0 
