@@ -23,7 +23,7 @@ The easiest way to install DevHelper CLI is using Homebrew:
 
 ```bash
 # Add the tap (first time only)
-brew tap lirtsman/devhelper-cli
+brew tap ShieldFC-RD/devhelper-cli
 
 # Install the CLI
 brew install devhelper-cli

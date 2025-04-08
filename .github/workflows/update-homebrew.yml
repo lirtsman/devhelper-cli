@@ -41,7 +41,7 @@ jobs:
       - name: Checkout Homebrew tap repository
         uses: actions/checkout@v4
         with:
-          repository: lirtsman/homebrew-devhelper-cli
+          repository: ShieldFC-RD/homebrew-devhelper-cli
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
