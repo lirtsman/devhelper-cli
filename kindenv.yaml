@@ -1,0 +1,72 @@
+tools:
+    podman:
+        path: /opt/homebrew/bin/podman
+        version: 5.4.1
+    docker:
+        path: ""
+        version: ""
+    kind:
+        path: /opt/homebrew/bin/kind
+        version: version
+    kubectl:
+        path: /opt/homebrew/bin/kubectl
+        version: ""
+    helm:
+        path: /opt/homebrew/bin/helm
+        version: ""
+    aws:
+        path: /usr/local/bin/aws
+        version: aws-cli/2.11.2 Python/3.11.2 Darwin/24.4.0 exe/x86_64 prompt/off
+cluster:
+    name: temporal-worker-operator-test
+    createIfNotExists: true
+    mapPorts:
+        - containerPort: 80
+          hostPort: 80
+          protocol: TCP
+        - containerPort: 443
+          hostPort: 443
+          protocol: TCP
+components:
+    temporal:
+        enabled: true
+        namespace: temporal
+        webPort: 8080
+        webNodePort: 30080
+        frontendPort: 7233
+        frontendNodePort: 30733
+    redis:
+        enabled: true
+        port: 6379
+        nodePort: 30679
+        image: bitnami/redis:7.0.5-debian-11-r7
+        auth:
+            enabled: false
+    certManager:
+        enabled: true
+        version: v1.14.4
+    dapr:
+        enabled: true
+        version: 1.15.3
+        logLevel: debug
+        mtls:
+            enabled: false
+        ha:
+            enabled: false
+images:
+    skipPull: false
+    dockerHub:
+        username: ""
+        password: ""
+    useAwsEcr: true
+    aws:
+        region: eu-west-1
+        ecrRegistry: 992979781608.dkr.ecr.eu-west-1.amazonaws.com
+        serviceAccount: ecr-pull-service-account
+secrets:
+    mysql:
+        enabled: true
+        name: kvv2-mysql-creds
+        namespace: default
+        username: ""
+        password: ""

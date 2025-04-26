@@ -10,10 +10,12 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -36,6 +38,9 @@ type Client interface {
 
 	// General resource operations
 	ApplyManifest(manifest []byte) error
+
+	// Debug operations
+	PrintClusterInfo() error
 }
 
 type clientImpl struct {
@@ -132,7 +137,7 @@ func (c *clientImpl) CreateNamespace(name string) error {
 func (c *clientImpl) NamespaceExists(name string) (bool, error) {
 	_, err := c.clientset.CoreV1().Namespaces().Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
-		if metav1.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to check if namespace '%s' exists: %w", name, err)
@@ -174,7 +179,7 @@ func (c *clientImpl) PatchServiceAccount(namespace, name string, patchData []byt
 	_, err := c.clientset.CoreV1().ServiceAccounts(namespace).Patch(
 		context.Background(),
 		name,
-		metav1.PatchType("application/strategic-merge-patch+json"),
+		types.StrategicMergePatchType,
 		patchData,
 		metav1.PatchOptions{},
 	)
@@ -227,6 +232,21 @@ func (c *clientImpl) ApplyManifest(manifest []byte) error {
 		if err != nil {
 			return fmt.Errorf("failed to apply manifest: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// PrintClusterInfo prints information about the cluster for debugging
+func (c *clientImpl) PrintClusterInfo() error {
+	namespaces, err := c.clientset.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list namespaces: %w", err)
+	}
+
+	fmt.Println("--- Cluster Namespaces ---")
+	for _, ns := range namespaces.Items {
+		fmt.Printf("Namespace: %s\n", ns.Name)
 	}
 
 	return nil

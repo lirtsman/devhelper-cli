@@ -55,18 +55,14 @@ type KindEnvConfig struct {
 			FrontendNodePort int    `yaml:"frontendNodePort"`
 		} `yaml:"temporal"`
 		Redis struct {
-			Enabled  bool   `yaml:"enabled"`
-			Port     int    `yaml:"port"`
-			NodePort int    `yaml:"nodePort"`
-			Image    string `yaml:"image"`
-			Auth     struct {
+			Enabled      bool   `yaml:"enabled"`
+			Port         int    `yaml:"port"`
+			NodePort     int    `yaml:"nodePort"`
+			ChartVersion string `yaml:"chartVersion"`
+			Auth         struct {
 				Enabled bool `yaml:"enabled"`
 			} `yaml:"auth"`
 		} `yaml:"redis"`
-		CertManager struct {
-			Enabled bool   `yaml:"enabled"`
-			Version string `yaml:"version"`
-		} `yaml:"certManager"`
 		Dapr struct {
 			Enabled  bool   `yaml:"enabled"`
 			Version  string `yaml:"version"`
@@ -112,6 +108,24 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Cluster.Name = "kind"
 	config.Cluster.CreateIfNotExists = true
 
+	// Set component defaults
+	config.Components.Temporal.Enabled = true
+	config.Components.Temporal.Namespace = "temporal"
+	config.Components.Temporal.WebPort = 8080
+	config.Components.Temporal.WebNodePort = 30080
+	config.Components.Temporal.FrontendPort = 7233
+	config.Components.Temporal.FrontendNodePort = 30733
+
+	config.Components.Redis.Enabled = true
+	config.Components.Redis.Port = 6379
+	config.Components.Redis.NodePort = 30679
+	config.Components.Redis.ChartVersion = "17.3.7"
+	config.Components.Redis.Auth.Enabled = false
+
+	config.Components.Dapr.Enabled = true
+	config.Components.Dapr.Version = "1.15.3"
+	config.Components.Dapr.LogLevel = "debug"
+
 	if configPath == "" {
 		return config, nil
 	}
@@ -154,9 +168,6 @@ func (c *KindEnvConfig) Validate() error {
 		if c.Components.Redis.Port <= 0 {
 			return errors.New("redis port must be greater than 0")
 		}
-		if c.Components.Redis.Image == "" {
-			c.Components.Redis.Image = "redis:6.2"
-		}
 	}
 
 	// Validate AWS ECR configuration
@@ -186,4 +197,59 @@ func (c *KindEnvConfig) Validate() error {
 	}
 
 	return nil
+}
+
+// CreateDefaultConfig creates a default configuration for Kind environments
+func CreateDefaultConfig() *KindEnvConfig {
+	config := &KindEnvConfig{}
+
+	// Cluster section
+	config.Cluster.Name = "kindenv"
+	config.Cluster.CreateIfNotExists = true
+	config.Cluster.MapPorts = []struct {
+		ContainerPort int    `yaml:"containerPort"`
+		HostPort      int    `yaml:"hostPort"`
+		Protocol      string `yaml:"protocol"`
+	}{
+		{ContainerPort: 80, HostPort: 80, Protocol: "TCP"},
+		{ContainerPort: 443, HostPort: 443, Protocol: "TCP"},
+	}
+
+	// Components section
+	config.Components.Temporal.Enabled = true
+	config.Components.Temporal.Namespace = "temporal"
+	config.Components.Temporal.WebPort = 8080
+	config.Components.Temporal.WebNodePort = 30080
+	config.Components.Temporal.FrontendPort = 7233
+	config.Components.Temporal.FrontendNodePort = 30733
+
+	config.Components.Redis.Enabled = true
+	config.Components.Redis.Port = 6379
+	config.Components.Redis.NodePort = 30679
+	config.Components.Redis.ChartVersion = "17.3.7"
+	config.Components.Redis.Auth.Enabled = false
+
+	config.Components.Dapr.Enabled = true
+	config.Components.Dapr.Version = "1.15.3"
+	config.Components.Dapr.LogLevel = "debug"
+	config.Components.Dapr.Mtls.Enabled = false
+	config.Components.Dapr.Ha.Enabled = false
+
+	// Images section
+	config.Images.SkipPull = false
+	config.Images.DockerHub.Username = ""
+	config.Images.DockerHub.Password = ""
+	config.Images.UseAwsEcr = false
+	config.Images.AWS.Region = "eu-west-1"
+	config.Images.AWS.EcrRegistry = ""
+	config.Images.AWS.ServiceAccount = "ecr-pull-service-account"
+
+	// Secrets section
+	config.Secrets.MySQL.Enabled = true
+	config.Secrets.MySQL.Name = "mysql-credentials"
+	config.Secrets.MySQL.Namespace = "default"
+	config.Secrets.MySQL.Username = "root"
+	config.Secrets.MySQL.Password = "password"
+
+	return config
 }

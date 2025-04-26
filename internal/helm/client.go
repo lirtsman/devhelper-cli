@@ -362,7 +362,13 @@ func (c *clientImpl) IsReleaseInstalled(releaseName, namespace string) (bool, er
 	// Create list action
 	client := action.NewList(actionConfig)
 	client.Filter = releaseName
-	client.Namespace = namespace
+	client.AllNamespaces = false
+	client.SetStateMask() // Use default state mask
+
+	// Set namespace through the action config
+	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), func(format string, args ...interface{}) {}); err != nil {
+		return false, fmt.Errorf("failed to initialize action config with namespace: %w", err)
+	}
 
 	// Get releases
 	releases, err := client.Run()
@@ -372,7 +378,7 @@ func (c *clientImpl) IsReleaseInstalled(releaseName, namespace string) (bool, er
 
 	// Check if release exists
 	for _, release := range releases {
-		if release.Name == releaseName {
+		if release.Name == releaseName && release.Namespace == namespace {
 			return true, nil
 		}
 	}
