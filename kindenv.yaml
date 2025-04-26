@@ -18,7 +18,7 @@ tools:
         path: /usr/local/bin/aws
         version: aws-cli/2.11.2 Python/3.11.2 Darwin/24.4.0 exe/x86_64 prompt/off
 cluster:
-    name: temporal-worker-operator-test
+    name: kindenv
     createIfNotExists: true
     mapPorts:
         - containerPort: 80
@@ -39,12 +39,9 @@ components:
         enabled: true
         port: 6379
         nodePort: 30679
-        image: bitnami/redis:7.0.5-debian-11-r7
+        chartVersion: 17.3.7
         auth:
             enabled: false
-    certManager:
-        enabled: true
-        version: v1.14.4
     dapr:
         enabled: true
         version: 1.15.3
@@ -58,15 +55,15 @@ images:
     dockerHub:
         username: ""
         password: ""
-    useAwsEcr: true
+    useAwsEcr: false
     aws:
         region: eu-west-1
-        ecrRegistry: 992979781608.dkr.ecr.eu-west-1.amazonaws.com
+        ecrRegistry: ""
         serviceAccount: ecr-pull-service-account
 secrets:
     mysql:
         enabled: true
-        name: kvv2-mysql-creds
+        name: mysql-credentials
         namespace: default
-        username: ""
-        password: ""
+        username: root
+        password: password
