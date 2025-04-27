@@ -81,6 +81,10 @@ type KindEnvConfig struct {
 				Enabled bool `yaml:"enabled"`
 			} `yaml:"ha"`
 		} `yaml:"dapr"`
+		TemporalWorkerOperator struct {
+			Enabled      bool   `yaml:"enabled"`
+			ChartVersion string `yaml:"chartVersion"`
+		} `yaml:"temporalWorkerOperator"`
 	} `yaml:"components"`
 	Images struct {
 		SkipPull  bool `yaml:"skipPull"`
@@ -93,6 +97,7 @@ type KindEnvConfig struct {
 			Region         string `yaml:"region"`
 			EcrRegistry    string `yaml:"ecrRegistry"`
 			ServiceAccount string `yaml:"serviceAccount"`
+			Profile        string `yaml:"profile"`
 		} `yaml:"aws"`
 	} `yaml:"images"`
 	Secrets struct {
@@ -382,6 +387,9 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.Dapr.Mtls.Enabled = false
 	config.Components.Dapr.Ha.Enabled = false
 
+	config.Components.TemporalWorkerOperator.Enabled = true
+	config.Components.TemporalWorkerOperator.ChartVersion = "0.1.46-dev"
+
 	// Images section
 	config.Images.SkipPull = false
 	config.Images.DockerHub.Username = ""
@@ -390,6 +398,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Images.AWS.Region = "eu-west-1"
 	config.Images.AWS.EcrRegistry = ""
 	config.Images.AWS.ServiceAccount = "ecr-pull-service-account"
+	config.Images.AWS.Profile = ""
 
 	// Secrets section
 	config.Secrets.MySQL.Enabled = true

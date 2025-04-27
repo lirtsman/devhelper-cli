@@ -18,7 +18,7 @@ tools:
         path: /usr/local/bin/aws
         version: aws-cli/2.11.2 Python/3.11.2 Darwin/24.4.0 exe/x86_64 prompt/off
 cluster:
-    name: kindenv
+    name: devhelper-cli
     createIfNotExists: true
     mapPorts:
         - containerPort: ${{ components.temporal.nodePorts.web }}
@@ -55,6 +55,9 @@ components:
             enabled: false
         ha:
             enabled: false
+    temporalWorkerOperator:
+        enabled: true
+        chartVersion: 0.1.46-dev
 images:
     skipPull: false
     dockerHub:
@@ -63,8 +66,9 @@ images:
     useAwsEcr: true
     aws:
         region: eu-west-1
-        ecrRegistry: ""
+        ecrRegistry: 992979781608.dkr.ecr.eu-west-1.amazonaws.com
         serviceAccount: ecr-pull-service-account
+        profile: "shieldfc_development"
 secrets:
     mysql:
         enabled: true

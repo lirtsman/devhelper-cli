@@ -218,5 +218,5 @@ func init() {
 	// Add flags for kindenv status command
 	kindenvStatusCmd.Flags().StringP("config", "f", "", "Path to configuration file")
 	kindenvStatusCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
-	kindenvStatusCmd.Flags().StringP("name", "n", "", "Cluster name (defaults to current directory name)")
+	kindenvStatusCmd.Flags().String("name", "", "Cluster name (defaults to current directory name)")
 }

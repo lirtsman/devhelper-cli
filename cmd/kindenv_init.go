@@ -268,6 +268,39 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Println("✅ Bitnami Helm repository added successfully")
 			}
 
+			// Add Shield Helm repository
+			fmt.Println("Adding Shield Helm repository...")
+			shieldOutput, err := executeCommandWithOutput("helm", "repo", "add", "shield", "https://harbor.shieldfis.com/chartrepo/stable")
+			if err != nil {
+				if strings.Contains(shieldOutput, "already exists") {
+					fmt.Println("✅ Shield Helm repository already configured")
+				} else {
+					fmt.Printf("⚠️  Warning: Failed to add Shield Helm repository: %v\n", err)
+					if shieldOutput != "" {
+						fmt.Printf("  Output: %s\n", shieldOutput)
+					}
+				}
+			} else {
+				fmt.Println("✅ Shield Helm repository added successfully")
+			}
+
+			// Verify that both required Shield charts are available
+			fmt.Println("Verifying Shield charts availability...")
+			chartsOutput, err := executeCommandWithOutput("helm", "search", "repo", "shield/temporal-worker-operator")
+			if err != nil || !strings.Contains(chartsOutput, "shield/temporal-worker-operator") {
+				fmt.Printf("⚠️  Warning: Shield Temporal Worker Operator chart not found\n")
+			} else {
+				fmt.Println("✅ Shield Temporal Worker Operator chart is available")
+			}
+
+			crdsOutput, err := executeCommandWithOutput("helm", "search", "repo", "shield/temporal-worker-operator")
+			if err != nil || !strings.Contains(crdsOutput, "shield/temporal-worker-operator") {
+				fmt.Printf("⚠️  Warning: Shield Temporal Worker Operator CRDs chart not found\n")
+				fmt.Printf("    Make sure both the main chart and CRDs chart are available in the Shield repository\n")
+			} else {
+				fmt.Println("✅ Shield Temporal Worker Operator CRDs chart is available")
+			}
+
 			// Update Helm repositories
 			fmt.Println("Updating Helm repositories...")
 			updateOutput, err := executeCommandWithOutput("helm", "repo", "update")
@@ -290,5 +323,5 @@ func init() {
 	kindenvInitCmd.Flags().StringP("output", "o", "", "Output path for configuration file (default: kindenv.yaml)")
 	kindenvInitCmd.Flags().BoolP("force", "f", false, "Force overwrite if configuration file already exists")
 	kindenvInitCmd.Flags().Bool("skip-repos", false, "Skip adding Helm repositories")
-	kindenvInitCmd.Flags().StringP("name", "n", "", "Cluster name (defaults to current directory name)")
+	kindenvInitCmd.Flags().String("name", "", "Cluster name (defaults to current directory name)")
 }
