@@ -1,0 +1,45 @@
+apiVersion: orchestration.shieldfc.com/v1alpha1
+kind: TemporalWorker
+metadata:
+    name: temporal-devhelper-cli-worker
+spec:
+    enabled: true
+    workerType: devhelper-cli
+    image:
+        registry: 992979781608.dkr.ecr.eu-west-1.amazonaws.com
+        tag: latest
+    temporal:
+        namespace: default
+        queueType: workflow
+        maxConcurrentWorkflows: 3
+        maxConcurrentActivities: 5
+    autoscaler:
+        enabled: true
+        idleReplicaCount: 1
+        minReplicaCount: 1
+        maxReplicaCount: 10
+        queueType: workflow
+        targetQueueSize: 2
+        pollingIntervalSeconds: 15
+        cooldownPeriodSeconds: 30
+    resources:
+        requests:
+            cpu: 100m
+            memory: 128Mi
+        limits:
+            cpu: 500m
+            memory: 256Mi
+    workerSettings: |-
+        environment: "dev"
+        logLevel: "info"
+
+        # Platform configuration
+        features:
+          enableLogging: true
+          enableMetrics: true
+          enableRetries: true
+
+        # Processing configuration
+        maxConcurrentTasks: 5
+        batchSize: 100
+        retryCount: 3
