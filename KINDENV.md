@@ -87,7 +87,6 @@ images:
   aws:
     region: "eu-west-1"
     ecrRegistry: "992979781608.dkr.ecr.eu-west-1.amazonaws.com"
-    serviceAccount: "ecr-pull-service-account"
 secrets:
   mysql:
     enabled: true
@@ -104,7 +103,6 @@ The `kindenv` command supports pulling images from AWS Elastic Container Registr
 - `images.useAwsEcr`: Set to `true` to enable AWS ECR integration
 - `images.aws.region`: AWS region for ECR (default: eu-west-1)
 - `images.aws.ecrRegistry`: ECR registry URL (optional, can be auto-detected)
-- `images.aws.serviceAccount`: Kubernetes service account name for ECR credentials
 
 When AWS ECR integration is enabled, the command will:
 1. Get AWS credentials using the AWS CLI

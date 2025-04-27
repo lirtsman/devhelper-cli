@@ -27,11 +27,9 @@ import (
 	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 // Define the setupECRCreds function at the file level, outside of any function
-// Add before the kindenvStartCmd definition
 
 // setupECRCreds creates ECR pull secrets in a given namespace
 func setupECRCreds(namespace, registry, password string) error {
@@ -67,93 +65,6 @@ func setupECRCreds(namespace, registry, password string) error {
 	cmd.Stdin = strings.NewReader(secretYaml)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to apply secret: %w", err)
-	}
-
-	// Patch default service account to use ECR credentials
-	// First check if service account exists
-	serviceAccountOutput, err := executeCommand("kubectl", "get", "serviceaccount", "default",
-		fmt.Sprintf("-n=%s", namespace), "-o", "yaml")
-	if err != nil {
-		fmt.Printf("Warning: Could not get default service account in namespace %s: %v\n", namespace, err)
-		fmt.Println("Attempting to create it...")
-
-		// Create a simple service account
-		saYaml := fmt.Sprintf(`
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: default
-  namespace: %s
-imagePullSecrets:
-- name: ecr-credentials
-`, namespace)
-
-		cmd = exec.Command("kubectl", "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(saYaml)
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("Warning: Failed to create service account: %v\n", err)
-			fmt.Println("Will try patching anyway...")
-		} else {
-			// If we successfully created the SA, we're done
-			green := color.New(color.FgGreen).SprintFunc()
-			fmt.Printf("%s ECR pull secret created in the %s namespace\n", green("✅"), namespace)
-			return nil
-		}
-	}
-
-	// Attempt to patch the service account
-	patchCmd := exec.Command("kubectl", "patch", "serviceaccount", "default",
-		"-p", "{\"imagePullSecrets\": [{\"name\": \"ecr-credentials\"}]}",
-		fmt.Sprintf("-n=%s", namespace))
-
-	var stderr bytes.Buffer
-	patchCmd.Stderr = &stderr
-
-	err = patchCmd.Run()
-	if err != nil {
-		errMsg := stderr.String()
-		fmt.Printf("Warning: Failed to patch default service account: %v\n", err)
-		fmt.Printf("Error details: %s\n", errMsg)
-
-		// If the patch failed, try applying a complete replacement service account
-		fmt.Println("Attempting alternative approach with complete service account...")
-
-		// Try to get the current service account to maintain existing settings
-		currentSA := map[string]interface{}{}
-		if serviceAccountOutput != "" {
-			if err := yaml.Unmarshal([]byte(serviceAccountOutput), &currentSA); err != nil {
-				fmt.Printf("Warning: Could not parse current service account: %v\n", err)
-				// Continue with empty SA
-			}
-		}
-
-		// Ensure the metadata section exists
-		if _, ok := currentSA["metadata"]; !ok {
-			currentSA["metadata"] = map[string]interface{}{
-				"name":      "default",
-				"namespace": namespace,
-			}
-		}
-
-		// Add or update imagePullSecrets
-		currentSA["imagePullSecrets"] = []map[string]string{
-			{"name": "ecr-credentials"},
-		}
-
-		// Convert back to YAML
-		updatedSAYaml, err := yaml.Marshal(currentSA)
-		if err != nil {
-			return fmt.Errorf("failed to create updated service account YAML: %w", err)
-		}
-
-		// Apply the updated service account
-		cmd = exec.Command("kubectl", "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(string(updatedSAYaml))
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to apply updated service account: %w", err)
-		}
-
-		fmt.Println("Alternative approach successful!")
 	}
 
 	green := color.New(color.FgGreen).SprintFunc()
@@ -568,39 +479,6 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 				os.Exit(1)
 			}
 
-			// Create a service account that uses the secret
-			serviceAccountYaml := `
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: ecr-pull-service-account
-  namespace: default
-imagePullSecrets:
-- name: ecr-credentials
-`
-
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(serviceAccountYaml)
-			err = cmd.Run()
-			if err != nil {
-				fmt.Printf("%s Error creating service account: %v\n", red("❌"), err)
-				os.Exit(1)
-			}
-
-			// Wait for resources to be created and verify service account exists
-			fmt.Println(yellow("Waiting for ECR service account to be ready..."))
-			time.Sleep(2 * time.Second)
-
-			// Verify the service account was created
-			saOutput, err := executeCommand("kubectl", "get", "serviceaccount", "ecr-pull-service-account", "-n", "default")
-			if err != nil {
-				fmt.Printf("%s Warning: Could not verify ECR service account creation: %v\n", yellow("⚠️"), err)
-				fmt.Println(yellow("Continuing anyway..."))
-			} else if verbose {
-				fmt.Println(yellow("ECR pull service account details:"))
-				fmt.Println(saOutput)
-			}
-
 			fmt.Printf("%s AWS ECR credentials configured\n", green("✅"))
 		}
 
@@ -678,84 +556,42 @@ stringData:
 
 			// Give resources a moment to be created
 			fmt.Println(yellow("Pausing briefly to allow resources to be created..."))
-			time.Sleep(5 * time.Second)
+			time.Sleep(10 * time.Second) // Increased wait time to ensure pod is created
 
-			// First, find out what resources are available to identify the correct name
-			redisResourcesOutput, _ := executeCommand("kubectl", "get", "all", "-n", "redis")
-			if verbose {
-				fmt.Println(yellow("Redis resources detected:"))
-				fmt.Println(redisResourcesOutput)
-			}
+			// Wait specifically for the redis-master-0 pod
+			fmt.Println(yellow("Waiting for redis-master-0 pod to be created..."))
+			// First check if the pod exists
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "redis-master-0", "-n", "redis", "--no-headers")
 
-			// Try multiple approaches to wait for Redis, with retries
-			var redisReady bool
-			for attempt := 1; attempt <= 3 && !redisReady; attempt++ {
-				if attempt > 1 {
-					fmt.Printf("Retry attempt %d of 3 for finding Redis resources...\n", attempt)
+			// Retry a few times for the pod to appear
+			var podExists bool
+			for i := 0; i < 6; i++ { // Try for up to 30 seconds (6 * 5s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 5 { // Don't sleep on the last iteration
+					fmt.Printf("Waiting for redis-master-0 pod to appear (attempt %d/6)...\n", i+1)
 					time.Sleep(5 * time.Second)
 				}
-
-				// Try to find pods directly with common Redis labels
-				podOutput, err := executeCommand("kubectl", "get", "pods", "-n", "redis", "-l", "app.kubernetes.io/name=redis", "-o", "name")
-				if err == nil && podOutput != "" {
-					fmt.Println(yellow("Redis pods detected with app.kubernetes.io/name=redis label"))
-					redisReady = true
-					continue
-				}
-
-				podOutput, err = executeCommand("kubectl", "get", "pods", "-n", "redis", "-l", "app=redis", "-o", "name")
-				if err == nil && podOutput != "" {
-					fmt.Println(yellow("Redis pods detected with app=redis label"))
-					redisReady = true
-					continue
-				}
-
-				// Try specific Redis pod patterns
-				podOutput, err = executeCommand("kubectl", "get", "pods", "-n", "redis", "--no-headers")
-				if err == nil && podOutput != "" {
-					// Just check if any pods exist in the namespace
-					lines := strings.Split(strings.TrimSpace(podOutput), "\n")
-					if len(lines) > 0 {
-						fmt.Println(yellow("Found Redis pods:"))
-						for _, line := range lines {
-							fmt.Println(line)
-						}
-						redisReady = true
-						continue
-					}
-				}
-
-				// Try statefulset
-				statefulsetOutput, err := executeCommand("kubectl", "get", "statefulset", "-n", "redis", "-o", "name")
-				if err == nil && statefulsetOutput != "" {
-					fmt.Println(yellow("Redis statefulset detected, waiting for rollout..."))
-					redisReady = true
-					continue
-				}
-
-				// Try deployments
-				deploymentOutput, err := executeCommand("kubectl", "get", "deployment", "-n", "redis", "-o", "name")
-				if err == nil && deploymentOutput != "" {
-					fmt.Println(yellow("Redis deployment detected"))
-					redisReady = true
-					continue
-				}
 			}
 
-			if redisReady {
-				fmt.Printf("%s Redis resources detected\n", green("✅"))
+			if podExists {
+				fmt.Println(yellow("Found redis-master-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/redis-master-0", "-n", "redis", "--timeout=2m")
+				if err != nil {
+					fmt.Printf("%s Warning: Redis master pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite Redis not being fully ready..."))
+				} else {
+					fmt.Printf("%s Redis is ready\n", green("✅"))
+				}
 			} else {
-				fmt.Printf("%s Could not detect Redis resources, but continuing anyway\n", yellow("⚠️"))
-			}
-
-			// Now that we confirmed resources exist, wait for them to be ready
-			fmt.Println(yellow("Waiting for Redis pods to become ready..."))
-			_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pods", "--all", "-n", "redis", "--timeout=2m")
-			if err != nil {
-				fmt.Printf("%s Error waiting for Redis pods: %v\n", yellow("⚠️"), err)
-				fmt.Println(yellow("Continuing despite error waiting for Redis pods"))
-			} else {
-				fmt.Printf("%s Redis is ready\n", green("✅"))
+				fmt.Printf("%s Redis master pod (redis-master-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite Redis pod not being detected..."))
 			}
 
 			// Create kvv2-redis secret with redis address

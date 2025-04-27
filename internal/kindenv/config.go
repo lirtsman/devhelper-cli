@@ -94,10 +94,9 @@ type KindEnvConfig struct {
 		} `yaml:"dockerHub"`
 		UseAwsEcr bool `yaml:"useAwsEcr"`
 		AWS       struct {
-			Region         string `yaml:"region"`
-			EcrRegistry    string `yaml:"ecrRegistry"`
-			ServiceAccount string `yaml:"serviceAccount"`
-			Profile        string `yaml:"profile"`
+			Region      string `yaml:"region"`
+			EcrRegistry string `yaml:"ecrRegistry"`
+			Profile     string `yaml:"profile"`
 		} `yaml:"aws"`
 	} `yaml:"images"`
 	Secrets struct {
@@ -396,8 +395,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Images.DockerHub.Password = ""
 	config.Images.UseAwsEcr = true
 	config.Images.AWS.Region = "eu-west-1"
-	config.Images.AWS.EcrRegistry = ""
-	config.Images.AWS.ServiceAccount = "ecr-pull-service-account"
+	config.Images.AWS.EcrRegistry = "992979781608.dkr.ecr.eu-west-1.amazonaws.com"
 	config.Images.AWS.Profile = ""
 
 	// Secrets section
