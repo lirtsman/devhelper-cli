@@ -134,6 +134,71 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				fmt.Println(string(kubectlOutput))
 			}
 
+			// Check component status
+			fmt.Println(green("Component status:"))
+
+			// Check Temporal status
+			if config.Components.Temporal.Enabled {
+				temporalCmd := exec.Command("kubectl", "get", "deployment", "-n", config.Components.Temporal.Namespace, "--no-headers")
+				temporalOutput, err := temporalCmd.CombinedOutput()
+				if err == nil && string(temporalOutput) != "" {
+					fmt.Printf("- %s Temporal is installed and running\n", green("✅"))
+				} else {
+					fmt.Printf("- %s Temporal is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Temporal is disabled in config\n", yellow("ℹ️"))
+			}
+
+			// Check Redis status
+			if config.Components.Redis.Enabled {
+				redisCmd := exec.Command("kubectl", "get", "pod", "-n", "redis", "--no-headers")
+				redisOutput, err := redisCmd.CombinedOutput()
+				if err == nil && string(redisOutput) != "" {
+					fmt.Printf("- %s Redis is installed and running\n", green("✅"))
+				} else {
+					fmt.Printf("- %s Redis is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Redis is disabled in config\n", yellow("ℹ️"))
+			}
+
+			// Check Dapr status
+			if config.Components.Dapr.Enabled {
+				daprCmd := exec.Command("kubectl", "get", "deployment", "-n", "dapr-system", "--no-headers")
+				daprOutput, err := daprCmd.CombinedOutput()
+				if err == nil && string(daprOutput) != "" {
+					fmt.Printf("- %s Dapr is installed and running\n", green("✅"))
+				} else {
+					fmt.Printf("- %s Dapr is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Dapr is disabled in config\n", yellow("ℹ️"))
+			}
+
+			// Check Temporal Worker Operator status
+			if config.Components.TemporalWorkerOperator.Enabled {
+				operatorCmd := exec.Command("kubectl", "get", "deployment", "-n", "shield-system", "--no-headers")
+				operatorOutput, err := operatorCmd.CombinedOutput()
+
+				// Check CRDs
+				crdCmd := exec.Command("kubectl", "get", "crd", "temporalworkers.orchestration.shieldfc.com", "--no-headers")
+				crdOutput, crdErr := crdCmd.CombinedOutput()
+
+				if err == nil && string(operatorOutput) != "" {
+					fmt.Printf("- %s Temporal Worker Operator is installed and running\n", green("✅"))
+					if crdErr == nil && string(crdOutput) != "" {
+						fmt.Printf("  %s CRDs are properly installed\n", green("✓"))
+					} else {
+						fmt.Printf("  %s CRDs not found, operator may not function correctly\n", yellow("⚠️"))
+					}
+				} else {
+					fmt.Printf("- %s Temporal Worker Operator is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Temporal Worker Operator is disabled in config\n", yellow("ℹ️"))
+			}
+
 			// Print service access information
 			fmt.Println(green("Access services:"))
 
@@ -186,24 +251,29 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 
 			// Additional component status checks for verbose mode
 			if verbose {
-				// Check Dapr status if enabled
-				if config.Components.Dapr.Enabled {
-					daprCmd := exec.Command("kubectl", "get", "namespace", "dapr-system")
-					_, err := daprCmd.CombinedOutput()
-
-					if err == nil {
-						fmt.Printf("%s Dapr is installed\n", green("✓"))
-					} else {
-						fmt.Printf("%s Dapr namespace not found. Dapr may not be installed.\n", yellow("⚠️"))
-					}
-				}
-
 				// List all namespaces
 				nsCmd := exec.Command("kubectl", "get", "namespaces")
 				nsOutput, err := nsCmd.CombinedOutput()
 				if err == nil {
 					fmt.Println(yellow("Available namespaces:"))
 					fmt.Println(string(nsOutput))
+				}
+
+				// Check for TemporalWorker resources
+				if config.Components.TemporalWorkerOperator.Enabled {
+					twCmd := exec.Command("kubectl", "get", "temporalworkers", "--all-namespaces")
+					twOutput, twErr := twCmd.CombinedOutput()
+					if twErr == nil && string(twOutput) != "" {
+						fmt.Println(yellow("Installed TemporalWorker resources:"))
+						fmt.Println(string(twOutput))
+					}
+
+					tnsCmd := exec.Command("kubectl", "get", "temporalnamespaces", "--all-namespaces")
+					tnsOutput, tnsErr := tnsCmd.CombinedOutput()
+					if tnsErr == nil && string(tnsOutput) != "" {
+						fmt.Println(yellow("Installed TemporalNamespace resources:"))
+						fmt.Println(string(tnsOutput))
+					}
 				}
 			}
 		} else {
