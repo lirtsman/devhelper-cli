@@ -18,10 +18,28 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
+
+// stopCluster stops and deletes a Kind cluster
+func stopCluster(clusterName string, verbose bool) error {
+	if verbose {
+		fmt.Printf("Stopping Kind cluster: %s\n", clusterName)
+	}
+
+	// Delete the cluster using 'kind delete cluster' command
+	cmd := exec.Command("kind", "delete", "cluster", "--name", clusterName)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to stop cluster: %w\nOutput: %s", err, string(output))
+	}
+
+	return nil
+}
 
 // kindenvStopCmd represents the kindenv stop command
 var kindenvStopCmd = &cobra.Command{
@@ -32,34 +50,55 @@ var kindenvStopCmd = &cobra.Command{
 This command stops and deletes a Kind cluster used for development.
 It uses native Go libraries instead of external CLI tools for improved reliability.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// Create colored output helpers
+		green := color.New(color.FgGreen).SprintFunc()
+		yellow := color.New(color.FgYellow).SprintFunc()
+		red := color.New(color.FgRed).SprintFunc()
+
 		// Get flags
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		configPath, _ := cmd.Flags().GetString("config")
+		clusterName, _ := cmd.Flags().GetString("cluster-name")
 
-		// Load config file
-		fmt.Println("Stopping Kind-based development environment...")
+		fmt.Println(green("Stopping Kind-based development environment..."))
 
 		// Load config
 		config, err := kindenv.LoadConfig(configPath)
 		if err != nil {
-			fmt.Printf("Error loading config: %v\n", err)
+			fmt.Printf("%s Error loading config: %v\n", red("❌"), err)
 			os.Exit(1)
 		}
 
-		// Create KindEnv manager
-		manager, err := kindenv.NewManager(config, verbose)
+		// Override cluster name if specified via flag
+		if clusterName != "" {
+			config.Cluster.Name = clusterName
+		}
+
+		if verbose {
+			fmt.Println(yellow("Verbose mode enabled"))
+			fmt.Printf("Using cluster name: %s\n", config.Cluster.Name)
+		}
+
+		// First check if the cluster exists
+		exists, err := checkClusterExists(config.Cluster.Name)
 		if err != nil {
-			fmt.Printf("Error creating manager: %v\n", err)
+			fmt.Printf("%s Error checking cluster status: %v\n", red("❌"), err)
 			os.Exit(1)
+		}
+
+		if !exists {
+			fmt.Printf("%s Kind cluster '%s' does not exist or is already stopped\n", yellow("⚠️"), config.Cluster.Name)
+			return
 		}
 
 		// Stop the cluster
-		if err := manager.StopCluster(); err != nil {
-			fmt.Printf("Error stopping cluster: %v\n", err)
+		err = stopCluster(config.Cluster.Name, verbose)
+		if err != nil {
+			fmt.Printf("%s Error stopping cluster: %v\n", red("❌"), err)
 			os.Exit(1)
 		}
 
-		fmt.Println("Kind-based development environment stopped successfully!")
+		fmt.Printf("%s Kind-based development environment '%s' stopped successfully!\n", green("✅"), config.Cluster.Name)
 	},
 }
 

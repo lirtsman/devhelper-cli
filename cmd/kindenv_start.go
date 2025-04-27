@@ -110,16 +110,6 @@ func waitForDeployment(namespace, deployment string, timeout int) error {
 	return err
 }
 
-// waitForPod waits for a pod matching the label selector to be ready
-func waitForPod(namespace, labelSelector string, timeout int) error {
-	fmt.Printf("Waiting for pod with label %s in namespace %s to be ready...\n", labelSelector, namespace)
-	_, err := executeCommand("kubectl", "wait", "--for=condition=Ready",
-		fmt.Sprintf("--timeout=%dm", timeout),
-		"pod", fmt.Sprintf("-l=%s", labelSelector),
-		fmt.Sprintf("-n=%s", namespace))
-	return err
-}
-
 // kindenvStartCmd represents the kindenv start command
 var kindenvStartCmd = &cobra.Command{
 	Use:   "start",

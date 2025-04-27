@@ -54,7 +54,7 @@ tools:
     path: /opt/homebrew/bin/aws
     version: ""
 cluster:
-  name: temporal-worker-operator-test
+  name: kind
   createIfNotExists: true
   mapPorts:
     - containerPort: 80
@@ -144,7 +144,7 @@ devhelper-cli kindenv start
 
 Options:
 - `--config`: Path to configuration file (default: `kindenv.yaml` in current directory)
-- `--cluster-name`: Name of the Kind cluster (default: `temporal-worker-operator-test`)
+- `--cluster-name`: Name of the Kind cluster (default: `kind`)
 - `--operator-namespace`: Namespace for Temporal worker operator (default: `temporal-worker-operator-system`)
 - `--skip-temporal`: Skip installing Temporal
 - `--skip-dapr`: Skip installing Dapr

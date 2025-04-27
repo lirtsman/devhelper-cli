@@ -105,7 +105,7 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config := &KindEnvConfig{}
 
 	// Set defaults
-	config.Cluster.Name = "kind"
+	config.Cluster.Name = "kind-env"
 	config.Cluster.CreateIfNotExists = true
 
 	// Set component defaults
