@@ -112,7 +112,7 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config := &KindEnvConfig{}
 
 	// Set defaults
-	config.Cluster.Name = "kindenv"
+	config.Cluster.Name = "kindenv-default" // Will be overridden by project name if available
 	config.Cluster.CreateIfNotExists = true
 
 	// Set component defaults
@@ -360,7 +360,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config := &KindEnvConfig{}
 
 	// Cluster section
-	config.Cluster.Name = "kindenv"
+	config.Cluster.Name = "kindenv-default" // Will be overridden by project name if available
 	config.Cluster.CreateIfNotExists = true
 
 	// Components section

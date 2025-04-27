@@ -147,11 +147,15 @@ This command creates a default configuration file (kindenv.yaml) that can be
 customized for setting up a Kind cluster with Temporal, Dapr, Redis, and other
 required components.
 
+By default, the command will use the current directory name as the cluster name.
+You can override this with the --name flag.
+
 It also adds required Helm repositories for components like Dapr and Temporal.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		configPath, _ := cmd.Flags().GetString("output")
 		force, _ := cmd.Flags().GetBool("force")
 		skipRepos, _ := cmd.Flags().GetBool("skip-repos")
+		clusterName, _ := cmd.Flags().GetString("name")
 
 		// If no config path is provided, use default
 		if configPath == "" {
@@ -175,6 +179,22 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 
 		// Create default configuration from internal package
 		config := kindenv.CreateDefaultConfig()
+
+		// Set cluster name based on directory name if no explicit cluster name was provided
+		if clusterName == "" {
+			// Get current working directory
+			currentDir, err := os.Getwd()
+			if err == nil {
+				// Extract the base directory name
+				dirName := filepath.Base(currentDir)
+				config.Cluster.Name = dirName
+				fmt.Printf("Using current directory name '%s' as cluster name\n", dirName)
+			}
+		} else {
+			// Override with explicit cluster name if provided
+			config.Cluster.Name = clusterName
+			fmt.Printf("Using specified cluster name: %s\n", clusterName)
+		}
 
 		// Detect and populate tool paths and versions
 		detectAndPopulateToolVersions(config)
@@ -270,4 +290,5 @@ func init() {
 	kindenvInitCmd.Flags().StringP("output", "o", "", "Output path for configuration file (default: kindenv.yaml)")
 	kindenvInitCmd.Flags().BoolP("force", "f", false, "Force overwrite if configuration file already exists")
 	kindenvInitCmd.Flags().Bool("skip-repos", false, "Skip adding Helm repositories")
+	kindenvInitCmd.Flags().StringP("name", "n", "", "Cluster name (defaults to current directory name)")
 }

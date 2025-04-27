@@ -53,6 +53,10 @@ var kindenvStatusCmd = &cobra.Command{
 	Long: `Show status of a Kind-based development environment.
 
 This command checks if a Kind cluster exists and shows its status.
+
+By default, the command will use the cluster name from kindenv.yaml.
+You can override this with the --name flag.
+
 It uses native Go libraries instead of external CLI tools for improved reliability.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Create colored output helpers
@@ -63,10 +67,10 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 		// Get flags
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		configPath, _ := cmd.Flags().GetString("config")
-		clusterName, _ := cmd.Flags().GetString("cluster-name")
+		clusterName, _ := cmd.Flags().GetString("name")
 
 		if verbose {
-			fmt.Printf("Flags: verbose=%v, config=%s, cluster-name=%s\n", verbose, configPath, clusterName)
+			fmt.Printf("Flags: verbose=%v, config=%s, name=%s\n", verbose, configPath, clusterName)
 		}
 
 		fmt.Println(green("Checking Kind-based development environment status..."))
@@ -87,12 +91,14 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			fmt.Printf("Config loaded with cluster name: %s\n", config.Cluster.Name)
 		}
 
-		// Override cluster name if explicitly specified via flag (not using default value)
-		if cmd.Flags().Changed("cluster-name") {
-			if verbose {
-				fmt.Printf("Overriding with flag value: %s\n", clusterName)
-			}
+		// Override cluster name only if explicitly provided with --name flag
+		if cmd.Flags().Changed("name") {
 			config.Cluster.Name = clusterName
+			if verbose {
+				fmt.Printf("%s Using specified cluster name: %s\n", yellow("⚙️"), clusterName)
+			}
+		} else if verbose {
+			fmt.Printf("%s Using cluster name from config: %s\n", yellow("📄"), config.Cluster.Name)
 		}
 
 		if verbose {
@@ -208,4 +214,9 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 
 func init() {
 	kindenvCmd.AddCommand(kindenvStatusCmd)
+
+	// Add flags for kindenv status command
+	kindenvStatusCmd.Flags().StringP("config", "f", "", "Path to configuration file")
+	kindenvStatusCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
+	kindenvStatusCmd.Flags().StringP("name", "n", "", "Cluster name (defaults to current directory name)")
 }

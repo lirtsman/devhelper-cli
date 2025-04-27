@@ -48,6 +48,10 @@ var kindenvStopCmd = &cobra.Command{
 	Long: `Stop a Kind-based development environment.
 
 This command stops and deletes a Kind cluster used for development.
+
+By default, the command will use the cluster name from kindenv.yaml.
+You can override this with the --name flag.
+
 It uses native Go libraries instead of external CLI tools for improved reliability.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Create colored output helpers
@@ -58,7 +62,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 		// Get flags
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		configPath, _ := cmd.Flags().GetString("config")
-		clusterName, _ := cmd.Flags().GetString("cluster-name")
+		clusterName, _ := cmd.Flags().GetString("name")
 
 		fmt.Println(green("Stopping Kind-based development environment..."))
 
@@ -69,9 +73,14 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			os.Exit(1)
 		}
 
-		// Override cluster name if explicitly specified via flag (not using default value)
-		if cmd.Flags().Changed("cluster-name") {
+		// Override cluster name only if explicitly provided with --name flag
+		if cmd.Flags().Changed("name") {
 			config.Cluster.Name = clusterName
+			if verbose {
+				fmt.Printf("%s Using specified cluster name: %s\n", yellow("⚙️"), clusterName)
+			}
+		} else if verbose {
+			fmt.Printf("%s Using cluster name from config: %s\n", yellow("📄"), config.Cluster.Name)
 		}
 
 		if verbose {
@@ -104,4 +113,9 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 
 func init() {
 	kindenvCmd.AddCommand(kindenvStopCmd)
+
+	// Add flags for kindenv stop command
+	kindenvStopCmd.Flags().StringP("config", "f", "", "Path to configuration file")
+	kindenvStopCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
+	kindenvStopCmd.Flags().StringP("name", "n", "", "Cluster name (defaults to current directory name)")
 }

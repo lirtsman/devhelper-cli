@@ -121,6 +121,9 @@ This command creates a Kind cluster if it doesn't exist and installs required co
 - Redis
 - Dapr
 
+By default, the command will use the cluster name from kindenv.yaml.
+You can override this with the --name flag.
+
 It also sets up the Kubernetes context and creates required namespaces.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Create colored output helpers
@@ -131,7 +134,7 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 		// Get flags
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		configPath, _ := cmd.Flags().GetString("config")
-		clusterName, _ := cmd.Flags().GetString("cluster-name")
+		clusterName, _ := cmd.Flags().GetString("name")
 		useAwsEcr, _ := cmd.Flags().GetBool("use-aws-ecr")
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
 		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
@@ -147,9 +150,12 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 			os.Exit(1)
 		}
 
-		// Override cluster name if explicitly specified via flag (not using default value)
-		if cmd.Flags().Changed("cluster-name") {
+		// Override cluster name only if explicitly provided with --name flag
+		if cmd.Flags().Changed("name") {
 			config.Cluster.Name = clusterName
+			fmt.Printf("%s Using specified cluster name: %s\n", yellow("⚙️"), clusterName)
+		} else {
+			fmt.Printf("%s Using cluster name from config: %s\n", yellow("📄"), config.Cluster.Name)
 		}
 
 		// Override config with command line args
@@ -694,4 +700,7 @@ func init() {
 	kindenvStartCmd.Flags().String("operator-namespace", "temporal-worker-operator-system",
 		"Namespace for Temporal worker operator")
 	kindenvStartCmd.Flags().Bool("use-aws-ecr", false, "Use AWS ECR for pulling images")
+	kindenvStartCmd.Flags().StringP("name", "n", "", "Cluster name (defaults to current directory name)")
+	kindenvStartCmd.Flags().StringP("config", "f", "", "Path to configuration file")
+	kindenvStartCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
 }
