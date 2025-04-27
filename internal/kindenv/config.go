@@ -400,7 +400,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 
 	// Secrets section
 	config.Secrets.MySQL.Enabled = true
-	config.Secrets.MySQL.Name = "mysql-credentials"
+	config.Secrets.MySQL.Name = "kvv2-mysql"
 	config.Secrets.MySQL.Namespace = "default"
 	config.Secrets.MySQL.Username = "root"
 	config.Secrets.MySQL.Password = "password"
