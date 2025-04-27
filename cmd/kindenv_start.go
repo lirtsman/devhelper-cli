@@ -912,7 +912,12 @@ stringData:
 
 			// Set up ECR credentials if needed (default namespace already has them)
 			if config.Images.UseAwsEcr {
-				fmt.Println(yellow("Using existing ECR credentials in default namespace"))
+				fmt.Println(yellow("Setting up ECR credentials in shield-system namespace"))
+				err = setupECRCreds("shield-system", ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for shield-system: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
 			}
 
 			// Install Temporal Worker Operator with CRDs first
@@ -926,7 +931,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: kvv2-redis
-  namespace: default
+  namespace: shield-system
 type: Opaque
 stringData:
   address: "redis-master.redis.svc.cluster.local:6379"
@@ -939,9 +944,10 @@ stringData:
 					fmt.Printf("%s Error creating Redis secret: %v\n", red("❌"), err)
 				}
 				helmArgs = []string{
-					"install",
+					"upgrade",
+					"--install",
 					"temporal-worker-operator", "shield/temporal-worker-operator",
-					"--namespace", "default",
+					"--namespace", "shield-system",
 					"--version", config.Components.TemporalWorkerOperator.ChartVersion,
 					"--create-namespace",
 					"--set", "imagePullSecrets[0].name=ecr-credentials",
@@ -951,9 +957,10 @@ stringData:
 				}
 			} else {
 				helmArgs = []string{
-					"install",
+					"upgrade",
+					"--install",
 					"temporal-worker-operator", "shield/temporal-worker-operator",
-					"--namespace", "default",
+					"--namespace", "shield-system",
 					"--version", config.Components.TemporalWorkerOperator.ChartVersion,
 					"--create-namespace",
 					"--set", "imagePullSecrets[0].name=ecr-credentials",
