@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.4.0] - 2025-04-27
+
+* Merge pull request #1 from ShieldFC-RD/feature/kindenv (568fa30)
+* Enhance README and Kind environment configuration (91b4e7b)
+* Remove service account configuration from Kind environment setup (8857348)
+* Implement component status checks in Kind environment (2fafc95)
+* Update ECR credentials setup and namespace in Kind environment (b72bd65)
+* Enhance Kind environment setup with Temporal Worker Operator and AWS ECR improvements (72e428f)
+* Enhance Kind environment commands with cluster name flag support (a258809)
+* Enhance Kind environment configuration and improve port mapping handling (8dab10a)
+* Update Kind environment configuration to enable AWS ECR and improve Helm repository management (7f58665)
+* Refactor Kind environment setup and enhance cluster management (00c2ed2)
+* Refactor Kind environment configuration and enhance ECR setup (841cb51)
+* Update dependencies and enhance Kind environment configuration (549d856)
+* Add AWS ECR and Kind environment management functionality (3b3de17)
+* Add installation step to Makefile for copying the built binary to /usr/local/bin (f2323bc)
+* Update CHANGELOG.md for v0.3.1 (8fbf80f)
+
 ## [v0.3.1] - 2025-04-08
 
 * Update Homebrew tap references to ShieldFC-RD organization (da195a4)
