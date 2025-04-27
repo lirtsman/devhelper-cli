@@ -147,7 +147,7 @@ This command creates a default configuration file (kindenv.yaml) that can be
 customized for setting up a Kind cluster with Temporal, Dapr, Redis, and other
 required components.
 
-It also adds required Helm repositories for components like Dapr and cert-manager.`,
+It also adds required Helm repositories for components like Dapr and Temporal.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		configPath, _ := cmd.Flags().GetString("output")
 		force, _ := cmd.Flags().GetBool("force")

@@ -55,7 +55,7 @@ images:
     dockerHub:
         username: ""
         password: ""
-    useAwsEcr: false
+    useAwsEcr: true
     aws:
         region: eu-west-1
         ecrRegistry: ""

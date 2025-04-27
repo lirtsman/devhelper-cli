@@ -344,12 +344,6 @@ imagePullSecrets:
 			os.Exit(1)
 		}
 
-		fmt.Println(yellow("Updating Helm repositories"))
-		_, err = executeCommand("helm", "repo", "update")
-		if err != nil {
-			fmt.Printf("%s Warning updating Helm repos: %v\n", yellow("⚠️"), err)
-		}
-
 		// Create MySQL secret if MySQL secrets are enabled
 		if config.Secrets.MySQL.Enabled {
 			fmt.Println(yellow("Creating MySQL credentials secret"))

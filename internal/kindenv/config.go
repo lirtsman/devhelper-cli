@@ -239,7 +239,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Images.SkipPull = false
 	config.Images.DockerHub.Username = ""
 	config.Images.DockerHub.Password = ""
-	config.Images.UseAwsEcr = false
+	config.Images.UseAwsEcr = true
 	config.Images.AWS.Region = "eu-west-1"
 	config.Images.AWS.EcrRegistry = ""
 	config.Images.AWS.ServiceAccount = "ecr-pull-service-account"
