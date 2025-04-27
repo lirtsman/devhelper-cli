@@ -46,7 +46,7 @@ func init() {
 	rootCmd.AddCommand(kindenvCmd)
 
 	// Add persistent flags that are available to all subcommands
-	kindenvCmd.PersistentFlags().StringP("cluster-name", "n", "kind", "Name of the Kind cluster")
+	kindenvCmd.PersistentFlags().StringP("cluster-name", "n", "kindenv", "Name of the Kind cluster")
 	kindenvCmd.PersistentFlags().StringP("config", "c", "", "Path to kindenv config file")
 	kindenvCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
 

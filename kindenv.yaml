@@ -21,30 +21,35 @@ cluster:
     name: kindenv
     createIfNotExists: true
     mapPorts:
-        - containerPort: 80
-          hostPort: 80
+        - containerPort: ${{ components.temporal.nodePorts.web }}
+          hostPort: 8080
           protocol: TCP
-        - containerPort: 443
-          hostPort: 443
+        - containerPort: ${{ components.temporal.nodePorts.frontend }}
+          hostPort: 7233
+          protocol: TCP
+        - containerPort: ${{ components.redis.nodePorts.redis }}
+          hostPort: 6379
           protocol: TCP
 components:
     temporal:
         enabled: true
         namespace: temporal
-        webPort: 8080
-        webNodePort: 30080
-        frontendPort: 7233
-        frontendNodePort: 30733
+        chartVersion: 0.62.0
+        nodePorts:
+            web: 30080
+            frontend: 30733
     redis:
         enabled: true
-        port: 6379
-        nodePort: 30679
+        nodePorts:
+            redis: 30679
         chartVersion: 17.3.7
         auth:
             enabled: false
     dapr:
         enabled: true
-        version: 1.15.3
+        chartVersion: 1.15.3
+        nodePorts:
+            dashboard: 30479
         logLevel: debug
         mtls:
             enabled: false

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -40,32 +42,37 @@ type KindEnvConfig struct {
 		Name              string `yaml:"name"`
 		CreateIfNotExists bool   `yaml:"createIfNotExists"`
 		MapPorts          []struct {
-			ContainerPort int    `yaml:"containerPort"`
-			HostPort      int    `yaml:"hostPort"`
-			Protocol      string `yaml:"protocol"`
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
 		} `yaml:"mapPorts"`
 	} `yaml:"cluster"`
 	Components struct {
 		Temporal struct {
-			Enabled          bool   `yaml:"enabled"`
-			Namespace        string `yaml:"namespace"`
-			WebPort          int    `yaml:"webPort"`
-			WebNodePort      int    `yaml:"webNodePort"`
-			FrontendPort     int    `yaml:"frontendPort"`
-			FrontendNodePort int    `yaml:"frontendNodePort"`
+			Enabled      bool   `yaml:"enabled"`
+			Namespace    string `yaml:"namespace"`
+			ChartVersion string `yaml:"chartVersion"`
+			NodePorts    struct {
+				Web      int `yaml:"web"`
+				Frontend int `yaml:"frontend"`
+			} `yaml:"nodePorts"`
 		} `yaml:"temporal"`
 		Redis struct {
-			Enabled      bool   `yaml:"enabled"`
-			Port         int    `yaml:"port"`
-			NodePort     int    `yaml:"nodePort"`
+			Enabled   bool `yaml:"enabled"`
+			NodePorts struct {
+				Redis int `yaml:"redis"`
+			} `yaml:"nodePorts"`
 			ChartVersion string `yaml:"chartVersion"`
 			Auth         struct {
 				Enabled bool `yaml:"enabled"`
 			} `yaml:"auth"`
 		} `yaml:"redis"`
 		Dapr struct {
-			Enabled  bool   `yaml:"enabled"`
-			Version  string `yaml:"version"`
+			Enabled      bool   `yaml:"enabled"`
+			ChartVersion string `yaml:"chartVersion"`
+			NodePorts    struct {
+				Dashboard int `yaml:"dashboard"`
+			} `yaml:"nodePorts"`
 			LogLevel string `yaml:"logLevel"`
 			Mtls     struct {
 				Enabled bool `yaml:"enabled"`
@@ -105,29 +112,34 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config := &KindEnvConfig{}
 
 	// Set defaults
-	config.Cluster.Name = "kind-env"
+	config.Cluster.Name = "kindenv"
 	config.Cluster.CreateIfNotExists = true
 
 	// Set component defaults
 	config.Components.Temporal.Enabled = true
 	config.Components.Temporal.Namespace = "temporal"
-	config.Components.Temporal.WebPort = 8080
-	config.Components.Temporal.WebNodePort = 30080
-	config.Components.Temporal.FrontendPort = 7233
-	config.Components.Temporal.FrontendNodePort = 30733
+	config.Components.Temporal.ChartVersion = "0.62.0"
+	config.Components.Temporal.NodePorts.Web = 30080
+	config.Components.Temporal.NodePorts.Frontend = 30733
 
 	config.Components.Redis.Enabled = true
-	config.Components.Redis.Port = 6379
-	config.Components.Redis.NodePort = 30679
+	config.Components.Redis.NodePorts.Redis = 30679
 	config.Components.Redis.ChartVersion = "17.3.7"
 	config.Components.Redis.Auth.Enabled = false
 
 	config.Components.Dapr.Enabled = true
-	config.Components.Dapr.Version = "1.15.3"
+	config.Components.Dapr.ChartVersion = "1.15.3"
+	config.Components.Dapr.NodePorts.Dashboard = 30479
 	config.Components.Dapr.LogLevel = "debug"
 
+	// If configPath is empty, check if kindenv.yaml exists in the current directory
 	if configPath == "" {
-		return config, nil
+		if _, err := os.Stat("kindenv.yaml"); err == nil {
+			configPath = "kindenv.yaml"
+		} else {
+			// No config file provided or found, return defaults
+			return config, nil
+		}
 	}
 
 	// Read config file
@@ -141,7 +153,151 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// Process variable substitutions if mapPorts is provided
+	if len(config.Cluster.MapPorts) > 0 {
+		err = processVariableSubstitutions(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process variable substitutions: %w", err)
+		}
+	} else {
+		// No mapPorts in config file, generate default port mappings based on component settings
+		config.Cluster.MapPorts = generateDefaultPortMappings(config)
+	}
+
 	return config, nil
+}
+
+// generateDefaultPortMappings creates default port mappings if none are provided
+func generateDefaultPortMappings(config *KindEnvConfig) []struct {
+	ContainerPort interface{} `yaml:"containerPort"`
+	HostPort      int         `yaml:"hostPort"`
+	Protocol      string      `yaml:"protocol"`
+} {
+	var mappings []struct {
+		ContainerPort interface{} `yaml:"containerPort"`
+		HostPort      int         `yaml:"hostPort"`
+		Protocol      string      `yaml:"protocol"`
+	}
+
+	// // Add standard ports
+	// mappings = append(mappings, struct {
+	// 	ContainerPort interface{} `yaml:"containerPort"`
+	// 	HostPort      int         `yaml:"hostPort"`
+	// 	Protocol      string      `yaml:"protocol"`
+	// }{
+	// 	ContainerPort: 80,
+	// 	HostPort:      80,
+	// 	Protocol:      "TCP",
+	// })
+	// mappings = append(mappings, struct {
+	// 	ContainerPort interface{} `yaml:"containerPort"`
+	// 	HostPort      int         `yaml:"hostPort"`
+	// 	Protocol      string      `yaml:"protocol"`
+	// }{
+	// 	ContainerPort: 443,
+	// 	HostPort:      443,
+	// 	Protocol:      "TCP",
+	// })
+
+	// Add component-specific ports if components are enabled
+	if config.Components.Temporal.Enabled {
+		// Temporal web UI
+		mappings = append(mappings, struct {
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
+		}{
+			ContainerPort: "${{ components.temporal.nodePorts.web }}",
+			HostPort:      8080,
+			Protocol:      "TCP",
+		})
+
+		// Temporal frontend
+		mappings = append(mappings, struct {
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
+		}{
+			ContainerPort: "${{ components.temporal.nodePorts.frontend }}",
+			HostPort:      7233,
+			Protocol:      "TCP",
+		})
+	}
+
+	// Add Redis if enabled
+	if config.Components.Redis.Enabled {
+		mappings = append(mappings, struct {
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
+		}{
+			ContainerPort: "${{ components.redis.nodePorts.redis }}",
+			HostPort:      6379,
+			Protocol:      "TCP",
+		})
+	}
+
+	return mappings
+}
+
+// processVariableSubstitutions handles variable substitution in the config
+func processVariableSubstitutions(config *KindEnvConfig) error {
+	// Process containerPort references in mapPorts
+	for i, portMap := range config.Cluster.MapPorts {
+		// Check if containerPort is a string (potential variable reference)
+		if strValue, ok := portMap.ContainerPort.(string); ok {
+			// Pattern for ${{ components.x.nodePorts.y }}
+			pattern := regexp.MustCompile(`\$\{\{\s*components\.([a-zA-Z0-9]+)\.nodePorts\.([a-zA-Z0-9]+)\s*\}\}`)
+			matches := pattern.FindStringSubmatch(strValue)
+
+			if len(matches) == 3 {
+				componentName := matches[1]
+				portName := matches[2]
+
+				// Resolve the variable based on component and property
+				var value int
+				switch componentName {
+				case "temporal":
+					switch portName {
+					case "web":
+						value = config.Components.Temporal.NodePorts.Web
+					case "frontend":
+						value = config.Components.Temporal.NodePorts.Frontend
+					default:
+						return fmt.Errorf("unknown temporal port: %s", portName)
+					}
+				case "redis":
+					switch portName {
+					case "redis":
+						value = config.Components.Redis.NodePorts.Redis
+					default:
+						return fmt.Errorf("unknown redis port: %s", portName)
+					}
+				case "dapr":
+					switch portName {
+					case "dashboard":
+						value = config.Components.Dapr.NodePorts.Dashboard
+					default:
+						return fmt.Errorf("unknown dapr port: %s", portName)
+					}
+				default:
+					return fmt.Errorf("unknown component: %s", componentName)
+				}
+
+				// Replace the variable with the resolved value
+				config.Cluster.MapPorts[i].ContainerPort = value
+			} else if strValue != "" {
+				// If it's not a variable reference but a string, try to convert to int
+				intValue, err := strconv.Atoi(strValue)
+				if err != nil {
+					return fmt.Errorf("invalid containerPort value: %s", strValue)
+				}
+				config.Cluster.MapPorts[i].ContainerPort = intValue
+			}
+		}
+	}
+
+	return nil
 }
 
 // Validate validates the configuration
@@ -155,18 +311,18 @@ func (c *KindEnvConfig) Validate() error {
 		if c.Components.Temporal.Namespace == "" {
 			c.Components.Temporal.Namespace = "temporal"
 		}
-		if c.Components.Temporal.WebPort <= 0 {
-			return errors.New("temporal web port must be greater than 0")
+		if c.Components.Temporal.NodePorts.Web <= 0 {
+			return errors.New("temporal web node port must be greater than 0")
 		}
-		if c.Components.Temporal.FrontendPort <= 0 {
-			return errors.New("temporal frontend port must be greater than 0")
+		if c.Components.Temporal.NodePorts.Frontend <= 0 {
+			return errors.New("temporal frontend node port must be greater than 0")
 		}
 	}
 
 	// Validate Redis configuration
 	if c.Components.Redis.Enabled {
-		if c.Components.Redis.Port <= 0 {
-			return errors.New("redis port must be greater than 0")
+		if c.Components.Redis.NodePorts.Redis <= 0 {
+			return errors.New("redis node port must be greater than 0")
 		}
 	}
 
@@ -206,31 +362,22 @@ func CreateDefaultConfig() *KindEnvConfig {
 	// Cluster section
 	config.Cluster.Name = "kindenv"
 	config.Cluster.CreateIfNotExists = true
-	config.Cluster.MapPorts = []struct {
-		ContainerPort int    `yaml:"containerPort"`
-		HostPort      int    `yaml:"hostPort"`
-		Protocol      string `yaml:"protocol"`
-	}{
-		{ContainerPort: 80, HostPort: 80, Protocol: "TCP"},
-		{ContainerPort: 443, HostPort: 443, Protocol: "TCP"},
-	}
 
 	// Components section
 	config.Components.Temporal.Enabled = true
 	config.Components.Temporal.Namespace = "temporal"
-	config.Components.Temporal.WebPort = 8080
-	config.Components.Temporal.WebNodePort = 30080
-	config.Components.Temporal.FrontendPort = 7233
-	config.Components.Temporal.FrontendNodePort = 30733
+	config.Components.Temporal.ChartVersion = "0.62.0"
+	config.Components.Temporal.NodePorts.Web = 30080
+	config.Components.Temporal.NodePorts.Frontend = 30733
 
 	config.Components.Redis.Enabled = true
-	config.Components.Redis.Port = 6379
-	config.Components.Redis.NodePort = 30679
+	config.Components.Redis.NodePorts.Redis = 30679
 	config.Components.Redis.ChartVersion = "17.3.7"
 	config.Components.Redis.Auth.Enabled = false
 
 	config.Components.Dapr.Enabled = true
-	config.Components.Dapr.Version = "1.15.3"
+	config.Components.Dapr.ChartVersion = "1.15.3"
+	config.Components.Dapr.NodePorts.Dashboard = 30479
 	config.Components.Dapr.LogLevel = "debug"
 	config.Components.Dapr.Mtls.Enabled = false
 	config.Components.Dapr.Ha.Enabled = false
@@ -250,6 +397,9 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Secrets.MySQL.Namespace = "default"
 	config.Secrets.MySQL.Username = "root"
 	config.Secrets.MySQL.Password = "password"
+
+	// Generate default port mappings based on enabled components
+	config.Cluster.MapPorts = generateDefaultPortMappings(config)
 
 	return config
 }

@@ -69,8 +69,8 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			os.Exit(1)
 		}
 
-		// Override cluster name if specified via flag
-		if clusterName != "" {
+		// Override cluster name if explicitly specified via flag (not using default value)
+		if cmd.Flags().Changed("cluster-name") {
 			config.Cluster.Name = clusterName
 		}
 

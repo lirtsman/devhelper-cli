@@ -131,6 +131,7 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 		// Get flags
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		configPath, _ := cmd.Flags().GetString("config")
+		clusterName, _ := cmd.Flags().GetString("cluster-name")
 		useAwsEcr, _ := cmd.Flags().GetBool("use-aws-ecr")
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
 		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
@@ -144,6 +145,11 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 		if err != nil {
 			fmt.Printf("%s Error loading config: %v\n", red("❌"), err)
 			os.Exit(1)
+		}
+
+		// Override cluster name if explicitly specified via flag (not using default value)
+		if cmd.Flags().Changed("cluster-name") {
+			config.Cluster.Name = clusterName
 		}
 
 		// Override config with command line args
@@ -286,22 +292,35 @@ imagePullSecrets:
 
 			// Add port mappings from config
 			for _, portMap := range config.Cluster.MapPorts {
+				// Convert containerPort to int (it could be an interface{})
+				var containerPort int
+				switch cp := portMap.ContainerPort.(type) {
+				case int:
+					containerPort = cp
+				case float64:
+					containerPort = int(cp)
+				default:
+					// Skip this port mapping if containerPort is not a valid number
+					fmt.Printf("%s Skipping invalid containerPort: %v\n", yellow("⚠️"), portMap.ContainerPort)
+					continue
+				}
+
 				kindConfig += fmt.Sprintf("  - containerPort: %d\n    hostPort: %d\n    protocol: %s\n",
-					portMap.ContainerPort, portMap.HostPort, portMap.Protocol)
+					containerPort, portMap.HostPort, portMap.Protocol)
 			}
 
 			// Add temporal and redis port mappings if enabled
 			if config.Components.Temporal.Enabled {
 				kindConfig += fmt.Sprintf("  - containerPort: %d\n    hostPort: %d\n    protocol: TCP\n",
-					config.Components.Temporal.FrontendNodePort, config.Components.Temporal.FrontendPort)
+					config.Components.Temporal.NodePorts.Frontend, 7233)
 
 				kindConfig += fmt.Sprintf("  - containerPort: %d\n    hostPort: %d\n    protocol: TCP\n",
-					config.Components.Temporal.WebNodePort, config.Components.Temporal.WebPort)
+					config.Components.Temporal.NodePorts.Web, 8080)
 			}
 
 			if config.Components.Redis.Enabled {
 				kindConfig += fmt.Sprintf("  - containerPort: %d\n    hostPort: %d\n    protocol: TCP\n",
-					config.Components.Redis.NodePort, config.Components.Redis.Port)
+					config.Components.Redis.NodePorts.Redis, 6379)
 			}
 
 			// Create the cluster using the configuration
@@ -405,7 +424,7 @@ stringData:
 				"--namespace", "redis",
 				"--version", config.Components.Redis.ChartVersion,
 				"--set", "master.service.type=NodePort",
-				"--set", fmt.Sprintf("master.service.nodePorts.redis=%d", config.Components.Redis.NodePort),
+				"--set", fmt.Sprintf("master.service.nodePorts.redis=%d", config.Components.Redis.NodePorts.Redis),
 				"--set", fmt.Sprintf("auth.enabled=%t", config.Components.Redis.Auth.Enabled),
 				"--set", "replica.replicaCount=0")
 			if err != nil {
@@ -421,7 +440,7 @@ stringData:
 			time.Sleep(5 * time.Second)
 
 			// First, find out what resources are available to identify the correct name
-			redisResourcesOutput, err := executeCommand("kubectl", "get", "all", "-n", "redis")
+			redisResourcesOutput, _ := executeCommand("kubectl", "get", "all", "-n", "redis")
 			if verbose {
 				fmt.Println(yellow("Redis resources detected:"))
 				fmt.Println(redisResourcesOutput)
@@ -530,7 +549,7 @@ stringData:
 			_, err = executeCommand("helm", "upgrade", "--install",
 				"dapr", "dapr/dapr",
 				"--namespace", "dapr-system",
-				"--version", config.Components.Dapr.Version,
+				"--version", config.Components.Dapr.ChartVersion,
 				"--set", fmt.Sprintf("global.logLevel=%s", config.Components.Dapr.LogLevel),
 				"--set", fmt.Sprintf("global.ha.enabled=%t", config.Components.Dapr.Ha.Enabled),
 				"--set", fmt.Sprintf("global.mtls.enabled=%t", config.Components.Dapr.Mtls.Enabled),
@@ -593,16 +612,17 @@ stringData:
 			_, err = executeCommand("helm", "upgrade", "--install",
 				"temporal", "temporalio/temporal",
 				"--namespace", config.Components.Temporal.Namespace,
+				"--version", config.Components.Temporal.ChartVersion,
 				"--set", "server.replicaCount=1",
 				"--set", "cassandra.config.cluster_size=1",
 				"--set", "elasticsearch.replicas=1",
 				"--set", "prometheus.enabled=false",
 				"--set", "grafana.enabled=false",
 				"--set", "server.frontend.service.type=NodePort",
-				"--set", fmt.Sprintf("server.frontend.service.nodePort=%d", config.Components.Temporal.FrontendNodePort),
+				"--set", fmt.Sprintf("server.frontend.service.nodePort=%d", config.Components.Temporal.NodePorts.Frontend),
 				"--set", "web.enabled=true",
 				"--set", "web.service.type=NodePort",
-				"--set", fmt.Sprintf("web.service.nodePort=%d", config.Components.Temporal.WebNodePort),
+				"--set", fmt.Sprintf("web.service.nodePort=%d", config.Components.Temporal.NodePorts.Web),
 				"--timeout", "15m")
 			if err != nil {
 				fmt.Printf("%s Error installing Temporal: %v\n", red("❌"), err)
@@ -627,12 +647,39 @@ stringData:
 
 		fmt.Println(green("Kind-based development environment setup complete!"))
 		fmt.Println(green("Access services:"))
-		if config.Components.Temporal.Enabled {
-			fmt.Printf("- Temporal Web UI: http://localhost:%d\n", config.Components.Temporal.WebPort)
-			fmt.Printf("- Temporal Frontend: localhost:%d\n", config.Components.Temporal.FrontendPort)
+
+		// Find host ports from the port mappings
+		var temporalWebPort, temporalFrontendPort, redisPort int
+
+		for _, portMap := range config.Cluster.MapPorts {
+			// Check if containerPort matches any of our known nodePort values
+			switch cp := portMap.ContainerPort.(type) {
+			case int:
+				// Temporal Web UI
+				if cp == config.Components.Temporal.NodePorts.Web {
+					temporalWebPort = portMap.HostPort
+				}
+				// Temporal Frontend
+				if cp == config.Components.Temporal.NodePorts.Frontend {
+					temporalFrontendPort = portMap.HostPort
+				}
+				// Redis
+				if cp == config.Components.Redis.NodePorts.Redis {
+					redisPort = portMap.HostPort
+				}
+			}
 		}
-		if config.Components.Redis.Enabled {
-			fmt.Printf("- Redis: localhost:%d\n", config.Components.Redis.Port)
+
+		if config.Components.Temporal.Enabled {
+			if temporalWebPort > 0 {
+				fmt.Printf("- Temporal Web UI: http://localhost:%d\n", temporalWebPort)
+			}
+			if temporalFrontendPort > 0 {
+				fmt.Printf("- Temporal Frontend: localhost:%d\n", temporalFrontendPort)
+			}
+		}
+		if config.Components.Redis.Enabled && redisPort > 0 {
+			fmt.Printf("- Redis: localhost:%d\n", redisPort)
 		}
 	},
 }

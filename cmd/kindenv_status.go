@@ -65,23 +65,47 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 		configPath, _ := cmd.Flags().GetString("config")
 		clusterName, _ := cmd.Flags().GetString("cluster-name")
 
+		if verbose {
+			fmt.Printf("Flags: verbose=%v, config=%s, cluster-name=%s\n", verbose, configPath, clusterName)
+		}
+
 		fmt.Println(green("Checking Kind-based development environment status..."))
 
 		// Load config
+		if verbose {
+			fmt.Printf("Attempting to load config from: %s\n", configPath)
+		}
 		config, err := kindenv.LoadConfig(configPath)
 		if err != nil {
 			fmt.Printf("%s Error loading config: %v\n", red("❌"), err)
 			os.Exit(1)
 		}
 
-		// Override cluster name if specified via flag
-		if clusterName != "" {
+		if verbose {
+			fmt.Println(yellow("Verbose mode enabled"))
+			fmt.Printf("Config path: %s\n", configPath)
+			fmt.Printf("Config loaded with cluster name: %s\n", config.Cluster.Name)
+		}
+
+		// Override cluster name if explicitly specified via flag (not using default value)
+		if cmd.Flags().Changed("cluster-name") {
+			if verbose {
+				fmt.Printf("Overriding with flag value: %s\n", clusterName)
+			}
 			config.Cluster.Name = clusterName
 		}
 
 		if verbose {
-			fmt.Println(yellow("Verbose mode enabled"))
 			fmt.Printf("Using cluster name: %s\n", config.Cluster.Name)
+
+			// Display port mappings
+			if len(config.Cluster.MapPorts) > 0 {
+				fmt.Println(yellow("Port mappings:"))
+				for _, portMap := range config.Cluster.MapPorts {
+					fmt.Printf("  - containerPort: %v, hostPort: %d, protocol: %s\n",
+						portMap.ContainerPort, portMap.HostPort, portMap.Protocol)
+				}
+			}
 		}
 
 		// Check if cluster exists
@@ -106,16 +130,39 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 
 			// Print service access information
 			fmt.Println(green("Access services:"))
+
+			// Find host ports from the port mappings
+			var temporalWebPort, temporalFrontendPort, redisPort int
+
+			for _, portMap := range config.Cluster.MapPorts {
+				// Check if containerPort matches any of our known nodePort values
+				switch cp := portMap.ContainerPort.(type) {
+				case int:
+					// Temporal Web UI
+					if cp == config.Components.Temporal.NodePorts.Web {
+						temporalWebPort = portMap.HostPort
+					}
+					// Temporal Frontend
+					if cp == config.Components.Temporal.NodePorts.Frontend {
+						temporalFrontendPort = portMap.HostPort
+					}
+					// Redis
+					if cp == config.Components.Redis.NodePorts.Redis {
+						redisPort = portMap.HostPort
+					}
+				}
+			}
+
 			if config.Components.Temporal.Enabled {
 				// Check if Temporal is actually deployed
 				temporalCmd := exec.Command("kubectl", "get", "namespace", config.Components.Temporal.Namespace)
 				_, err := temporalCmd.CombinedOutput()
 
-				if err == nil {
-					fmt.Printf("- Temporal Web UI: http://localhost:%d\n", config.Components.Temporal.WebPort)
-					fmt.Printf("- Temporal Frontend: localhost:%d\n", config.Components.Temporal.FrontendPort)
+				if err == nil && temporalWebPort > 0 && temporalFrontendPort > 0 {
+					fmt.Printf("- Temporal Web UI: http://localhost:%d\n", temporalWebPort)
+					fmt.Printf("- Temporal Frontend: localhost:%d\n", temporalFrontendPort)
 				} else if verbose {
-					fmt.Printf("%s Temporal namespace not found. Temporal may not be installed.\n", yellow("⚠️"))
+					fmt.Printf("%s Temporal namespace not found or port mapping missing. Temporal may not be installed.\n", yellow("⚠️"))
 				}
 			}
 
@@ -124,10 +171,10 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				redisCmd := exec.Command("kubectl", "get", "namespace", "redis")
 				_, err := redisCmd.CombinedOutput()
 
-				if err == nil {
-					fmt.Printf("- Redis: localhost:%d\n", config.Components.Redis.Port)
+				if err == nil && redisPort > 0 {
+					fmt.Printf("- Redis: localhost:%d\n", redisPort)
 				} else if verbose {
-					fmt.Printf("%s Redis namespace not found. Redis may not be installed.\n", yellow("⚠️"))
+					fmt.Printf("%s Redis namespace not found or port mapping missing. Redis may not be installed.\n", yellow("⚠️"))
 				}
 			}
 
