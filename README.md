@@ -9,6 +9,7 @@ DevHelper CLI is designed to streamline and automate the setup and management of
 ## Features
 
 - **Local Environment Management**: Initialize, start, stop, and manage local development environments with a single command
+- **Kind Environment Management**: Provision and manage Kubernetes clusters with Temporal, Dapr, and Redis using Kind
 - **Component Integration**: Seamlessly work with Dapr, Temporal, and OpenSearch
 - **Log Management**: View, follow, and clean logs for various components
 - **Configuration**: Flexible configuration via YAML files for consistent environments
@@ -153,6 +154,18 @@ devhelper-cli localenv logs temporal
 
 # Follow component logs in real-time
 devhelper-cli localenv logs temporal -f
+
+# Initialize Kind-based environment configuration
+devhelper-cli kindenv init
+
+# Start Kind-based environment
+devhelper-cli kindenv start
+
+# Check Kind-based environment status
+devhelper-cli kindenv status
+
+# Stop/delete Kind-based environment
+devhelper-cli kindenv stop --delete
 ```
 
 ## Configuration
@@ -218,6 +231,314 @@ DevHelper CLI supports several key components for local development:
 - Container management via Podman
 - Dashboard configuration
 - Security and access settings
+
+## Kind-based Environment Management
+
+DevHelper CLI includes the `kindenv` command for provisioning and managing a local Kind-based Kubernetes development environment. This environment comes with all necessary components for Shield application development.
+
+### Prerequisites
+
+- [Kind](https://kind.sigs.k8s.io/) - Kubernetes in Docker
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) - Kubernetes command-line tool
+- [Helm](https://helm.sh/) - Kubernetes package manager
+- Docker or Podman - Container engine
+- AWS CLI (optional) - For AWS ECR integration
+
+### Usage
+
+```bash
+# Initialize kindenv configuration and set up Helm repositories
+devhelper-cli kindenv init
+
+# Initialize with custom configuration file
+devhelper-cli kindenv init --output custom-kindenv.yaml --force
+
+# Start the Kind environment with all components
+devhelper-cli kindenv start
+
+# Start environment with specific options
+devhelper-cli kindenv start --skip-temporal --skip-redis --use-aws-ecr
+
+# Check the status of kindenv components
+devhelper-cli kindenv status
+
+# Stop/delete the Kind environment
+devhelper-cli kindenv stop --delete
+```
+
+### Configuration
+
+The `kindenv` command uses a YAML configuration file (by default `kindenv.yaml` in the current directory) that includes settings for:
+
+- Tool paths and versions (Kind, kubectl, Helm, etc.)
+- Cluster configuration (name, port mappings)
+- Component settings (Temporal, Redis, Dapr)
+- Image registry configuration (Docker Hub, AWS ECR)
+- Secret management
+
+### Detailed Command Reference
+
+#### kindenv init
+
+This command sets up the initial configuration for a Kind-based Kubernetes environment and prepares the necessary Helm repositories.
+
+**What it does:**
+
+1. Creates a default `kindenv.yaml` configuration file with:
+   - Auto-detected paths and versions for required tools (Kind, kubectl, Helm, Docker/Podman, AWS CLI)
+   - Default configuration for Temporal, Redis, and Dapr components
+   - Port mappings for accessing services from the host machine
+   - AWS ECR integration settings (if enabled)
+
+2. Sets up required Helm repositories:
+   - Temporal repository (https://go.temporal.io/helm-charts)
+   - Dapr repository (https://dapr.github.io/helm-charts)
+   - Bitnami repository (https://charts.bitnami.com/bitnami) for Redis
+   - Shield repository (https://harbor.shieldfis.com/chartrepo/stable)
+
+3. Updates Helm repositories to ensure the latest charts are available
+
+**Options:**
+
+- `--output`, `-o`: Specify a different output path for the configuration file (default: `kindenv.yaml`)
+- `--force`, `-f`: Force overwrite if the configuration file already exists
+- `--skip-repos`: Skip adding and updating Helm repositories
+- `--name`: Set a specific cluster name (default: uses current directory name)
+
+Example usage:
+```bash
+# Create configuration with default settings
+devhelper-cli kindenv init
+
+# Create configuration with custom output path and force overwrite
+devhelper-cli kindenv init -o custom-config.yaml -f
+
+# Create configuration with a specific cluster name
+devhelper-cli kindenv init --name my-cluster
+
+# Create configuration without setting up Helm repositories
+devhelper-cli kindenv init --skip-repos
+```
+
+**Example Configuration File**
+
+The `kindenv init` command generates a configuration file similar to the following:
+
+```yaml
+tools:
+  podman:
+    path: /opt/homebrew/bin/podman
+    version: 5.4.1
+  docker:
+    path: ""
+    version: ""
+  kind:
+    path: /opt/homebrew/bin/kind
+    version: v0.20.0
+  kubectl:
+    path: /opt/homebrew/bin/kubectl
+    version: v1.29.0
+  helm:
+    path: /opt/homebrew/bin/helm
+    version: v3.13.1
+  aws:
+    path: /usr/local/bin/aws
+    version: aws-cli/2.11.2
+cluster:
+  name: devhelper-cli
+  createIfNotExists: true
+  mapPorts:
+    - containerPort: 30080
+      hostPort: 8080
+      protocol: TCP
+    - containerPort: 30733
+      hostPort: 7233
+      protocol: TCP
+    - containerPort: 30679
+      hostPort: 6379
+      protocol: TCP
+components:
+  temporal:
+    enabled: true
+    namespace: temporal
+    chartVersion: 0.62.0
+    nodePorts:
+      web: 30080
+      frontend: 30733
+  redis:
+    enabled: true
+    nodePorts:
+      redis: 30679
+    chartVersion: 17.3.7
+    auth:
+      enabled: false
+  dapr:
+    enabled: true
+    chartVersion: 1.15.3
+    nodePorts:
+      dashboard: 30479
+    logLevel: debug
+    mtls:
+      enabled: false
+    ha:
+      enabled: false
+  temporalWorkerOperator:
+    enabled: true
+    chartVersion: 0.1.46-dev
+images:
+  skipPull: false
+  dockerHub:
+    username: ""
+    password: ""
+  useAwsEcr: false
+  aws:
+    region: eu-west-1
+    ecrRegistry: ""
+    profile: ""
+secrets:
+  mysql:
+    enabled: true
+    name: mysql-credentials
+    namespace: default
+    username: root
+    password: password
+```
+
+You can customize this file to fit your specific requirements before starting the Kind environment.
+
+#### kindenv start
+
+This command creates and configures a Kind cluster with all the required components for Shield application development.
+
+**What it does:**
+
+1. Creates a Kind cluster if it doesn't exist, configuring:
+   - Port mappings based on your configuration
+   - Node labels for proper service exposure
+
+2. Sets up required infrastructure:
+   - Configures Kubernetes context to point to the Kind cluster
+   - Sets up AWS ECR credentials if enabled (for pulling container images)
+   - Creates necessary MySQL credentials as Kubernetes secrets
+
+3. Installs and configures components in the correct order:
+   - Redis (with optional authentication)
+   - Dapr runtime (with configurable log level and mTLS settings)
+   - Temporal server (with web UI and frontend services exposed)
+   - Temporal Worker Operator (with proper Redis integration)
+
+4. Displays access information for installed services:
+   - URLs and ports for Temporal Web UI
+   - Connection details for Temporal Frontend
+   - Connection details for Redis
+
+**Options:**
+
+- `--skip-temporal`: Skip installing Temporal server
+- `--skip-dapr`: Skip installing Dapr runtime
+- `--skip-redis`: Skip installing Redis
+- `--skip-temporal-worker-operator`: Skip installing Temporal Worker Operator
+- `--use-aws-ecr`: Enable AWS ECR integration for pulling images
+- `--aws-profile`: Specify AWS profile to use for ECR access
+- `--name`: Override cluster name from configuration file
+- `--config`, `-f`: Path to configuration file (default: `kindenv.yaml`)
+- `--verbose`, `-v`: Enable verbose output
+
+Example usage:
+```bash
+# Start with default settings from kindenv.yaml
+devhelper-cli kindenv start
+
+# Start with AWS ECR integration and specific profile
+devhelper-cli kindenv start --use-aws-ecr --aws-profile my-profile
+
+# Start with only specific components
+devhelper-cli kindenv start --skip-temporal --skip-temporal-worker-operator
+
+# Start with custom configuration file and verbose output
+devhelper-cli kindenv start -f custom-config.yaml -v
+
+# Start with custom cluster name
+devhelper-cli kindenv start --name my-custom-cluster
+```
+
+#### kindenv status
+
+This command checks and displays the status of a Kind-based Kubernetes environment and its components.
+
+**What it does:**
+
+1. Verifies if the Kind cluster exists and is running
+2. Checks the status of each component:
+   - Temporal server (deployment and namespace status)
+   - Redis (pod and namespace status)
+   - Dapr runtime (deployment status)
+   - Temporal Worker Operator (deployment status and CRD installation)
+
+3. Displays access information for installed services:
+   - URLs and ports for Temporal Web UI
+   - Connection details for Temporal Frontend
+   - Connection details for Redis
+
+4. In verbose mode, provides additional information:
+   - Available Kubernetes namespaces
+   - Installed TemporalWorker resources
+   - Installed TemporalNamespace resources
+   - Detailed port mapping configuration
+
+**Options:**
+
+- `--name`: Override cluster name from configuration file
+- `--config`, `-f`: Path to configuration file (default: `kindenv.yaml`)
+- `--verbose`, `-v`: Enable verbose output with additional details
+
+Example usage:
+```bash
+# Check status with default settings
+devhelper-cli kindenv status
+
+# Check status with verbose output
+devhelper-cli kindenv status --verbose
+
+# Check status for a specific cluster name
+devhelper-cli kindenv status --name my-custom-cluster
+
+# Check status using a custom configuration file
+devhelper-cli kindenv status -f custom-config.yaml
+```
+
+#### kindenv stop
+
+This command stops and deletes a Kind-based Kubernetes environment.
+
+**What it does:**
+
+1. Verifies if the Kind cluster exists
+2. If the cluster exists, stops and deletes it completely
+3. Provides appropriate feedback based on cluster status
+
+**Options:**
+
+- `--name`: Override cluster name from configuration file
+- `--config`, `-f`: Path to configuration file (default: `kindenv.yaml`)
+- `--verbose`, `-v`: Enable verbose output with additional details
+
+Example usage:
+```bash
+# Stop the cluster with default settings
+devhelper-cli kindenv stop
+
+# Stop a specific cluster by name
+devhelper-cli kindenv stop --name my-custom-cluster
+
+# Stop with verbose output
+devhelper-cli kindenv stop --verbose
+
+# Stop using a custom configuration file
+devhelper-cli kindenv stop -f custom-config.yaml
+```
+
+For detailed information on all `kindenv` options and configuration, see [KINDENV.md](KINDENV.md).
 
 ## Roadmap
 

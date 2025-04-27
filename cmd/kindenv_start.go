@@ -1,0 +1,985 @@
+/*
+Copyright © 2023 Shield
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package cmd
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
+	"github.com/fatih/color"
+	"github.com/spf13/cobra"
+)
+
+// Define the setupECRCreds function at the file level, outside of any function
+
+// setupECRCreds creates ECR pull secrets in a given namespace
+func setupECRCreds(namespace, registry, password string) error {
+	fmt.Printf("Creating ECR pull secret in the %s namespace\n", namespace)
+
+	// Ensure namespace exists
+	namespaceYaml, err := executeCommand("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+
+	// Apply the namespace using stdin
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(namespaceYaml)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply namespace: %w", err)
+	}
+
+	// Create ECR credentials secret
+	secretYaml, err := executeCommand("kubectl", "create", "secret", "docker-registry",
+		"ecr-credentials",
+		fmt.Sprintf("--docker-server=%s", registry),
+		"--docker-username=AWS",
+		fmt.Sprintf("--docker-password=%s", password),
+		fmt.Sprintf("--namespace=%s", namespace),
+		"--dry-run=client", "-o", "yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create secret: %w", err)
+	}
+
+	// Apply the secret using stdin
+	cmd = exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(secretYaml)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply secret: %w", err)
+	}
+
+	green := color.New(color.FgGreen).SprintFunc()
+	fmt.Printf("%s ECR pull secret created in the %s namespace\n", green("✅"), namespace)
+	return nil
+}
+
+// executeCommand runs a shell command and returns the combined output and error
+func executeCommand(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("command failed: %v\nOutput: %s\nError: %s", err, stdout.String(), stderr.String())
+	}
+	return stdout.String(), nil
+}
+
+// commandExists checks if a command exists in the system
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+// waitForDeployment waits for a deployment to be available
+func waitForDeployment(namespace, deployment string, timeout int) error {
+	fmt.Printf("Waiting for deployment %s in namespace %s to be ready...\n", deployment, namespace)
+	_, err := executeCommand("kubectl", "wait", "--for=condition=Available",
+		fmt.Sprintf("--timeout=%dm", timeout),
+		fmt.Sprintf("deployment/%s", deployment),
+		fmt.Sprintf("-n=%s", namespace))
+	return err
+}
+
+// kindenvStartCmd represents the kindenv start command
+var kindenvStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start a Kind-based development environment",
+	Long: `Start a Kind-based development environment for Shield applications.
+
+This command creates a Kind cluster if it doesn't exist and installs required components:
+- Temporal
+- Redis
+- Dapr
+- Temporal Worker Operator
+
+By default, the command will use the cluster name from kindenv.yaml.
+You can override this with the --name flag.
+
+When AWS ECR is enabled, you can specify an AWS profile in the config file (images.aws.profile)
+or override it with the --aws-profile flag.
+
+It also sets up the Kubernetes context and creates required namespaces.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Create colored output helpers
+		green := color.New(color.FgGreen).SprintFunc()
+		yellow := color.New(color.FgYellow).SprintFunc()
+		red := color.New(color.FgRed).SprintFunc()
+
+		// Get flags
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		configPath, _ := cmd.Flags().GetString("config")
+		clusterName, _ := cmd.Flags().GetString("name")
+		useAwsEcr, _ := cmd.Flags().GetBool("use-aws-ecr")
+		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
+		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
+		skipRedis, _ := cmd.Flags().GetBool("skip-redis")
+		skipTemporalWorkerOperator, _ := cmd.Flags().GetBool("skip-temporal-worker-operator")
+		awsProfile, _ := cmd.Flags().GetString("aws-profile")
+
+		// Load config file
+		fmt.Println(green("Setting up Kind-based development environment..."))
+
+		// Load config
+		config, err := kindenv.LoadConfig(configPath)
+		if err != nil {
+			fmt.Printf("%s Error loading config: %v\n", red("❌"), err)
+			os.Exit(1)
+		}
+
+		// Override cluster name only if explicitly provided with --name flag
+		if cmd.Flags().Changed("name") {
+			config.Cluster.Name = clusterName
+			fmt.Printf("%s Using specified cluster name: %s\n", yellow("⚙️"), clusterName)
+		} else {
+			fmt.Printf("%s Using cluster name from config: %s\n", yellow("📄"), config.Cluster.Name)
+		}
+
+		// Override config with command line args
+		if useAwsEcr {
+			config.Images.UseAwsEcr = true
+		}
+
+		// Set component enabled/disabled based on skip flags
+		if skipTemporal {
+			config.Components.Temporal.Enabled = false
+		}
+
+		if skipDapr {
+			config.Components.Dapr.Enabled = false
+		}
+
+		if skipRedis {
+			config.Components.Redis.Enabled = false
+		}
+
+		if skipTemporalWorkerOperator {
+			config.Components.TemporalWorkerOperator.Enabled = false
+		}
+
+		// Show warning if deprecated operator-namespace flag is used
+		if cmd.Flags().Changed("operator-namespace") {
+			fmt.Printf("%s The --operator-namespace flag is deprecated. The operator will be installed in the default namespace.\n", yellow("⚠️"))
+		}
+
+		// Print component configuration
+		fmt.Println(green("Component configuration:"))
+		fmt.Printf("- Temporal: %v\n", config.Components.Temporal.Enabled)
+		fmt.Printf("- Redis: %v\n", config.Components.Redis.Enabled)
+		fmt.Printf("- Dapr: %v\n", config.Components.Dapr.Enabled)
+		fmt.Printf("- Temporal Worker Operator: %v\n", config.Components.TemporalWorkerOperator.Enabled)
+		fmt.Printf("- AWS ECR: %v\n", config.Images.UseAwsEcr)
+
+		if verbose {
+			fmt.Println(yellow("Verbose mode enabled"))
+		}
+
+		// Check for required tools
+		requiredTools := []string{"kind", "kubectl", "helm"}
+		for _, tool := range requiredTools {
+			if !commandExists(tool) {
+				fmt.Printf("%s Error: %s is not installed. Please install it first.\n", red("❌"), tool)
+				os.Exit(1)
+			}
+		}
+
+		// Detect container engine
+		containerEngine := ""
+		if commandExists("podman") {
+			containerEngine = "podman"
+			fmt.Println(green("Using podman as container engine"))
+		} else if commandExists("docker") {
+			containerEngine = "docker"
+			fmt.Println(green("Using docker as container engine"))
+		} else {
+			fmt.Printf("%s Error: Neither docker nor podman found. Please install one of them.\n", red("❌"))
+			os.Exit(1)
+		}
+
+		// Create a Kind cluster if it doesn't exist
+		clusterExists := false
+		clusterOutput, err := executeCommand("kind", "get", "clusters")
+		if err == nil && strings.Contains(clusterOutput, config.Cluster.Name) {
+			clusterExists = true
+			fmt.Printf("%s Kind cluster %s already exists, reusing it\n", yellow("🔄"), config.Cluster.Name)
+		}
+
+		if !clusterExists && config.Cluster.CreateIfNotExists {
+			fmt.Printf("%s Creating Kind cluster: %s\n", yellow("⚙️"), config.Cluster.Name)
+
+			// Create Kind cluster configuration
+			kindConfig := "kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n  kubeadmConfigPatches:\n  - |\n    kind: InitConfiguration\n    nodeRegistration:\n      kubeletExtraArgs:\n        node-labels: \"ingress-ready=true\"\n  extraPortMappings:\n"
+
+			// Track mapped ports to avoid duplicates
+			mappedPorts := make(map[string]bool)
+
+			// Helper function to add port mapping and track it to avoid duplicates
+			addPortMapping := func(containerPort, hostPort int, protocol string) {
+				portKey := fmt.Sprintf("%d/%s", containerPort, protocol)
+				if _, exists := mappedPorts[portKey]; !exists {
+					kindConfig += fmt.Sprintf("  - containerPort: %d\n    hostPort: %d\n    protocol: %s\n",
+						containerPort, hostPort, protocol)
+					mappedPorts[portKey] = true
+					if verbose {
+						fmt.Printf("%s Added port mapping: container %d -> host %d (%s)\n",
+							yellow("📡"), containerPort, hostPort, protocol)
+					}
+				} else if verbose {
+					fmt.Printf("%s Skipping duplicate port mapping: container port %d/%s\n",
+						yellow("ℹ️"), containerPort, protocol)
+				}
+			}
+
+			// Process port mappings from config.Cluster.MapPorts
+			if verbose {
+				fmt.Println(yellow("Processing port mappings from configuration"))
+			}
+
+			for _, portMap := range config.Cluster.MapPorts {
+				// Convert containerPort to int (it could be an interface{})
+				var containerPort int
+				switch cp := portMap.ContainerPort.(type) {
+				case int:
+					containerPort = cp
+				case float64:
+					containerPort = int(cp)
+				case string:
+					// If it's a string, it might be a variable reference or a numeric string
+					// Try to parse as a number first
+					if val, err := strconv.Atoi(cp); err == nil {
+						containerPort = val
+					} else {
+						// Skip this port mapping if containerPort is not a valid number
+						fmt.Printf("%s Skipping invalid containerPort: %v (cannot be converted to a number)\n", yellow("⚠️"), cp)
+						continue
+					}
+				default:
+					// Skip this port mapping if containerPort is not a valid number or convertible type
+					fmt.Printf("%s Skipping invalid containerPort: %v (unsupported type)\n", yellow("⚠️"), portMap.ContainerPort)
+					continue
+				}
+
+				// Add the port mapping
+				addPortMapping(containerPort, portMap.HostPort, portMap.Protocol)
+			}
+
+			// Make sure we don't miss any essential component port mappings
+			if verbose {
+				fmt.Println(yellow("Verifying essential component port mappings"))
+			}
+
+			// Ensure Temporal ports are mapped if enabled
+			if config.Components.Temporal.Enabled {
+				// Check if Temporal Web UI port is already mapped
+				webPortKey := fmt.Sprintf("%d/TCP", config.Components.Temporal.NodePorts.Web)
+				if !mappedPorts[webPortKey] {
+					fmt.Printf("%s Adding missing Temporal Web UI port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.Temporal.NodePorts.Web, 8080, "TCP")
+				}
+
+				// Check if Temporal Frontend port is already mapped
+				frontendPortKey := fmt.Sprintf("%d/TCP", config.Components.Temporal.NodePorts.Frontend)
+				if !mappedPorts[frontendPortKey] {
+					fmt.Printf("%s Adding missing Temporal Frontend port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.Temporal.NodePorts.Frontend, 7233, "TCP")
+				}
+			}
+
+			// Ensure Redis port is mapped if enabled
+			if config.Components.Redis.Enabled {
+				redisPortKey := fmt.Sprintf("%d/TCP", config.Components.Redis.NodePorts.Redis)
+				if !mappedPorts[redisPortKey] {
+					fmt.Printf("%s Adding missing Redis port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.Redis.NodePorts.Redis, 6379, "TCP")
+				}
+			}
+
+			if verbose {
+				fmt.Println(yellow("Port mapping configuration complete"))
+			}
+
+			// Create the cluster using the configuration
+			kindConfigFile, err := os.CreateTemp("", "kind-config-*.yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating temporary file for Kind config: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+			defer os.Remove(kindConfigFile.Name())
+
+			_, err = kindConfigFile.WriteString(kindConfig)
+			if err != nil {
+				fmt.Printf("%s Error writing Kind config: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+			kindConfigFile.Close()
+
+			// Use selected container engine for kind operations if needed (e.g. KIND_EXPERIMENTAL_PROVIDER=podman)
+			if containerEngine == "podman" && verbose {
+				fmt.Println(yellow("Setting KIND_EXPERIMENTAL_PROVIDER=podman"))
+				os.Setenv("KIND_EXPERIMENTAL_PROVIDER", "podman")
+			}
+
+			_, err = executeCommand("kind", "create", "cluster", "--name", config.Cluster.Name, "--config", kindConfigFile.Name())
+			if err != nil {
+				fmt.Printf("%s Error creating Kind cluster: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s Kind cluster created successfully\n", green("✅"))
+		} else if !clusterExists && !config.Cluster.CreateIfNotExists {
+			fmt.Printf("%s Error: Cluster %s does not exist and createIfNotExists is false\n", red("❌"), config.Cluster.Name)
+			os.Exit(1)
+		}
+
+		// Switch kubectl context to the kind cluster
+		_, err = executeCommand("kubectl", "cluster-info", "--context", fmt.Sprintf("kind-%s", config.Cluster.Name))
+		if err != nil {
+			fmt.Printf("%s Error switching kubectl context: %v\n", red("❌"), err)
+			os.Exit(1)
+		}
+
+		// Setup AWS ECR if needed
+		var ecrPassword string
+		var ecrRegistry string
+		if config.Images.UseAwsEcr {
+			fmt.Println(yellow("Setting up AWS ECR credentials"))
+
+			if !commandExists("aws") {
+				fmt.Printf("%s Error: AWS CLI is not installed. Please install it first.\n", red("❌"))
+				os.Exit(1)
+			}
+
+			// Determine AWS profile to use - command line flag takes precedence over config file
+			awsProfileToUse := config.Images.AWS.Profile
+			if cmd.Flags().Changed("aws-profile") {
+				awsProfileToUse = awsProfile
+				fmt.Printf("%s Overriding AWS profile from command line: %s\n", yellow("🔑"), awsProfile)
+			} else if awsProfileToUse != "" {
+				fmt.Printf("%s Using AWS profile from config: %s\n", yellow("🔑"), awsProfileToUse)
+			} else {
+				// No profile provided in config or command line, prompt the user
+				fmt.Printf("%s AWS ECR is enabled but no AWS profile specified\n", yellow("⚠️"))
+				fmt.Println(yellow("You can:"))
+				fmt.Println("  1. Add a profile field to the images.aws section in kindenv.yaml:")
+				fmt.Println("     images:")
+				fmt.Println("       aws:")
+				fmt.Println("         profile: \"your-profile-name\"")
+				fmt.Println("  2. Run this command with --aws-profile flag:")
+				fmt.Println("     kindenv start --aws-profile your-profile-name")
+				fmt.Println("  3. Ensure your default AWS credentials are configured and continue")
+				fmt.Println("")
+
+				// Ask if user wants to continue with default credentials
+				fmt.Print("Do you want to continue with default AWS credentials? (y/n): ")
+				var response string
+				fmt.Scanln(&response)
+				if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+					fmt.Println(yellow("Exiting as requested."))
+					os.Exit(0)
+				}
+				fmt.Println(yellow("Continuing with default AWS credentials..."))
+			}
+
+			// Use AWS profile if specified
+			awsArgs := []string{"sts", "get-caller-identity", "--query", "Account", "--output", "text"}
+			if awsProfileToUse != "" {
+				awsArgs = append([]string{"--profile", awsProfileToUse}, awsArgs...)
+			}
+
+			// Get AWS account ID and ECR credentials
+			accountOutput, err := executeCommand("aws", awsArgs...)
+			if err != nil {
+				fmt.Printf("%s Error getting AWS account ID: %v\n", red("❌"), err)
+				fmt.Println(yellow("Authentication failed with AWS CLI."))
+
+				if awsProfileToUse != "" {
+					fmt.Printf(yellow("The profile '%s' may not be correctly configured or has expired tokens.\n"), awsProfileToUse)
+				} else {
+					fmt.Println(yellow("No AWS profile was specified, and default credentials failed."))
+				}
+
+				fmt.Println(yellow("You can resolve this by:"))
+				fmt.Println("  1. Run 'aws configure' to set up your credentials")
+				fmt.Println("  2. Run 'aws sso login' if using AWS SSO")
+				fmt.Println("  3. Set up environment variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+				fmt.Println("  4. Use --aws-profile flag to specify a valid profile")
+				fmt.Println("  5. Add a valid profile in your kindenv.yaml configuration:")
+				fmt.Println("     images:")
+				fmt.Println("       aws:")
+				fmt.Println("         profile: \"your-profile-name\"")
+
+				// List available profiles to help the user
+				fmt.Println("")
+				fmt.Println(yellow("Available AWS profiles:"))
+				profileOutput, profileErr := executeCommand("aws", "configure", "list-profiles")
+				if profileErr == nil && profileOutput != "" {
+					profiles := strings.Split(strings.TrimSpace(profileOutput), "\n")
+					for _, profile := range profiles {
+						fmt.Printf("  - %s\n", profile)
+					}
+				} else {
+					fmt.Println("  No profiles found or unable to list profiles")
+				}
+
+				os.Exit(1)
+			}
+			accountID := strings.TrimSpace(accountOutput)
+
+			// Use provided region or default
+			awsRegion := config.Images.AWS.Region
+			if awsRegion == "" {
+				awsRegion = "eu-west-1"
+			}
+
+			// Set or validate ECR registry
+			if config.Images.AWS.EcrRegistry == "" {
+				config.Images.AWS.EcrRegistry = fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com", accountID, awsRegion)
+			}
+
+			// Set ecrRegistry to the config value
+			ecrRegistry = config.Images.AWS.EcrRegistry
+
+			// Get ecrPassword from AWS with profile if specified
+			ecrPasswordArgs := []string{"ecr", "get-login-password", "--region", awsRegion}
+			if awsProfileToUse != "" {
+				ecrPasswordArgs = append([]string{"--profile", awsProfileToUse}, ecrPasswordArgs...)
+			}
+
+			ecrPasswordOutput, err := executeCommand("aws", ecrPasswordArgs...)
+			if err != nil {
+				fmt.Printf("%s Error getting ECR credentials: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+			ecrPassword = strings.TrimSpace(ecrPasswordOutput)
+
+			// Create ECR credentials in default namespace
+			err = setupECRCreds("default", ecrRegistry, ecrPassword)
+			if err != nil {
+				fmt.Printf("%s Error setting up ECR credentials: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s AWS ECR credentials configured\n", green("✅"))
+		}
+
+		// Create MySQL secret if MySQL secrets are enabled
+		if config.Secrets.MySQL.Enabled {
+			fmt.Println(yellow("Creating MySQL credentials secret"))
+
+			mysqlSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: "%s"
+  password: "%s"
+`, config.Secrets.MySQL.Name, config.Secrets.MySQL.Namespace,
+				config.Secrets.MySQL.Username, config.Secrets.MySQL.Password)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(mysqlSecretYaml)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("%s Error creating MySQL secret: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s MySQL credentials secret created\n", green("✅"))
+		}
+
+		// Install Redis
+		if config.Components.Redis.Enabled {
+			fmt.Println(yellow("Installing Redis"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", "redis", "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating Redis namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying Redis namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				err = setupECRCreds("redis", ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for Redis: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Install Redis with Helm
+			_, err = executeCommand("helm", "upgrade", "--install",
+				"redis", "bitnami/redis",
+				"--namespace", "redis",
+				"--version", config.Components.Redis.ChartVersion,
+				"--set", "master.service.type=NodePort",
+				"--set", fmt.Sprintf("master.service.nodePorts.redis=%d", config.Components.Redis.NodePorts.Redis),
+				"--set", fmt.Sprintf("auth.enabled=%t", config.Components.Redis.Auth.Enabled),
+				"--set", "replica.replicaCount=0")
+			if err != nil {
+				fmt.Printf("%s Error installing Redis: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for Redis to be ready using label selectors
+			fmt.Println(yellow("Waiting for Redis to be ready..."))
+
+			// Give resources a moment to be created
+			fmt.Println(yellow("Pausing briefly to allow resources to be created..."))
+			time.Sleep(10 * time.Second) // Increased wait time to ensure pod is created
+
+			// Wait specifically for the redis-master-0 pod
+			fmt.Println(yellow("Waiting for redis-master-0 pod to be created..."))
+			// First check if the pod exists
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "redis-master-0", "-n", "redis", "--no-headers")
+
+			// Retry a few times for the pod to appear
+			var podExists bool
+			for i := 0; i < 6; i++ { // Try for up to 30 seconds (6 * 5s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 5 { // Don't sleep on the last iteration
+					fmt.Printf("Waiting for redis-master-0 pod to appear (attempt %d/6)...\n", i+1)
+					time.Sleep(5 * time.Second)
+				}
+			}
+
+			if podExists {
+				fmt.Println(yellow("Found redis-master-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/redis-master-0", "-n", "redis", "--timeout=2m")
+				if err != nil {
+					fmt.Printf("%s Warning: Redis master pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite Redis not being fully ready..."))
+				} else {
+					fmt.Printf("%s Redis is ready\n", green("✅"))
+				}
+			} else {
+				fmt.Printf("%s Redis master pod (redis-master-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite Redis pod not being detected..."))
+			}
+
+			// Create kvv2-redis secret with redis address
+			kvv2RedisSecretYaml := `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-redis
+  namespace: redis
+type: Opaque
+stringData:
+  address: "redis-master.redis.svc.cluster.local:6379"
+`
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(kvv2RedisSecretYaml)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("%s Error creating Redis secret: %v\n", red("❌"), err)
+			}
+
+		}
+
+		// Install Dapr
+		if config.Components.Dapr.Enabled {
+			fmt.Println(yellow("Installing Dapr"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", "dapr-system", "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating Dapr namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying Dapr namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				err = setupECRCreds("dapr-system", ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for Dapr: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Install Dapr with Helm
+			_, err = executeCommand("helm", "upgrade", "--install",
+				"dapr", "dapr/dapr",
+				"--namespace", "dapr-system",
+				"--version", config.Components.Dapr.ChartVersion,
+				"--set", fmt.Sprintf("global.logLevel=%s", config.Components.Dapr.LogLevel),
+				"--set", fmt.Sprintf("global.ha.enabled=%t", config.Components.Dapr.Ha.Enabled),
+				"--set", fmt.Sprintf("global.mtls.enabled=%t", config.Components.Dapr.Mtls.Enabled),
+				"--wait", "--timeout", "5m")
+			if err != nil {
+				fmt.Printf("%s Error installing Dapr: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for Dapr components to be ready
+			err = waitForDeployment("dapr-system", "dapr-operator", 2)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Dapr operator: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Dapr operator not being ready..."))
+			}
+
+			err = waitForDeployment("dapr-system", "dapr-sentry", 2)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Dapr sentry: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Dapr sentry not being ready..."))
+			}
+
+			err = waitForDeployment("dapr-system", "dapr-sidecar-injector", 2)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Dapr sidecar injector: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Dapr sidecar injector not being ready..."))
+			} else {
+				fmt.Printf("%s Dapr installed successfully\n", green("✅"))
+			}
+		}
+
+		// Install Temporal
+		if config.Components.Temporal.Enabled {
+			fmt.Println(yellow("Installing Temporal"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.Temporal.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating Temporal namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying Temporal namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				err = setupECRCreds(config.Components.Temporal.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for Temporal: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Install Temporal with Helm
+			_, err = executeCommand("helm", "upgrade", "--install",
+				"temporal", "temporalio/temporal",
+				"--namespace", config.Components.Temporal.Namespace,
+				"--version", config.Components.Temporal.ChartVersion,
+				"--set", "server.replicaCount=1",
+				"--set", "cassandra.config.cluster_size=1",
+				"--set", "elasticsearch.replicas=1",
+				"--set", "prometheus.enabled=false",
+				"--set", "grafana.enabled=false",
+				"--set", "server.frontend.service.type=NodePort",
+				"--set", fmt.Sprintf("server.frontend.service.nodePort=%d", config.Components.Temporal.NodePorts.Frontend),
+				"--set", "web.enabled=true",
+				"--set", "web.service.type=NodePort",
+				"--set", fmt.Sprintf("web.service.nodePort=%d", config.Components.Temporal.NodePorts.Web),
+				"--timeout", "15m")
+			if err != nil {
+				fmt.Printf("%s Error installing Temporal: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for Temporal to be ready
+			err = waitForDeployment(config.Components.Temporal.Namespace, "temporal-frontend", 5)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Temporal frontend: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Temporal frontend not being ready..."))
+			}
+
+			err = waitForDeployment(config.Components.Temporal.Namespace, "temporal-web", 5)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Temporal web: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Temporal web not being ready..."))
+			} else {
+				fmt.Printf("%s Temporal installed successfully\n", green("✅"))
+			}
+		}
+
+		// Install Temporal Worker Operator
+		if config.Components.TemporalWorkerOperator.Enabled {
+			fmt.Println(yellow("Installing Temporal Worker Operator"))
+
+			// Set up ECR credentials if needed (default namespace already has them)
+			if config.Images.UseAwsEcr {
+				fmt.Println(yellow("Setting up ECR credentials in shield-system namespace"))
+				err = setupECRCreds("shield-system", ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for shield-system: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Install Temporal Worker Operator with CRDs first
+			fmt.Println(yellow("Installing Temporal Worker Operator (with CRDs)..."))
+
+			var helmArgs []string
+			if config.Components.Redis.Enabled {
+				// Create kvv2-redis secret with redis address
+				kvv2RedisSecretYaml := `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-redis
+  namespace: shield-system
+type: Opaque
+stringData:
+  address: "redis-master.redis.svc.cluster.local:6379"
+`
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(kvv2RedisSecretYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating Redis secret: %v\n", red("❌"), err)
+				}
+				helmArgs = []string{
+					"upgrade",
+					"--install",
+					"temporal-worker-operator", "shield/temporal-worker-operator",
+					"--namespace", "shield-system",
+					"--version", config.Components.TemporalWorkerOperator.ChartVersion,
+					"--create-namespace",
+					"--set", "imagePullSecrets[0].name=ecr-credentials",
+					"--set", "redis.deployChart=false",
+					"--set", "redis.external.secretName=kvv2-redis",
+					"--set", "redis.auth.enabled=false",
+				}
+			} else {
+				helmArgs = []string{
+					"upgrade",
+					"--install",
+					"temporal-worker-operator", "shield/temporal-worker-operator",
+					"--namespace", "shield-system",
+					"--version", config.Components.TemporalWorkerOperator.ChartVersion,
+					"--create-namespace",
+					"--set", "imagePullSecrets[0].name=ecr-credentials",
+					"--set", "redis.deployChart=true",
+					"--set", "redis.global.imageRegistry=docker.io",
+				}
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Temporal Worker Operator: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Helm output:")
+					fmt.Println(helmOutput)
+				}
+
+				// Check if the error is due to chart not found
+				if strings.Contains(err.Error(), "chart not found") ||
+					strings.Contains(helmOutput, "chart not found") {
+					fmt.Println(yellow("The chart was not found. Make sure:"))
+					fmt.Println("1. The Shield Helm repository is properly added: helm repo add shield https://harbor.shieldfis.com/chartrepo/stable")
+					fmt.Println("2. The Helm repositories are updated: helm repo update")
+					fmt.Println("3. The chart exists: helm search repo shield/temporal-worker-operator")
+				}
+
+				// Exit since we can't continue without the operator
+				fmt.Println(red("Unable to continue without the Temporal Worker Operator."))
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s Temporal Worker Operator installed successfully\n", green("✅"))
+
+			// Wait for Temporal Worker Operator to be ready
+			fmt.Println(yellow("Waiting for Temporal Worker Operator to be ready..."))
+
+			// Wait a moment for CRDs to be established and resources to be created
+			fmt.Println(yellow("Waiting for resources to be established..."))
+			time.Sleep(10 * time.Second)
+
+			// First check if there's a deployment for the operator
+			deploymentOutput, _ := executeCommand("kubectl", "get", "deployment",
+				"-n", "default", "--no-headers")
+
+			if deploymentOutput != "" {
+				// Try to find the operator deployment name
+				operatorDeployments := strings.Split(strings.TrimSpace(deploymentOutput), "\n")
+				if len(operatorDeployments) > 0 {
+					for _, deploymentLine := range operatorDeployments {
+						parts := strings.Fields(deploymentLine)
+						if len(parts) > 0 {
+							deploymentName := parts[0]
+							if strings.Contains(deploymentName, "temporal-worker-operator") {
+								err = waitForDeployment("default", deploymentName, 5)
+								if err != nil {
+									fmt.Printf("%s Error waiting for Temporal Worker Operator: %v\n", red("❌"), err)
+									fmt.Println(yellow("Continuing despite Temporal Worker Operator not being ready..."))
+								}
+							}
+						}
+					}
+				}
+			}
+
+			fmt.Printf("%s Temporal Worker Operator installation completed\n", green("✅"))
+		}
+
+		fmt.Println(green("Kind-based development environment setup complete!"))
+
+		// Find host ports from the port mappings and component configuration
+		var temporalWebPort, temporalFrontendPort, redisPort int
+
+		if verbose {
+			fmt.Println(yellow("Port mapping details for accessing services:"))
+			for _, portMap := range config.Cluster.MapPorts {
+				fmt.Printf("  - Container: %v → Host: %d (%s)\n",
+					portMap.ContainerPort, portMap.HostPort, portMap.Protocol)
+			}
+		}
+
+		// Helper function to find a host port for a given container port
+		findHostPort := func(containerPort int) int {
+			for _, portMap := range config.Cluster.MapPorts {
+				// Handle different types of containerPort values
+				switch cp := portMap.ContainerPort.(type) {
+				case int:
+					if cp == containerPort {
+						return portMap.HostPort
+					}
+				case float64:
+					if int(cp) == containerPort {
+						return portMap.HostPort
+					}
+				case string:
+					// If it's a string, it might be a variable reference
+					// Check if it directly evaluates to our container port
+					if val, err := strconv.Atoi(cp); err == nil && val == containerPort {
+						return portMap.HostPort
+					}
+					// If it's a variable reference like ${{ components.temporal.nodePorts.web }},
+					// check for known patterns
+					if strings.Contains(cp, "temporal.nodePorts.web") && containerPort == config.Components.Temporal.NodePorts.Web {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "temporal.nodePorts.frontend") && containerPort == config.Components.Temporal.NodePorts.Frontend {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "redis.nodePorts.redis") && containerPort == config.Components.Redis.NodePorts.Redis {
+						return portMap.HostPort
+					}
+				}
+			}
+			return 0
+		}
+
+		// Find host ports for the services
+		if config.Components.Temporal.Enabled {
+			temporalWebPort = findHostPort(config.Components.Temporal.NodePorts.Web)
+			temporalFrontendPort = findHostPort(config.Components.Temporal.NodePorts.Frontend)
+
+			// If ports are not found in the mappings, use defaults based on NodePorts
+			if temporalWebPort == 0 {
+				temporalWebPort = 8080 // Default host port for Temporal Web
+				if verbose {
+					fmt.Printf("%s Using default host port for Temporal Web: %d\n", yellow("ℹ️"), temporalWebPort)
+				}
+			}
+			if temporalFrontendPort == 0 {
+				temporalFrontendPort = 7233 // Default host port for Temporal Frontend
+				if verbose {
+					fmt.Printf("%s Using default host port for Temporal Frontend: %d\n", yellow("ℹ️"), temporalFrontendPort)
+				}
+			}
+		}
+
+		if config.Components.Redis.Enabled {
+			redisPort = findHostPort(config.Components.Redis.NodePorts.Redis)
+
+			// If port is not found in the mappings, use default
+			if redisPort == 0 {
+				redisPort = 6379 // Default host port for Redis
+				if verbose {
+					fmt.Printf("%s Using default host port for Redis: %d\n", yellow("ℹ️"), redisPort)
+				}
+			}
+		}
+
+		// Display service access information
+		if config.Components.Temporal.Enabled {
+			if temporalWebPort > 0 {
+				fmt.Printf("- Temporal Web UI: http://localhost:%d\n", temporalWebPort)
+			}
+			if temporalFrontendPort > 0 {
+				fmt.Printf("- Temporal Frontend: localhost:%d\n", temporalFrontendPort)
+			}
+		}
+		if config.Components.Redis.Enabled && redisPort > 0 {
+			fmt.Printf("- Redis: localhost:%d\n", redisPort)
+		}
+	},
+}
+
+func init() {
+	kindenvCmd.AddCommand(kindenvStartCmd)
+
+	// Add flags for kindenv start command
+	kindenvStartCmd.Flags().Bool("skip-temporal", false, "Skip installing Temporal")
+	kindenvStartCmd.Flags().Bool("skip-dapr", false, "Skip installing Dapr")
+	kindenvStartCmd.Flags().Bool("skip-redis", false, "Skip installing Redis")
+	kindenvStartCmd.Flags().Bool("skip-temporal-worker-operator", false, "Skip installing Temporal Worker Operator")
+
+	// Deprecated flag, kept for backward compatibility
+	kindenvStartCmd.Flags().String("operator-namespace", "default",
+		"Deprecated: Namespace for Temporal worker operator (now always uses default namespace)")
+	kindenvStartCmd.Flags().MarkDeprecated("operator-namespace", "The Temporal Worker Operator is now always installed in the default namespace")
+
+	kindenvStartCmd.Flags().Bool("use-aws-ecr", false, "Use AWS ECR for pulling images")
+	kindenvStartCmd.Flags().String("aws-profile", "", "AWS profile to use for ECR access")
+	kindenvStartCmd.Flags().String("name", "", "Cluster name (defaults to current directory name)")
+	kindenvStartCmd.Flags().StringP("config", "f", "", "Path to configuration file")
+	kindenvStartCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
+}
