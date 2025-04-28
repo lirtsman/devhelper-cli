@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.4.1] - 2025-04-28
+
+* Update CHANGELOG.md for v0.4.0 (6434b87)
+
 ## [v0.4.0] - 2025-04-28
 
 * Merge branch 'feature/temporal-worker-command' (76e5699)
