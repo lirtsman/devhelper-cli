@@ -14,7 +14,6 @@ all: build
 .PHONY: build
 build:
 	go build $(LDFLAGS) -o devhelper-cli
-	sudo cp devhelper-cli /usr/local/bin/
 
 .PHONY: install
 install: build
