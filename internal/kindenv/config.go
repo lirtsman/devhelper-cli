@@ -81,6 +81,25 @@ type KindEnvConfig struct {
 				Enabled bool `yaml:"enabled"`
 			} `yaml:"ha"`
 		} `yaml:"dapr"`
+		OpenSearch struct {
+			Enabled      bool   `yaml:"enabled"`
+			Namespace    string `yaml:"namespace"`
+			Version      string `yaml:"version"`
+			NodePorts    struct {
+				Rest int `yaml:"rest"`
+			} `yaml:"nodePorts"`
+			Security struct {
+				Disabled bool `yaml:"disabled"`
+			} `yaml:"security"`
+		} `yaml:"openSearch"`
+		OpenSearchDashboards struct {
+			Enabled   bool   `yaml:"enabled"`
+			Namespace string `yaml:"namespace"`
+			Version   string `yaml:"version"`
+			NodePorts struct {
+				Http int `yaml:"http"`
+			} `yaml:"nodePorts"`
+		} `yaml:"openSearchDashboards"`
 		TemporalWorkerOperator struct {
 			Enabled      bool   `yaml:"enabled"`
 			ChartVersion string `yaml:"chartVersion"`
@@ -135,6 +154,17 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Components.Dapr.ChartVersion = "1.15.3"
 	config.Components.Dapr.NodePorts.Dashboard = 30479
 	config.Components.Dapr.LogLevel = "debug"
+
+	config.Components.OpenSearch.Enabled = true
+	config.Components.OpenSearch.Namespace = "opensearch"
+	config.Components.OpenSearch.Version = "2.17.1"
+	config.Components.OpenSearch.NodePorts.Rest = 30920
+	config.Components.OpenSearch.Security.Disabled = true
+
+	config.Components.OpenSearchDashboards.Enabled = true
+	config.Components.OpenSearchDashboards.Namespace = "opensearch"
+	config.Components.OpenSearchDashboards.Version = "2.17.1"
+	config.Components.OpenSearchDashboards.NodePorts.Http = 30601
 
 	// If configPath is empty, check if kindenv.yaml exists in the current directory
 	if configPath == "" {
@@ -229,14 +259,41 @@ func generateDefaultPortMappings(config *KindEnvConfig) []struct {
 	}
 
 	// Add Redis if enabled
-	if config.Components.Redis.Enabled {
+	// Add Dapr if enabled
+	if config.Components.Dapr.Enabled {
 		mappings = append(mappings, struct {
 			ContainerPort interface{} `yaml:"containerPort"`
 			HostPort      int         `yaml:"hostPort"`
 			Protocol      string      `yaml:"protocol"`
 		}{
-			ContainerPort: "${{ components.redis.nodePorts.redis }}",
-			HostPort:      6379,
+			ContainerPort: "${{ components.dapr.nodePorts.dashboard }}",
+			HostPort:      3500,
+			Protocol:      "TCP",
+		})
+	}
+
+	// Add OpenSearch if enabled
+	if config.Components.OpenSearch.Enabled {
+		mappings = append(mappings, struct {
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
+		}{
+			ContainerPort: "${{ components.openSearch.nodePorts.rest }}",
+			HostPort:      9200,
+			Protocol:      "TCP",
+		})
+	}
+
+	// Add OpenSearch Dashboards if enabled
+	if config.Components.OpenSearchDashboards.Enabled {
+		mappings = append(mappings, struct {
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
+		}{
+			ContainerPort: "${{ components.openSearchDashboards.nodePorts.http }}",
+			HostPort:      5601,
 			Protocol:      "TCP",
 		})
 	}
@@ -284,6 +341,20 @@ func processVariableSubstitutions(config *KindEnvConfig) error {
 					default:
 						return fmt.Errorf("unknown dapr port: %s", portName)
 					}
+				case "openSearch":
+					switch portName {
+					case "rest":
+						value = config.Components.OpenSearch.NodePorts.Rest
+					default:
+						return fmt.Errorf("unknown openSearch port: %s", portName)
+					}
+				case "openSearchDashboards":
+					switch portName {
+					case "http":
+						value = config.Components.OpenSearchDashboards.NodePorts.Http
+					default:
+						return fmt.Errorf("unknown openSearchDashboards port: %s", portName)
+					}
 				default:
 					return fmt.Errorf("unknown component: %s", componentName)
 				}
@@ -327,6 +398,26 @@ func (c *KindEnvConfig) Validate() error {
 	if c.Components.Redis.Enabled {
 		if c.Components.Redis.NodePorts.Redis <= 0 {
 			return errors.New("redis node port must be greater than 0")
+		}
+	}
+
+	// Validate OpenSearch configuration
+	if c.Components.OpenSearch.Enabled {
+		if c.Components.OpenSearch.Namespace == "" {
+			c.Components.OpenSearch.Namespace = "opensearch"
+		}
+		if c.Components.OpenSearch.NodePorts.Rest <= 0 {
+			return errors.New("opensearch rest node port must be greater than 0")
+		}
+	}
+
+	// Validate OpenSearch Dashboards configuration
+	if c.Components.OpenSearchDashboards.Enabled {
+		if c.Components.OpenSearchDashboards.Namespace == "" {
+			c.Components.OpenSearchDashboards.Namespace = "opensearch"
+		}
+		if c.Components.OpenSearchDashboards.NodePorts.Http <= 0 {
+			return errors.New("opensearch dashboards http node port must be greater than 0")
 		}
 	}
 
@@ -385,6 +476,17 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.Dapr.LogLevel = "debug"
 	config.Components.Dapr.Mtls.Enabled = false
 	config.Components.Dapr.Ha.Enabled = false
+
+	config.Components.OpenSearch.Enabled = true
+	config.Components.OpenSearch.Namespace = "opensearch"
+	config.Components.OpenSearch.Version = "2.17.1"
+	config.Components.OpenSearch.NodePorts.Rest = 30920
+	config.Components.OpenSearch.Security.Disabled = true
+
+	config.Components.OpenSearchDashboards.Enabled = true
+	config.Components.OpenSearchDashboards.Namespace = "opensearch"
+	config.Components.OpenSearchDashboards.Version = "2.17.1"
+	config.Components.OpenSearchDashboards.NodePorts.Http = 30601
 
 	config.Components.TemporalWorkerOperator.Enabled = true
 	config.Components.TemporalWorkerOperator.ChartVersion = "0.1.46-dev"

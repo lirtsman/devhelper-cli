@@ -268,6 +268,22 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Println("✅ Bitnami Helm repository added successfully")
 			}
 
+			// Add OpenSearch Helm repository
+			fmt.Println("Adding OpenSearch Helm repository...")
+			openSearchOutput, err := executeCommandWithOutput("helm", "repo", "add", "opensearch", "https://opensearch-project.github.io/helm-charts")
+			if err != nil {
+				if strings.Contains(openSearchOutput, "already exists") {
+					fmt.Println("✅ OpenSearch Helm repository already configured")
+				} else {
+					fmt.Printf("⚠️  Warning: Failed to add OpenSearch Helm repository: %v\n", err)
+					if openSearchOutput != "" {
+						fmt.Printf("  Output: %s\n", openSearchOutput)
+					}
+				}
+			} else {
+				fmt.Println("✅ OpenSearch Helm repository added successfully")
+			}
+
 			// Add Shield Helm repository
 			fmt.Println("Adding Shield Helm repository...")
 			shieldOutput, err := executeCommandWithOutput("helm", "repo", "add", "shield", "https://harbor.shieldfis.com/chartrepo/stable")

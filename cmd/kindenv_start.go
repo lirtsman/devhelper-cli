@@ -22,8 +22,10 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	// Import necessary packages
+	"bufio"
 	"time"
-
+	
 	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -111,6 +113,8 @@ This command creates a Kind cluster if it doesn't exist and installs required co
 - Temporal
 - Redis
 - Dapr
+- OpenSearch
+- OpenSearch Dashboards
 - Temporal Worker Operator
 
 By default, the command will use the cluster name from kindenv.yaml.
@@ -119,7 +123,12 @@ You can override this with the --name flag.
 When AWS ECR is enabled, you can specify an AWS profile in the config file (images.aws.profile)
 or override it with the --aws-profile flag.
 
-It also sets up the Kubernetes context and creates required namespaces.`,
+It also verifies and switches to the correct Kubernetes context if needed, and creates 
+required namespaces for component installation.
+
+Note: When starting the environment, the command ensures you're using the correct Kubernetes
+context for the kind cluster. If you're using a different context, it will prompt you to switch.
+Use --force-context to automatically switch without prompting.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Create colored output helpers
 		green := color.New(color.FgGreen).SprintFunc()
@@ -134,8 +143,11 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
 		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
 		skipRedis, _ := cmd.Flags().GetBool("skip-redis")
+		skipOpenSearch, _ := cmd.Flags().GetBool("skip-opensearch")
+		skipOpenSearchDashboards, _ := cmd.Flags().GetBool("skip-opensearch-dashboards")
 		skipTemporalWorkerOperator, _ := cmd.Flags().GetBool("skip-temporal-worker-operator")
 		awsProfile, _ := cmd.Flags().GetString("aws-profile")
+		forceContext, _ := cmd.Flags().GetBool("force-context")
 
 		// Load config file
 		fmt.Println(green("Setting up Kind-based development environment..."))
@@ -161,18 +173,22 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 		}
 
 		// Set component enabled/disabled based on skip flags
+		// Override config values with flags
 		if skipTemporal {
 			config.Components.Temporal.Enabled = false
 		}
-
 		if skipDapr {
 			config.Components.Dapr.Enabled = false
 		}
-
 		if skipRedis {
 			config.Components.Redis.Enabled = false
 		}
-
+		if skipOpenSearch {
+			config.Components.OpenSearch.Enabled = false
+		}
+		if skipOpenSearchDashboards {
+			config.Components.OpenSearchDashboards.Enabled = false
+		}
 		if skipTemporalWorkerOperator {
 			config.Components.TemporalWorkerOperator.Enabled = false
 		}
@@ -351,12 +367,55 @@ It also sets up the Kubernetes context and creates required namespaces.`,
 			os.Exit(1)
 		}
 
-		// Switch kubectl context to the kind cluster
-		_, err = executeCommand("kubectl", "cluster-info", "--context", fmt.Sprintf("kind-%s", config.Cluster.Name))
+		// Check current kubectl context before proceeding
+		expectedContext := fmt.Sprintf("kind-%s", config.Cluster.Name)
+		currentContextCmd := exec.Command("kubectl", "config", "current-context")
+		currentContextOutput, err := currentContextCmd.CombinedOutput()
+		currentContext := strings.TrimSpace(string(currentContextOutput))
+		
+		if err == nil && currentContext != expectedContext {
+			fmt.Printf("%s Current kubectl context is: %s\n", yellow("⚠️"), currentContext)
+			fmt.Printf("%s Expected kubectl context for this environment is: %s\n", yellow("ℹ️"), expectedContext)
+			
+			shouldSwitch := forceContext
+			if !forceContext {
+				fmt.Print("Switch to the correct context? (y/n): ")
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.TrimSpace(response)
+				
+				shouldSwitch = strings.ToLower(response) == "y" || strings.ToLower(response) == "yes"
+				if !shouldSwitch {
+					fmt.Println(yellow("Context switch declined. This may cause issues with deployment."))
+					fmt.Println(yellow("You can manually switch context with:"))
+					fmt.Printf("  kubectl config use-context %s\n", expectedContext)
+					fmt.Println(yellow("Or run this command with --force-context to switch automatically."))
+					os.Exit(1)
+				}
+			} else {
+				fmt.Printf("%s Automatically switching kubectl context from %s to %s\n", 
+					yellow("⚙️"), currentContext, expectedContext)
+			}
+			
+			// Explicitly switch context
+			switchCmd := exec.Command("kubectl", "config", "use-context", expectedContext)
+			switchOutput, err := switchCmd.CombinedOutput()
+			if err != nil {
+				fmt.Printf("%s Error switching kubectl context: %v\n", red("❌"), err)
+				if len(switchOutput) > 0 {
+					fmt.Println(string(switchOutput))
+				}
+				os.Exit(1)
+			}
+		}
+		
+		// Verify we're using the right context
+		_, err = executeCommand("kubectl", "cluster-info", "--context", expectedContext)
 		if err != nil {
-			fmt.Printf("%s Error switching kubectl context: %v\n", red("❌"), err)
+			fmt.Printf("%s Error connecting to cluster with context %s: %v\n", red("❌"), expectedContext, err)
 			os.Exit(1)
 		}
+		fmt.Printf("%s Using kubectl context: %s\n", green("✅"), expectedContext)
 
 		// Setup AWS ECR if needed
 		var ecrPassword string
@@ -678,6 +737,273 @@ stringData:
 			}
 		}
 
+		// Install OpenSearch
+		if config.Components.OpenSearch.Enabled {
+			fmt.Println(yellow("Installing OpenSearch"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.OpenSearch.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating OpenSearch namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying OpenSearch namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				err = setupECRCreds(config.Components.OpenSearch.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for OpenSearch: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Deploy OpenSearch using direct Kubernetes manifests
+			opensearchYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: %s
+  labels:
+    app: opensearch
+spec:
+  type: NodePort
+  ports:
+  - port: 9200
+    targetPort: 9200
+    nodePort: %d
+    name: rest
+  - port: 9300
+    name: inter-node
+  selector:
+    app: opensearch
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  namespace: %s
+spec:
+  serviceName: opensearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch
+    spec:
+      containers:
+      - name: opensearch
+        image: opensearchproject/opensearch:%s
+        env:
+        - name: discovery.type
+          value: single-node
+        - name: bootstrap.memory_lock
+          value: "true"
+        - name: OPENSEARCH_JAVA_OPTS
+          value: "-Xms512m -Xmx512m"
+        - name: _JAVA_OPTIONS
+          value: "-XX:UseSVE=0"
+        - name: DISABLE_SECURITY_PLUGIN
+          value: "%t"
+        ports:
+        - containerPort: 9200
+          name: rest
+        - containerPort: 9300
+          name: inter-node
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 1Gi
+        readinessProbe:
+          httpGet:
+            path: /_cluster/health?local=true
+            port: 9200
+          initialDelaySeconds: 90
+          periodSeconds: 15
+          failureThreshold: 15
+          timeoutSeconds: 10
+`, config.Components.OpenSearch.Namespace, config.Components.OpenSearch.NodePorts.Rest, 
+   config.Components.OpenSearch.Namespace, config.Components.OpenSearch.Version, 
+   config.Components.OpenSearch.Security.Disabled)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(opensearchYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error deploying OpenSearch: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for OpenSearch pod to be created
+			fmt.Println(yellow("Waiting for OpenSearch pod to be created..."))
+			maxPodCreateRetries := 20
+			podCreateRetryCount := 0
+			var opensearchPodExists bool
+			
+			for podCreateRetryCount < maxPodCreateRetries {
+				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch", 
+					"-n", config.Components.OpenSearch.Namespace, "--no-headers")
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 && !strings.Contains(string(podOutput), "No resources found") {
+					opensearchPodExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					fmt.Printf("%s OpenSearch pod is created\n", green("✅"))
+					break
+				}
+				podCreateRetryCount++
+				fmt.Print(".")
+				time.Sleep(3 * time.Second)
+			}
+
+			if !opensearchPodExists {
+				fmt.Printf("%s Timed out waiting for OpenSearch pod to be created\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite OpenSearch pod not being detected..."))
+			} else {
+				// Wait for OpenSearch pod to be ready
+				fmt.Println(yellow("Waiting for OpenSearch pod to become ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch", 
+					"-n", config.Components.OpenSearch.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: OpenSearch pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite OpenSearch not being fully ready..."))
+				} else {
+					fmt.Printf("%s OpenSearch is ready\n", green("✅"))
+				}
+			}
+		}
+
+		// Install OpenSearch Dashboards
+		if config.Components.OpenSearchDashboards.Enabled && config.Components.OpenSearch.Enabled {
+			fmt.Println(yellow("Installing OpenSearch Dashboards"))
+
+			// OpenSearch Dashboards uses the same namespace as OpenSearch
+			// Deploy OpenSearch Dashboards using direct Kubernetes manifests
+			dashboardsYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch-dashboards
+  namespace: %s
+  labels:
+    app: opensearch-dashboards
+spec:
+  type: NodePort
+  ports:
+  - port: 5601
+    targetPort: 5601
+    nodePort: %d
+    name: http
+  selector:
+    app: opensearch-dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensearch-dashboards
+  namespace: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opensearch-dashboards
+  template:
+    metadata:
+      labels:
+        app: opensearch-dashboards
+    spec:
+      containers:
+      - name: opensearch-dashboards
+        image: opensearchproject/opensearch-dashboards:%s
+        env:
+        - name: OPENSEARCH_HOSTS
+          value: '["http://opensearch:9200"]'
+        - name: DISABLE_SECURITY_DASHBOARDS_PLUGIN
+          value: "%t"
+        ports:
+        - containerPort: 5601
+          name: http
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /api/status
+            port: 5601
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          failureThreshold: 10
+          timeoutSeconds: 10
+`, config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.NodePorts.Http, 
+   config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.Version, 
+   config.Components.OpenSearch.Security.Disabled)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(dashboardsYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error deploying OpenSearch Dashboards: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for OpenSearch Dashboards pod to be created
+			fmt.Println(yellow("Waiting for OpenSearch Dashboards pod to be created..."))
+			maxPodCreateRetries := 20
+			podCreateRetryCount := 0
+			var dashboardsPodExists bool
+			
+			for podCreateRetryCount < maxPodCreateRetries {
+				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch-dashboards", 
+					"-n", config.Components.OpenSearchDashboards.Namespace, "--no-headers")
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 && !strings.Contains(string(podOutput), "No resources found") {
+					dashboardsPodExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					fmt.Printf("%s OpenSearch Dashboards pod is created\n", green("✅"))
+					break
+				}
+				podCreateRetryCount++
+				fmt.Print(".")
+				time.Sleep(3 * time.Second)
+			}
+
+			if !dashboardsPodExists {
+				fmt.Printf("%s Timed out waiting for OpenSearch Dashboards pod to be created\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite OpenSearch Dashboards pod not being detected..."))
+			} else {
+				// Wait for OpenSearch Dashboards pod to be ready
+				fmt.Println(yellow("Waiting for OpenSearch Dashboards pod to become ready..."))
+				_, err := executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch-dashboards", 
+					"-n", config.Components.OpenSearchDashboards.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: OpenSearch Dashboards pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite OpenSearch Dashboards not being fully ready..."))
+				} else {
+					fmt.Printf("%s OpenSearch Dashboards is ready\n", green("✅"))
+					fmt.Printf("%s OpenSearch Dashboards is accessible at http://localhost:%d\n", 
+						green("✅"), config.Components.OpenSearchDashboards.NodePorts.Http)
+				}
+			}
+		}
+
 		// Install Temporal
 		if config.Components.Temporal.Enabled {
 			fmt.Println(yellow("Installing Temporal"))
@@ -967,10 +1293,13 @@ func init() {
 	kindenvCmd.AddCommand(kindenvStartCmd)
 
 	// Add flags for kindenv start command
-	kindenvStartCmd.Flags().Bool("skip-temporal", false, "Skip installing Temporal")
-	kindenvStartCmd.Flags().Bool("skip-dapr", false, "Skip installing Dapr")
-	kindenvStartCmd.Flags().Bool("skip-redis", false, "Skip installing Redis")
-	kindenvStartCmd.Flags().Bool("skip-temporal-worker-operator", false, "Skip installing Temporal Worker Operator")
+	kindenvStartCmd.Flags().Bool("skip-temporal", false, "Skip deploying Temporal")
+	kindenvStartCmd.Flags().Bool("skip-dapr", false, "Skip deploying Dapr")
+	kindenvStartCmd.Flags().Bool("skip-redis", false, "Skip deploying Redis")
+	kindenvStartCmd.Flags().Bool("skip-opensearch", false, "Skip deploying OpenSearch")
+	kindenvStartCmd.Flags().Bool("skip-opensearch-dashboards", false, "Skip deploying OpenSearch Dashboards")
+	kindenvStartCmd.Flags().Bool("skip-temporal-worker-operator", false, "Skip deploying Temporal Worker Operator")
+	kindenvStartCmd.Flags().Bool("force-context", false, "Automatically switch to the correct Kubernetes context without prompting")
 
 	// Deprecated flag, kept for backward compatibility
 	kindenvStartCmd.Flags().String("operator-namespace", "default",
