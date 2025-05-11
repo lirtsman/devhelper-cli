@@ -104,8 +104,9 @@ type KindEnvConfig struct {
 			} `yaml:"nodePorts"`
 		} `yaml:"openSearchDashboards"`
 		TemporalWorkerOperator struct {
-			Enabled      bool   `yaml:"enabled"`
-			ChartVersion string `yaml:"chartVersion"`
+			Enabled          bool   `yaml:"enabled"`
+			ChartVersion     string `yaml:"chartVersion"`
+			TemporalNamespace string `yaml:"temporalNamespace"`
 		} `yaml:"temporalWorkerOperator"`
 		IndicesOperator struct {
 			Enabled      bool   `yaml:"enabled"`
@@ -507,6 +508,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 
 	config.Components.TemporalWorkerOperator.Enabled = true
 	config.Components.TemporalWorkerOperator.ChartVersion = "0.1.46-dev"
+	config.Components.TemporalWorkerOperator.TemporalNamespace = "default"
 
 	config.Components.IndicesOperator.Enabled = true
 	config.Components.IndicesOperator.ChartVersion = "0.1.79-dev"

@@ -220,6 +220,10 @@ Use --force-context to automatically switch without prompting.`,
 		fmt.Printf("  - Index Management: %v\n", config.Components.OpenSearch.IndexManagement.Enabled)
 		fmt.Printf("- OpenSearch Dashboards: %v\n", config.Components.OpenSearchDashboards.Enabled)
 		fmt.Printf("- Temporal Worker Operator: %v\n", config.Components.TemporalWorkerOperator.Enabled)
+		if config.Components.TemporalWorkerOperator.Enabled {
+			fmt.Printf("  - Temporal namespace: '%s'\n", config.Components.TemporalWorkerOperator.TemporalNamespace)
+			fmt.Printf("    (To modify namespace, edit temporalNamespace in kindenv.yaml)\n")
+		}
 		fmt.Printf("- Indices Operator: %v\n", config.Components.IndicesOperator.Enabled)
 		fmt.Printf("- Metrics Server: %v\n", config.Components.MetricsServer.Enabled)
 		fmt.Printf("- AWS ECR: %v\n", config.Images.UseAwsEcr)
@@ -1271,6 +1275,10 @@ stringData:
 					"--set", "redis.deployChart=false",
 					"--set", "redis.external.secretName=kvv2-redis",
 					"--set", "redis.auth.enabled=false",
+					"--set", fmt.Sprintf("temporal.namespaces.items[0].name=%s", config.Components.TemporalWorkerOperator.TemporalNamespace),
+					"--set", "temporal.namespaces.items[0].description=Default namespace for general workloads",
+					"--set", "temporal.namespaces.items[0].retentionPeriod=7d",
+					"--set", "temporal.namespaces.enabled=true",
 				}
 			} else {
 				helmArgs = []string{
@@ -1283,6 +1291,10 @@ stringData:
 					"--set", "imagePullSecrets[0].name=ecr-credentials",
 					"--set", "redis.deployChart=true",
 					"--set", "redis.global.imageRegistry=docker.io",
+					"--set", fmt.Sprintf("temporal.namespaces.items[0].name=%s", config.Components.TemporalWorkerOperator.TemporalNamespace),
+					"--set", "temporal.namespaces.items[0].description=Default namespace for general workloads",
+					"--set", "temporal.namespaces.items[0].retentionPeriod=7d",
+					"--set", "temporal.namespaces.enabled=true",
 				}
 			}
 
@@ -1314,6 +1326,7 @@ stringData:
 			}
 
 			fmt.Printf("%s Temporal Worker Operator installed successfully\n", green("✅"))
+			fmt.Printf("%s Temporal namespace '%s' will be created by the operator\n", green("✅"), config.Components.TemporalWorkerOperator.TemporalNamespace)
 
 			// Wait for Temporal Worker Operator to be ready
 			fmt.Println(yellow("Waiting for Temporal Worker Operator to be ready..."))
