@@ -267,59 +267,6 @@ Use --force-context to automatically switch without prompting.`,
 			// Track mapped ports to avoid duplicates
 			mappedPorts := make(map[string]bool)
 
-			// Install Metrics Server first so it can start collecting metrics while other components are installing
-			if config.Components.MetricsServer.Enabled {
-				fmt.Println(yellow("Installing Metrics Server"))
-			
-				// Install Metrics Server with Helm
-				fmt.Println(yellow("Installing Metrics Server..."))
-			
-				// Define Helm arguments
-				helmArgs := []string{
-					"upgrade",
-					"--install",
-					"metrics-server", "metrics-server/metrics-server",
-					"--namespace", "kube-system",
-					"--version", config.Components.MetricsServer.ChartVersion,
-					"--set", "args={--kubelet-insecure-tls}",
-				}
-			
-				// Execute Helm command
-				if verbose {
-					fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
-				}
-			
-				helmOutput, err := executeCommand("helm", helmArgs...)
-				if err != nil {
-					fmt.Printf("%s Error installing Metrics Server: %v\n", red("❌"), err)
-					if helmOutput != "" {
-						fmt.Println("Helm output:")
-						fmt.Println(helmOutput)
-					}
-					fmt.Println(yellow("Continuing despite Metrics Server installation failure..."))
-				} else {
-					fmt.Printf("%s Metrics Server installed successfully\n", green("✅"))
-				
-					// Wait for Metrics Server to be ready
-					fmt.Println(yellow("Waiting for Metrics Server to be ready..."))
-				
-					// Wait a moment for resources to be created
-					time.Sleep(5 * time.Second)
-				
-					err = waitForDeployment("kube-system", "metrics-server", 2)
-					if err != nil {
-						fmt.Printf("%s Error waiting for Metrics Server: %v\n", red("❌"), err)
-						fmt.Println(yellow("Continuing despite Metrics Server not being ready..."))
-					} else {
-						fmt.Printf("%s Metrics Server is ready\n", green("✅"))
-						fmt.Println(yellow("You can now use these commands to view resource usage:"))
-						fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
-						fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
-						fmt.Println(yellow("Note: It may take a few minutes for metrics to be available after installation"))
-					}
-				}
-			}
-
 			// Helper function to add port mapping and track it to avoid duplicates
 			addPortMapping := func(containerPort, hostPort int, protocol string) {
 				portKey := fmt.Sprintf("%d/%s", containerPort, protocol)
@@ -420,16 +367,40 @@ Use --force-context to automatically switch without prompting.`,
 			}
 			kindConfigFile.Close()
 
-			// Use selected container engine for kind operations if needed (e.g. KIND_EXPERIMENTAL_PROVIDER=podman)
-			if containerEngine == "podman" && verbose {
-				fmt.Println(yellow("Setting KIND_EXPERIMENTAL_PROVIDER=podman"))
-				os.Setenv("KIND_EXPERIMENTAL_PROVIDER", "podman")
-			}
+			// Handle kind cluster creation differently based on container engine
+			if containerEngine == "podman" {
+				fmt.Println(yellow("Using podman provider for Kind..."))
 
-			_, err = executeCommand("kind", "create", "cluster", "--name", config.Cluster.Name, "--config", kindConfigFile.Name())
-			if err != nil {
-				fmt.Printf("%s Error creating Kind cluster: %v\n", red("❌"), err)
-				os.Exit(1)
+				// Create the command with proper environment variables
+				cmd := exec.Command("kind", "create", "cluster", "--name", config.Cluster.Name, "--config", kindConfigFile.Name())
+
+				// Set the environment properly for podman
+				env := os.Environ()
+				cmd.Env = append(env, "KIND_EXPERIMENTAL_PROVIDER=podman")
+
+				// Capture output
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
+
+				// Run the command
+				fmt.Println(yellow("Running kind create cluster with podman provider..."))
+				err := cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating Kind cluster: %v\n", red("❌"), err)
+					fmt.Println("Output:", stdout.String())
+					fmt.Println("Error:", stderr.String())
+					os.Exit(1)
+				}
+
+				fmt.Println(stdout.String())
+			} else {
+				// For docker, use the standard executeCommand function
+				_, err = executeCommand("kind", "create", "cluster", "--name", config.Cluster.Name, "--config", kindConfigFile.Name())
+				if err != nil {
+					fmt.Printf("%s Error creating Kind cluster: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
 			}
 
 			fmt.Printf("%s Kind cluster created successfully\n", green("✅"))
@@ -610,6 +581,56 @@ Use --force-context to automatically switch without prompting.`,
 			}
 
 			fmt.Printf("%s AWS ECR credentials configured\n", green("✅"))
+		}
+
+		// Install Metrics Server
+		if config.Components.MetricsServer.Enabled {
+			fmt.Println(yellow("Installing Metrics Server"))
+
+			// Define Helm arguments
+			helmArgs := []string{
+				"upgrade",
+				"--install",
+				"metrics-server", "metrics-server/metrics-server",
+				"--namespace", "kube-system",
+				"--version", config.Components.MetricsServer.ChartVersion,
+				"--set", "args={--kubelet-insecure-tls}",
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Metrics Server: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Output:")
+					fmt.Println(helmOutput)
+				}
+				fmt.Println(yellow("Continuing despite Metrics Server installation failure..."))
+			} else {
+				fmt.Printf("%s Metrics Server installed successfully\n", green("✅"))
+
+				// Wait for Metrics Server to be ready
+				fmt.Println(yellow("Waiting for Metrics Server to be ready..."))
+
+				// Wait a moment for resources to be created
+				time.Sleep(5 * time.Second)
+
+				err = waitForDeployment("kube-system", "metrics-server", 2)
+				if err != nil {
+					fmt.Printf("%s Error waiting for Metrics Server: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite Metrics Server not being ready..."))
+				} else {
+					fmt.Printf("%s Metrics Server is ready\n", green("✅"))
+					fmt.Println(yellow("You can now use these commands to view resource usage:"))
+					fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
+					fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
+					fmt.Println(yellow("Note: It may take a few minutes for metrics to be available after installation"))
+				}
+			}
 		}
 
 		// Create MySQL secret if MySQL secrets are enabled
@@ -1441,7 +1462,7 @@ stringData:
 		// Check if metrics are available now that all components are installed
 		if config.Components.MetricsServer.Enabled {
 			fmt.Println(yellow("Checking if metrics are available..."))
-			
+
 			// Try to run kubectl top nodes to verify it's working
 			topCmd := exec.Command("kubectl", "top", "nodes")
 			topOutput, topErr := topCmd.CombinedOutput()
@@ -1538,7 +1559,34 @@ stringData:
 			}
 		}
 
+		// Find OpenSearch host ports
+		var openSearchPort, openSearchDashboardsPort int
+		if config.Components.OpenSearch.Enabled {
+			openSearchPort = findHostPort(config.Components.OpenSearch.NodePorts.Rest)
+			
+			// If port is not found in the mappings, use default
+			if openSearchPort == 0 {
+				openSearchPort = 9200 // Default host port for OpenSearch
+				if verbose {
+					fmt.Printf("%s Using default host port for OpenSearch: %d\n", yellow("ℹ️"), openSearchPort)
+				}
+			}
+		}
+		
+		if config.Components.OpenSearchDashboards.Enabled {
+			openSearchDashboardsPort = findHostPort(config.Components.OpenSearchDashboards.NodePorts.Http)
+			
+			// If port is not found in the mappings, use default
+			if openSearchDashboardsPort == 0 {
+				openSearchDashboardsPort = 5601 // Default host port for OpenSearch Dashboards
+				if verbose {
+					fmt.Printf("%s Using default host port for OpenSearch Dashboards: %d\n", yellow("ℹ️"), openSearchDashboardsPort)
+				}
+			}
+		}
+
 		// Display service access information
+		fmt.Println("\nKind-based development environment setup complete!")
 		if config.Components.Temporal.Enabled {
 			if temporalWebPort > 0 {
 				fmt.Printf("- Temporal Web UI: http://localhost:%d\n", temporalWebPort)
@@ -1549,6 +1597,12 @@ stringData:
 		}
 		if config.Components.Redis.Enabled && redisPort > 0 {
 			fmt.Printf("- Redis: localhost:%d\n", redisPort)
+		}
+		if config.Components.OpenSearch.Enabled && openSearchPort > 0 {
+			fmt.Printf("- OpenSearch: http://localhost:%d\n", openSearchPort)
+		}
+		if config.Components.OpenSearchDashboards.Enabled && openSearchDashboardsPort > 0 {
+			fmt.Printf("- OpenSearch Dashboards: http://localhost:%d\n", openSearchDashboardsPort)
 		}
 	},
 }
