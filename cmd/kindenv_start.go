@@ -267,6 +267,59 @@ Use --force-context to automatically switch without prompting.`,
 			// Track mapped ports to avoid duplicates
 			mappedPorts := make(map[string]bool)
 
+			// Install Metrics Server first so it can start collecting metrics while other components are installing
+			if config.Components.MetricsServer.Enabled {
+				fmt.Println(yellow("Installing Metrics Server"))
+			
+				// Install Metrics Server with Helm
+				fmt.Println(yellow("Installing Metrics Server..."))
+			
+				// Define Helm arguments
+				helmArgs := []string{
+					"upgrade",
+					"--install",
+					"metrics-server", "metrics-server/metrics-server",
+					"--namespace", "kube-system",
+					"--version", config.Components.MetricsServer.ChartVersion,
+					"--set", "args={--kubelet-insecure-tls}",
+				}
+			
+				// Execute Helm command
+				if verbose {
+					fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+				}
+			
+				helmOutput, err := executeCommand("helm", helmArgs...)
+				if err != nil {
+					fmt.Printf("%s Error installing Metrics Server: %v\n", red("❌"), err)
+					if helmOutput != "" {
+						fmt.Println("Helm output:")
+						fmt.Println(helmOutput)
+					}
+					fmt.Println(yellow("Continuing despite Metrics Server installation failure..."))
+				} else {
+					fmt.Printf("%s Metrics Server installed successfully\n", green("✅"))
+				
+					// Wait for Metrics Server to be ready
+					fmt.Println(yellow("Waiting for Metrics Server to be ready..."))
+				
+					// Wait a moment for resources to be created
+					time.Sleep(5 * time.Second)
+				
+					err = waitForDeployment("kube-system", "metrics-server", 2)
+					if err != nil {
+						fmt.Printf("%s Error waiting for Metrics Server: %v\n", red("❌"), err)
+						fmt.Println(yellow("Continuing despite Metrics Server not being ready..."))
+					} else {
+						fmt.Printf("%s Metrics Server is ready\n", green("✅"))
+						fmt.Println(yellow("You can now use these commands to view resource usage:"))
+						fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
+						fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
+						fmt.Println(yellow("Note: It may take a few minutes for metrics to be available after installation"))
+					}
+				}
+			}
+
 			// Helper function to add port mapping and track it to avoid duplicates
 			addPortMapping := func(containerPort, hostPort int, protocol string) {
 				portKey := fmt.Sprintf("%d/%s", containerPort, protocol)
@@ -1311,7 +1364,7 @@ stringData:
 				"upgrade",
 				"--install",
 				"indices-operator", "shield/indices-operator",
-				"--namespace", "default",
+				"--namespace", "shield-system",
 				"--version", config.Components.IndicesOperator.ChartVersion,
 				"--set", "opensearch.skipTlsVerify=true",
 				"--set", "opensearch.secretName=kvv2-opensearch",
@@ -1385,56 +1438,23 @@ stringData:
 			}
 		}
 
-		// Install Metrics Server
+		// Check if metrics are available now that all components are installed
 		if config.Components.MetricsServer.Enabled {
-			fmt.Println(yellow("Installing Metrics Server"))
-
-			// Install Metrics Server with Helm
-			fmt.Println(yellow("Installing Metrics Server..."))
-
-			// Define Helm arguments
-			helmArgs := []string{
-				"upgrade",
-				"--install",
-				"metrics-server", "metrics-server/metrics-server",
-				"--namespace", "kube-system",
-				"--version", config.Components.MetricsServer.ChartVersion,
-				"--set", "args={--kubelet-insecure-tls}",
-			}
-
-			// Execute Helm command
-			if verbose {
-				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
-			}
-
-			helmOutput, err := executeCommand("helm", helmArgs...)
-			if err != nil {
-				fmt.Printf("%s Error installing Metrics Server: %v\n", red("❌"), err)
-				if helmOutput != "" {
-					fmt.Println("Helm output:")
-					fmt.Println(helmOutput)
+			fmt.Println(yellow("Checking if metrics are available..."))
+			
+			// Try to run kubectl top nodes to verify it's working
+			topCmd := exec.Command("kubectl", "top", "nodes")
+			topOutput, topErr := topCmd.CombinedOutput()
+			if topErr == nil {
+				fmt.Printf("%s Resource metrics are now available\n", green("✅"))
+				if verbose {
+					fmt.Println(string(topOutput))
 				}
-				fmt.Println(yellow("Continuing despite Metrics Server installation failure..."))
 			} else {
-				fmt.Printf("%s Metrics Server installed successfully\n", green("✅"))
-
-				// Wait for Metrics Server to be ready
-				fmt.Println(yellow("Waiting for Metrics Server to be ready..."))
-
-				// Wait a moment for resources to be created
-				time.Sleep(5 * time.Second)
-
-				err = waitForDeployment("kube-system", "metrics-server", 2)
-				if err != nil {
-					fmt.Printf("%s Error waiting for Metrics Server: %v\n", red("❌"), err)
-					fmt.Println(yellow("Continuing despite Metrics Server not being ready..."))
-				} else {
-					fmt.Printf("%s Metrics Server is ready\n", green("✅"))
-					fmt.Println(yellow("You can now use these commands to view resource usage:"))
-					fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
-					fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
-					fmt.Println(yellow("Note: It may take a few minutes for metrics to be available after installation"))
-				}
+				fmt.Printf("%s Resource metrics are not available yet (may need a few more minutes)\n", yellow("⚠️"))
+				fmt.Println(yellow("You can check again later with:"))
+				fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
+				fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
 			}
 		}
 
