@@ -224,6 +224,51 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			} else {
 				fmt.Printf("- %s Temporal Worker Operator is disabled in config\n", yellow("ℹ️"))
 			}
+			
+			// Check Indices Operator status
+			if config.Components.IndicesOperator.Enabled {
+				operatorCmd := exec.Command("kubectl", "get", "deployment", "-n", "default", "-l", "app.kubernetes.io/name=indices-operator", "--no-headers")
+				operatorOutput, err := operatorCmd.CombinedOutput()
+
+				// Check CRDs
+				crdCmd := exec.Command("kubectl", "get", "crd", "indices.opensearch.shieldfc.com", "--no-headers")
+				crdOutput, crdErr := crdCmd.CombinedOutput()
+
+				if err == nil && string(operatorOutput) != "" {
+					fmt.Printf("- %s Indices Operator is installed and running\n", green("✅"))
+					if crdErr == nil && string(crdOutput) != "" {
+						fmt.Printf("  %s CRDs are properly installed\n", green("✓"))
+					} else {
+						fmt.Printf("  %s CRDs not found, operator may not function correctly\n", yellow("⚠️"))
+					}
+				} else {
+					fmt.Printf("- %s Indices Operator is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Indices Operator is disabled in config\n", yellow("ℹ️"))
+			}
+			
+			// Check Metrics Server status
+			if config.Components.MetricsServer.Enabled {
+				metricsCmd := exec.Command("kubectl", "get", "deployment", "-n", "kube-system", "metrics-server", "--no-headers")
+				metricsOutput, err := metricsCmd.CombinedOutput()
+				
+				if err == nil && string(metricsOutput) != "" {
+					fmt.Printf("- %s Metrics Server is installed and running\n", green("✅"))
+					// Try to run kubectl top nodes to verify it's working
+					topCmd := exec.Command("kubectl", "top", "nodes")
+					_, topErr := topCmd.CombinedOutput()
+					if topErr == nil {
+						fmt.Printf("  %s Resource metrics are available\n", green("✓"))
+					} else {
+						fmt.Printf("  %s Resource metrics not available yet (may need a few minutes)\n", yellow("⚠️"))
+					}
+				} else {
+					fmt.Printf("- %s Metrics Server is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Metrics Server is disabled in config\n", yellow("ℹ️"))
+			}
 
 			// Print service access information
 			fmt.Println(green("Access services:"))

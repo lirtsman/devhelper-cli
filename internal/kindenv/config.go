@@ -82,15 +82,18 @@ type KindEnvConfig struct {
 			} `yaml:"ha"`
 		} `yaml:"dapr"`
 		OpenSearch struct {
-			Enabled      bool   `yaml:"enabled"`
-			Namespace    string `yaml:"namespace"`
-			Version      string `yaml:"version"`
-			NodePorts    struct {
+			Enabled   bool   `yaml:"enabled"`
+			Namespace string `yaml:"namespace"`
+			Version   string `yaml:"version"`
+			NodePorts struct {
 				Rest int `yaml:"rest"`
 			} `yaml:"nodePorts"`
 			Security struct {
 				Disabled bool `yaml:"disabled"`
 			} `yaml:"security"`
+			IndexManagement struct {
+				Enabled bool `yaml:"enabled"`
+			} `yaml:"indexManagement"`
 		} `yaml:"openSearch"`
 		OpenSearchDashboards struct {
 			Enabled   bool   `yaml:"enabled"`
@@ -104,6 +107,14 @@ type KindEnvConfig struct {
 			Enabled      bool   `yaml:"enabled"`
 			ChartVersion string `yaml:"chartVersion"`
 		} `yaml:"temporalWorkerOperator"`
+		IndicesOperator struct {
+			Enabled      bool   `yaml:"enabled"`
+			ChartVersion string `yaml:"chartVersion"`
+		} `yaml:"indicesOperator"`
+		MetricsServer struct {
+			Enabled      bool   `yaml:"enabled"`
+			ChartVersion string `yaml:"chartVersion"`
+		} `yaml:"metricsServer"`
 	} `yaml:"components"`
 	Images struct {
 		SkipPull  bool `yaml:"skipPull"`
@@ -160,6 +171,7 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Components.OpenSearch.Version = "2.17.1"
 	config.Components.OpenSearch.NodePorts.Rest = 30920
 	config.Components.OpenSearch.Security.Disabled = true
+	config.Components.OpenSearch.IndexManagement.Enabled = true
 
 	config.Components.OpenSearchDashboards.Enabled = true
 	config.Components.OpenSearchDashboards.Namespace = "opensearch"
@@ -409,6 +421,10 @@ func (c *KindEnvConfig) Validate() error {
 		if c.Components.OpenSearch.NodePorts.Rest <= 0 {
 			return errors.New("opensearch rest node port must be greater than 0")
 		}
+		// Set default for index management if not explicitly set
+		if !c.Components.OpenSearch.IndexManagement.Enabled {
+			c.Components.OpenSearch.IndexManagement.Enabled = true
+		}
 	}
 
 	// Validate OpenSearch Dashboards configuration
@@ -482,6 +498,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.OpenSearch.Version = "2.17.1"
 	config.Components.OpenSearch.NodePorts.Rest = 30920
 	config.Components.OpenSearch.Security.Disabled = true
+	config.Components.OpenSearch.IndexManagement.Enabled = true
 
 	config.Components.OpenSearchDashboards.Enabled = true
 	config.Components.OpenSearchDashboards.Namespace = "opensearch"
@@ -490,6 +507,12 @@ func CreateDefaultConfig() *KindEnvConfig {
 
 	config.Components.TemporalWorkerOperator.Enabled = true
 	config.Components.TemporalWorkerOperator.ChartVersion = "0.1.46-dev"
+
+	config.Components.IndicesOperator.Enabled = true
+	config.Components.IndicesOperator.ChartVersion = "0.1.79-dev"
+
+	config.Components.MetricsServer.Enabled = true
+	config.Components.MetricsServer.ChartVersion = "3.10.0"
 
 	// Images section
 	config.Images.SkipPull = false

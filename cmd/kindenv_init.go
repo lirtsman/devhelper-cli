@@ -283,6 +283,22 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 			} else {
 				fmt.Println("✅ OpenSearch Helm repository added successfully")
 			}
+			
+			// Add Metrics Server Helm repository
+			fmt.Println("Adding Metrics Server Helm repository...")
+			metricsOutput, err := executeCommandWithOutput("helm", "repo", "add", "metrics-server", "https://kubernetes-sigs.github.io/metrics-server/")
+			if err != nil {
+				if strings.Contains(metricsOutput, "already exists") {
+					fmt.Println("✅ Metrics Server Helm repository already configured")
+				} else {
+					fmt.Printf("⚠️  Warning: Failed to add Metrics Server Helm repository: %v\n", err)
+					if metricsOutput != "" {
+						fmt.Printf("  Output: %s\n", metricsOutput)
+					}
+				}
+			} else {
+				fmt.Println("✅ Metrics Server Helm repository added successfully")
+			}
 
 			// Add Shield Helm repository
 			fmt.Println("Adding Shield Helm repository...")
@@ -300,7 +316,7 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Println("✅ Shield Helm repository added successfully")
 			}
 
-			// Verify that both required Shield charts are available
+			// Verify that required Shield charts are available
 			fmt.Println("Verifying Shield charts availability...")
 			chartsOutput, err := executeCommandWithOutput("helm", "search", "repo", "shield/temporal-worker-operator")
 			if err != nil || !strings.Contains(chartsOutput, "shield/temporal-worker-operator") {
@@ -315,6 +331,22 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Printf("    Make sure both the main chart and CRDs chart are available in the Shield repository\n")
 			} else {
 				fmt.Println("✅ Shield Temporal Worker Operator CRDs chart is available")
+			}
+			
+			// Verify Indices Operator chart availability
+			indicesOutput, err := executeCommandWithOutput("helm", "search", "repo", "shield/indices-operator")
+			if err != nil || !strings.Contains(indicesOutput, "shield/indices-operator") {
+				fmt.Printf("⚠️  Warning: Shield Indices Operator chart not found\n")
+			} else {
+				fmt.Println("✅ Shield Indices Operator chart is available")
+			}
+			
+			// Verify Metrics Server chart availability
+			metricsServerOutput, err := executeCommandWithOutput("helm", "search", "repo", "metrics-server/metrics-server")
+			if err != nil || !strings.Contains(metricsServerOutput, "metrics-server/metrics-server") {
+				fmt.Printf("⚠️  Warning: Metrics Server chart not found\n")
+			} else {
+				fmt.Println("✅ Metrics Server chart is available")
 			}
 
 			// Update Helm repositories

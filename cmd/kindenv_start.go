@@ -22,10 +22,11 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
 	// Import necessary packages
 	"bufio"
 	"time"
-	
+
 	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -123,7 +124,7 @@ You can override this with the --name flag.
 When AWS ECR is enabled, you can specify an AWS profile in the config file (images.aws.profile)
 or override it with the --aws-profile flag.
 
-It also verifies and switches to the correct Kubernetes context if needed, and creates 
+It also verifies and switches to the correct Kubernetes context if needed, and creates
 required namespaces for component installation.
 
 Note: When starting the environment, the command ensures you're using the correct Kubernetes
@@ -145,7 +146,10 @@ Use --force-context to automatically switch without prompting.`,
 		skipRedis, _ := cmd.Flags().GetBool("skip-redis")
 		skipOpenSearch, _ := cmd.Flags().GetBool("skip-opensearch")
 		skipOpenSearchDashboards, _ := cmd.Flags().GetBool("skip-opensearch-dashboards")
+		skipOpenSearchIndexManagement, _ := cmd.Flags().GetBool("skip-opensearch-index-management")
 		skipTemporalWorkerOperator, _ := cmd.Flags().GetBool("skip-temporal-worker-operator")
+		skipIndicesOperator, _ := cmd.Flags().GetBool("skip-indices-operator")
+		skipMetricsServer, _ := cmd.Flags().GetBool("skip-metrics-server")
 		awsProfile, _ := cmd.Flags().GetString("aws-profile")
 		forceContext, _ := cmd.Flags().GetBool("force-context")
 
@@ -189,8 +193,17 @@ Use --force-context to automatically switch without prompting.`,
 		if skipOpenSearchDashboards {
 			config.Components.OpenSearchDashboards.Enabled = false
 		}
+		if skipOpenSearchIndexManagement {
+			config.Components.OpenSearch.IndexManagement.Enabled = false
+		}
 		if skipTemporalWorkerOperator {
 			config.Components.TemporalWorkerOperator.Enabled = false
+		}
+		if skipIndicesOperator {
+			config.Components.IndicesOperator.Enabled = false
+		}
+		if skipMetricsServer {
+			config.Components.MetricsServer.Enabled = false
 		}
 
 		// Show warning if deprecated operator-namespace flag is used
@@ -203,7 +216,12 @@ Use --force-context to automatically switch without prompting.`,
 		fmt.Printf("- Temporal: %v\n", config.Components.Temporal.Enabled)
 		fmt.Printf("- Redis: %v\n", config.Components.Redis.Enabled)
 		fmt.Printf("- Dapr: %v\n", config.Components.Dapr.Enabled)
+		fmt.Printf("- OpenSearch: %v\n", config.Components.OpenSearch.Enabled)
+		fmt.Printf("  - Index Management: %v\n", config.Components.OpenSearch.IndexManagement.Enabled)
+		fmt.Printf("- OpenSearch Dashboards: %v\n", config.Components.OpenSearchDashboards.Enabled)
 		fmt.Printf("- Temporal Worker Operator: %v\n", config.Components.TemporalWorkerOperator.Enabled)
+		fmt.Printf("- Indices Operator: %v\n", config.Components.IndicesOperator.Enabled)
+		fmt.Printf("- Metrics Server: %v\n", config.Components.MetricsServer.Enabled)
 		fmt.Printf("- AWS ECR: %v\n", config.Images.UseAwsEcr)
 
 		if verbose {
@@ -372,18 +390,18 @@ Use --force-context to automatically switch without prompting.`,
 		currentContextCmd := exec.Command("kubectl", "config", "current-context")
 		currentContextOutput, err := currentContextCmd.CombinedOutput()
 		currentContext := strings.TrimSpace(string(currentContextOutput))
-		
+
 		if err == nil && currentContext != expectedContext {
 			fmt.Printf("%s Current kubectl context is: %s\n", yellow("⚠️"), currentContext)
 			fmt.Printf("%s Expected kubectl context for this environment is: %s\n", yellow("ℹ️"), expectedContext)
-			
+
 			shouldSwitch := forceContext
 			if !forceContext {
 				fmt.Print("Switch to the correct context? (y/n): ")
 				reader := bufio.NewReader(os.Stdin)
 				response, _ := reader.ReadString('\n')
 				response = strings.TrimSpace(response)
-				
+
 				shouldSwitch = strings.ToLower(response) == "y" || strings.ToLower(response) == "yes"
 				if !shouldSwitch {
 					fmt.Println(yellow("Context switch declined. This may cause issues with deployment."))
@@ -393,10 +411,10 @@ Use --force-context to automatically switch without prompting.`,
 					os.Exit(1)
 				}
 			} else {
-				fmt.Printf("%s Automatically switching kubectl context from %s to %s\n", 
+				fmt.Printf("%s Automatically switching kubectl context from %s to %s\n",
 					yellow("⚙️"), currentContext, expectedContext)
 			}
-			
+
 			// Explicitly switch context
 			switchCmd := exec.Command("kubectl", "config", "use-context", expectedContext)
 			switchOutput, err := switchCmd.CombinedOutput()
@@ -408,7 +426,7 @@ Use --force-context to automatically switch without prompting.`,
 				os.Exit(1)
 			}
 		}
-		
+
 		// Verify we're using the right context
 		_, err = executeCommand("kubectl", "cluster-info", "--context", expectedContext)
 		if err != nil {
@@ -804,6 +822,27 @@ spec:
       containers:
       - name: opensearch
         image: opensearchproject/opensearch:%s
+        command:
+        - bash
+        - -c
+        - |
+          echo "Starting OpenSearch..."
+          until [ -f /usr/share/opensearch/config/opensearch.yml ]; do sleep 1; done
+
+          # Create snapshots directory with proper permissions
+          mkdir -p /tmp/opensearch-snapshots
+          chmod 777 /tmp/opensearch-snapshots
+
+          # Configure repository paths and plugin settings
+          echo "path.repo: [\"/tmp/opensearch-snapshots\"]" >> /usr/share/opensearch/config/opensearch.yml
+          echo "plugins.security.disabled: %t" >> /usr/share/opensearch/config/opensearch.yml
+          echo "action.auto_create_index: true" >> /usr/share/opensearch/config/opensearch.yml
+
+          # Enable index management plugin (includes snapshot management functionality)
+          echo "plugins.index_state_management.enabled: %t" >> /usr/share/opensearch/config/opensearch.yml
+
+          # Start OpenSearch in foreground
+          /usr/share/opensearch/opensearch-docker-entrypoint.sh
         env:
         - name: discovery.type
           value: single-node
@@ -835,9 +874,11 @@ spec:
           periodSeconds: 15
           failureThreshold: 15
           timeoutSeconds: 10
-`, config.Components.OpenSearch.Namespace, config.Components.OpenSearch.NodePorts.Rest, 
-   config.Components.OpenSearch.Namespace, config.Components.OpenSearch.Version, 
-   config.Components.OpenSearch.Security.Disabled)
+`, config.Components.OpenSearch.Namespace, config.Components.OpenSearch.NodePorts.Rest,
+				config.Components.OpenSearch.Namespace, config.Components.OpenSearch.Version,
+				config.Components.OpenSearch.Security.Disabled,
+				config.Components.OpenSearch.Security.Disabled,
+				config.Components.OpenSearch.IndexManagement.Enabled)
 
 			cmd = exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(opensearchYaml)
@@ -851,9 +892,9 @@ spec:
 			maxPodCreateRetries := 20
 			podCreateRetryCount := 0
 			var opensearchPodExists bool
-			
+
 			for podCreateRetryCount < maxPodCreateRetries {
-				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch", 
+				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch",
 					"-n", config.Components.OpenSearch.Namespace, "--no-headers")
 				podOutput, err := podCheckCmd.CombinedOutput()
 				if err == nil && len(podOutput) > 0 && !strings.Contains(string(podOutput), "No resources found") {
@@ -875,13 +916,34 @@ spec:
 			} else {
 				// Wait for OpenSearch pod to be ready
 				fmt.Println(yellow("Waiting for OpenSearch pod to become ready..."))
-				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch", 
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch",
 					"-n", config.Components.OpenSearch.Namespace, "--timeout=5m")
 				if err != nil {
 					fmt.Printf("%s Warning: OpenSearch pod is not ready: %v\n", yellow("⚠️"), err)
 					fmt.Println(yellow("Continuing despite OpenSearch not being fully ready..."))
 				} else {
 					fmt.Printf("%s OpenSearch is ready\n", green("✅"))
+
+					// Find the proper host port for OpenSearch
+					var openSearchHostPort int
+					for _, portMap := range config.Cluster.MapPorts {
+						// Handle different types of containerPort values
+						switch cp := portMap.ContainerPort.(type) {
+						case int:
+							if cp == config.Components.OpenSearch.NodePorts.Rest {
+								openSearchHostPort = portMap.HostPort
+								break
+							}
+						}
+					}
+
+					// Use the mapped host port or default to 9200 if not found
+					if openSearchHostPort == 0 {
+						openSearchHostPort = 9200
+					}
+
+					fmt.Printf("%s OpenSearch is accessible at http://localhost:%d\n",
+						green("✅"), openSearchHostPort)
 				}
 			}
 		}
@@ -951,9 +1013,9 @@ spec:
           periodSeconds: 15
           failureThreshold: 10
           timeoutSeconds: 10
-`, config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.NodePorts.Http, 
-   config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.Version, 
-   config.Components.OpenSearch.Security.Disabled)
+`, config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.NodePorts.Http,
+				config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.Version,
+				config.Components.OpenSearch.Security.Disabled)
 
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(dashboardsYaml)
@@ -967,9 +1029,9 @@ spec:
 			maxPodCreateRetries := 20
 			podCreateRetryCount := 0
 			var dashboardsPodExists bool
-			
+
 			for podCreateRetryCount < maxPodCreateRetries {
-				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch-dashboards", 
+				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch-dashboards",
 					"-n", config.Components.OpenSearchDashboards.Namespace, "--no-headers")
 				podOutput, err := podCheckCmd.CombinedOutput()
 				if err == nil && len(podOutput) > 0 && !strings.Contains(string(podOutput), "No resources found") {
@@ -991,15 +1053,34 @@ spec:
 			} else {
 				// Wait for OpenSearch Dashboards pod to be ready
 				fmt.Println(yellow("Waiting for OpenSearch Dashboards pod to become ready..."))
-				_, err := executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch-dashboards", 
+				_, err := executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch-dashboards",
 					"-n", config.Components.OpenSearchDashboards.Namespace, "--timeout=5m")
 				if err != nil {
 					fmt.Printf("%s Warning: OpenSearch Dashboards pod is not ready: %v\n", yellow("⚠️"), err)
 					fmt.Println(yellow("Continuing despite OpenSearch Dashboards not being fully ready..."))
 				} else {
 					fmt.Printf("%s OpenSearch Dashboards is ready\n", green("✅"))
-					fmt.Printf("%s OpenSearch Dashboards is accessible at http://localhost:%d\n", 
-						green("✅"), config.Components.OpenSearchDashboards.NodePorts.Http)
+
+					// Find the proper host port for OpenSearch Dashboards
+					var dashboardsHostPort int
+					for _, portMap := range config.Cluster.MapPorts {
+						// Handle different types of containerPort values
+						switch cp := portMap.ContainerPort.(type) {
+						case int:
+							if cp == config.Components.OpenSearchDashboards.NodePorts.Http {
+								dashboardsHostPort = portMap.HostPort
+								break
+							}
+						}
+					}
+
+					// Use the mapped host port or default to 5601 if not found
+					if dashboardsHostPort == 0 {
+						dashboardsHostPort = 5601
+					}
+
+					fmt.Printf("%s OpenSearch Dashboards is accessible at http://localhost:%d\n",
+						green("✅"), dashboardsHostPort)
 				}
 			}
 		}
@@ -1194,6 +1275,169 @@ stringData:
 			fmt.Printf("%s Temporal Worker Operator installation completed\n", green("✅"))
 		}
 
+		// Install Indices Operator
+		if config.Components.IndicesOperator.Enabled && config.Components.OpenSearch.Enabled {
+			fmt.Println(yellow("Installing Indices Operator"))
+
+			// Create kvv2-opensearch secret with opensearch connection information
+			// This will be used by the indices operator
+			kvv2OpenSearchSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-opensearch
+  namespace: default
+type: Opaque
+stringData:
+  address: "http://opensearch.%s.svc.cluster.local:9200"
+  username: "admin"
+  password: "admin"
+`, config.Components.OpenSearch.Namespace)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(kvv2OpenSearchSecretYaml)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("%s Error creating OpenSearch secret: %v\n", red("❌"), err)
+			} else {
+				fmt.Printf("%s OpenSearch secret created successfully\n", green("✅"))
+			}
+
+			// Install Indices Operator with Helm
+			fmt.Println(yellow("Installing Indices Operator..."))
+
+			// Define Helm arguments
+			helmArgs := []string{
+				"upgrade",
+				"--install",
+				"indices-operator", "shield/indices-operator",
+				"--namespace", "default",
+				"--version", config.Components.IndicesOperator.ChartVersion,
+				"--set", "opensearch.skipTlsVerify=true",
+				"--set", "opensearch.secretName=kvv2-opensearch",
+				"--set", "global.dapr.enabled=false", // Disable Dapr for this operator
+			}
+
+			// Add ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				helmArgs = append(helmArgs, "--set", "imagePullSecrets[0].name=ecr-credentials")
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Indices Operator: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Helm output:")
+					fmt.Println(helmOutput)
+				}
+
+				// Check if the error is due to chart not found
+				if strings.Contains(err.Error(), "chart not found") ||
+					strings.Contains(helmOutput, "chart not found") {
+					fmt.Println(yellow("The chart was not found. Make sure:"))
+					fmt.Println("1. The Shield Helm repository is properly added: helm repo add shield https://harbor.shieldfis.com/chartrepo/stable")
+					fmt.Println("2. The Helm repositories are updated: helm repo update")
+					fmt.Println("3. The chart exists: helm search repo shield/indices-operator")
+				}
+
+				// Continue despite errors, as the operator is optional
+				fmt.Println(yellow("Continuing despite Indices Operator installation failure..."))
+			} else {
+				fmt.Printf("%s Indices Operator installed successfully\n", green("✅"))
+
+				// Wait for Indices Operator to be ready
+				fmt.Println(yellow("Waiting for Indices Operator to be ready..."))
+
+				// Wait a moment for CRDs to be established and resources to be created
+				fmt.Println(yellow("Waiting for resources to be established..."))
+				time.Sleep(10 * time.Second)
+
+				// Check if there's a deployment for the operator
+				deploymentOutput, _ := executeCommand("kubectl", "get", "deployment",
+					"-n", "default", "--no-headers")
+
+				if deploymentOutput != "" {
+					// Try to find the operator deployment name
+					operatorDeployments := strings.Split(strings.TrimSpace(deploymentOutput), "\n")
+					if len(operatorDeployments) > 0 {
+						for _, deploymentLine := range operatorDeployments {
+							parts := strings.Fields(deploymentLine)
+							if len(parts) > 0 {
+								deploymentName := parts[0]
+								if strings.Contains(deploymentName, "indices-operator") {
+									err = waitForDeployment("default", deploymentName, 5)
+									if err != nil {
+										fmt.Printf("%s Error waiting for Indices Operator: %v\n", red("❌"), err)
+										fmt.Println(yellow("Continuing despite Indices Operator not being ready..."))
+									}
+								}
+							}
+						}
+					}
+				}
+
+				fmt.Printf("%s Indices Operator installation completed\n", green("✅"))
+			}
+		}
+
+		// Install Metrics Server
+		if config.Components.MetricsServer.Enabled {
+			fmt.Println(yellow("Installing Metrics Server"))
+
+			// Install Metrics Server with Helm
+			fmt.Println(yellow("Installing Metrics Server..."))
+
+			// Define Helm arguments
+			helmArgs := []string{
+				"upgrade",
+				"--install",
+				"metrics-server", "metrics-server/metrics-server",
+				"--namespace", "kube-system",
+				"--version", config.Components.MetricsServer.ChartVersion,
+				"--set", "args={--kubelet-insecure-tls}",
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Metrics Server: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Helm output:")
+					fmt.Println(helmOutput)
+				}
+				fmt.Println(yellow("Continuing despite Metrics Server installation failure..."))
+			} else {
+				fmt.Printf("%s Metrics Server installed successfully\n", green("✅"))
+
+				// Wait for Metrics Server to be ready
+				fmt.Println(yellow("Waiting for Metrics Server to be ready..."))
+
+				// Wait a moment for resources to be created
+				time.Sleep(5 * time.Second)
+
+				err = waitForDeployment("kube-system", "metrics-server", 2)
+				if err != nil {
+					fmt.Printf("%s Error waiting for Metrics Server: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite Metrics Server not being ready..."))
+				} else {
+					fmt.Printf("%s Metrics Server is ready\n", green("✅"))
+					fmt.Println(yellow("You can now use these commands to view resource usage:"))
+					fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
+					fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
+					fmt.Println(yellow("Note: It may take a few minutes for metrics to be available after installation"))
+				}
+			}
+		}
+
 		fmt.Println(green("Kind-based development environment setup complete!"))
 
 		// Find host ports from the port mappings and component configuration
@@ -1298,7 +1542,10 @@ func init() {
 	kindenvStartCmd.Flags().Bool("skip-redis", false, "Skip deploying Redis")
 	kindenvStartCmd.Flags().Bool("skip-opensearch", false, "Skip deploying OpenSearch")
 	kindenvStartCmd.Flags().Bool("skip-opensearch-dashboards", false, "Skip deploying OpenSearch Dashboards")
+	kindenvStartCmd.Flags().Bool("skip-opensearch-index-management", false, "Skip enabling OpenSearch Index Management plugin")
 	kindenvStartCmd.Flags().Bool("skip-temporal-worker-operator", false, "Skip deploying Temporal Worker Operator")
+	kindenvStartCmd.Flags().Bool("skip-indices-operator", false, "Skip deploying Indices Operator")
+	kindenvStartCmd.Flags().Bool("skip-metrics-server", false, "Skip deploying Metrics Server")
 	kindenvStartCmd.Flags().Bool("force-context", false, "Automatically switch to the correct Kubernetes context without prompting")
 
 	// Deprecated flag, kept for backward compatibility
