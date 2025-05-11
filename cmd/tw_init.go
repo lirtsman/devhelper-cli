@@ -38,9 +38,13 @@ for different languages.
 By default, it will use the current directory name as the worker name.
 You can override this with the --name flag.
 
+The worker type will be parsed from the name (e.g., temporal-ingestion-parsing -> ingestion).
+You can override this with the --worker-type flag.
+
 Example:
   devhelper-cli tw init
   devhelper-cli tw init --name my-worker
+  devhelper-cli tw init --name temporal-ingestion-worker --worker-type ingestion
   devhelper-cli tw init --template typescript
   devhelper-cli tw init --force`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -54,10 +58,12 @@ Example:
 		force, _ := cmd.Flags().GetBool("force")
 		template, _ := cmd.Flags().GetString("template")
 		workerName, _ := cmd.Flags().GetString("name")
+		workerType, _ := cmd.Flags().GetString("worker-type")
 		verbose, _ := cmd.Flags().GetBool("verbose")
 
 		if verbose {
-			fmt.Printf("Flags: output=%s, force=%v, template=%s, name=%s\n", configPath, force, template, workerName)
+			fmt.Printf("Flags: output=%s, force=%v, template=%s, name=%s, worker-type=%s\n", 
+				configPath, force, template, workerName, workerType)
 		}
 
 		// If no config path is provided, use default
@@ -83,7 +89,7 @@ Example:
 		fmt.Println(green("Initializing Temporal Worker project..."))
 
 		// Create default configuration
-		config := tw.CreateDefaultConfig(workerName)
+		config := tw.CreateDefaultConfig(workerName, workerType)
 
 		// Save configuration to file
 		err := tw.SaveConfig(config, configPath)
@@ -116,4 +122,5 @@ func init() {
 	twInitCmd.Flags().StringP("output", "o", "", "Output path for configuration file (default: tw.yaml)")
 	twInitCmd.Flags().BoolP("force", "f", false, "Force overwrite if configuration file already exists")
 	twInitCmd.Flags().String("template", "", "Template to use for generating code (golang, typescript)")
+	twInitCmd.Flags().String("worker-type", "", "Type of worker (e.g., ingestion, processing). Default: parsed from name")
 }
