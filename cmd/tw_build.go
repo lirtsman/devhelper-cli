@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
 	"github.com/ShieldFC-RD/devhelper-cli/internal/tw"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -36,11 +37,21 @@ var twBuildCmd = &cobra.Command{
 This command builds a Docker image for a Temporal Worker using the configuration
 from tw.yaml and a Dockerfile in the current directory.
 
+When using --kind-load, the command will:
+1. Build the image using the configured registry
+2. Load the built image into the Kind cluster defined in kindenv.yaml
+This requires a kindenv.yaml file in the current directory and an existing Kind
+cluster with the name specified in that configuration.
+
+The command automatically detects if you're using Docker or Podman as your container
+engine and uses the appropriate method to load the image into the Kind cluster.
+
 Examples:
   devhelper-cli tw build
   devhelper-cli tw build --tag v1.0.0
   devhelper-cli tw build --arg KEY=VALUE
-  devhelper-cli tw build --no-cache`,
+  devhelper-cli tw build --no-cache
+  devhelper-cli tw build --kind-load`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// Create colored output helpers
 		green := color.New(color.FgGreen).SprintFunc()
@@ -53,9 +64,11 @@ Examples:
 		noCache, _ := cmd.Flags().GetBool("no-cache")
 		buildArgs, _ := cmd.Flags().GetStringArray("arg")
 		verbose, _ := cmd.Flags().GetBool("verbose")
+		kindLoad, _ := cmd.Flags().GetBool("kind-load")
 
 		if verbose {
-			fmt.Printf("Flags: config=%s, tag=%s, no-cache=%v, args=%v\n", configPath, tag, noCache, buildArgs)
+			fmt.Printf("Flags: config=%s, tag=%s, no-cache=%v, args=%v, kind-load=%v\n", 
+				configPath, tag, noCache, buildArgs, kindLoad)
 		}
 
 		// Load configuration
@@ -89,9 +102,12 @@ Examples:
 		}
 
 		// Use image.registry from config if available
-		registry := config.Spec.Image.Registry
-		if registry != "" && !strings.HasSuffix(registry, "/") {
-			registry += "/"
+		registry := ""
+		if config.Spec.Image.Registry != "" {
+			registry = config.Spec.Image.Registry
+			if !strings.HasSuffix(registry, "/") {
+				registry += "/"
+			}
 		}
 
 		// Use tag from config if not provided as a flag
@@ -139,21 +155,121 @@ Examples:
 		fmt.Printf("%s Docker image built successfully: %s\n", green("✅"), fullImageName)
 
 		// Check if running in a Kind environment
-		kindCluster, _ := cmd.Flags().GetString("kind-load")
-		if kindCluster != "" {
-			fmt.Printf("%s Loading image into Kind cluster: %s\n", yellow("⚙️"), kindCluster)
+		if kindLoad {
+			// Figure out cluster name to use
+			var kindClusterName string
+			
+			// First check for kindenv.yaml configuration
+			kindEnvConfig, err := kindenv.LoadConfig("")
+			if err == nil && kindEnvConfig.Cluster.Name != "" {
+				kindClusterName = kindEnvConfig.Cluster.Name
+				fmt.Printf("%s Using Kind cluster name from kindenv.yaml: %s\n", green("✅"), kindClusterName)
+			} else {
+				// Fall back to using the project name as the cluster name
+				kindClusterName = imageName
+				fmt.Printf("%s Using image name as Kind cluster name: %s\n", yellow("⚙️"), kindClusterName)
+			}
+		
+			// Check if the kind command exists
+			_, err = exec.LookPath("kind")
+			if err != nil {
+				fmt.Printf("%s Kind command not found: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+		
+			// Get list of clusters to check if ours exists
+			kindCmd := exec.Command("kind", "get", "clusters")
+			kindOutput, err := kindCmd.Output()
+			if err != nil {
+				fmt.Printf("%s Failed to get Kind clusters: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+		
+			// Check if our cluster exists in the list
+			kindClusters := strings.Split(string(kindOutput), "\n")
+			clusterExists := false
+			for _, cluster := range kindClusters {
+				if strings.TrimSpace(cluster) == kindClusterName {
+					clusterExists = true
+					break
+				}
+			}
 
-			// Execute kind load command
-			loadCmd := exec.Command("kind", "load", "docker-image", fullImageName, "--name", kindCluster)
+			if !clusterExists {
+				fmt.Printf("%s No Kind cluster found with name: %s\n", red("❌"), kindClusterName)
+				os.Exit(1)
+			}
+		
+			fmt.Printf("%s Loading image %s into Kind cluster: %s\n", yellow("⚙️"), fullImageName, kindClusterName)
+		
+			// Determine if we're using podman or docker
+			containerRuntime := "docker"
+			
+			// First check for podman
+			_, podmanErr := exec.LookPath("podman")
+			if podmanErr == nil {
+				containerRuntime = "podman"
+			}
+			
+			// Then check for docker, prefer docker if both are available
+			_, dockerErr := exec.LookPath("docker")
+			if dockerErr == nil {
+				containerRuntime = "docker"
+				
+				// Use podman if this is running in a podman environment
+				// This detects if we're using kind with its experimental podman provider
+				kindInfoCmd := exec.Command("kind", "version")
+				kindInfoOutput, _ := kindInfoCmd.CombinedOutput()
+				if strings.Contains(string(kindInfoOutput), "podman") {
+					containerRuntime = "podman"
+				}
+			}
+			
+			if verbose {
+				fmt.Printf("Using container runtime: %s\n", containerRuntime)
+			}
+			
+			var loadCmd *exec.Cmd
+			
+			if containerRuntime == "podman" {
+				fmt.Printf("%s Using podman to load image into Kind cluster...\n", yellow("⚙️"))
+				// For podman, we need to save the image to a tarball first
+				tempDir, err := os.MkdirTemp("", "podman-image-*")
+				if err != nil {
+					fmt.Printf("%s Failed to create temporary directory: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+				defer os.RemoveAll(tempDir)
+				
+				tarballPath := filepath.Join(tempDir, "image.tar")
+				fmt.Printf("%s Saving image to tarball...\n", yellow("⚙️"))
+				
+				// Save the image to a tarball
+				saveCmd := exec.Command("podman", "save", "-o", tarballPath, fullImageName)
+				saveCmd.Stdout = os.Stdout
+				saveCmd.Stderr = os.Stderr
+				if err := saveCmd.Run(); err != nil {
+					fmt.Printf("%s Failed to save image to tarball: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+				
+				// Load the tarball into kind
+				fmt.Printf("%s Loading tarball into Kind cluster...\n", yellow("⚙️"))
+				loadCmd = exec.Command("kind", "load", "image-archive", tarballPath, "--name", kindClusterName)
+			} else {
+				// Using Docker - can load directly
+				loadCmd = exec.Command("kind", "load", "docker-image", fullImageName, "--name", kindClusterName)
+			}
+			
 			loadCmd.Stdout = os.Stdout
 			loadCmd.Stderr = os.Stderr
 
 			if err := loadCmd.Run(); err != nil {
-				fmt.Printf("%s Failed to load image into Kind cluster: %v\n", red("❌"), err)
+				fmt.Printf("%s Failed to load image %s into Kind cluster: %v\n", red("❌"), fullImageName, err)
 				os.Exit(1)
-			}
-
-			fmt.Printf("%s Image loaded into Kind cluster successfully\n", green("✅"))
+			} 
+			
+			fmt.Printf("%s Image %s loaded into Kind cluster %s successfully\n", green("✅"), fullImageName, kindClusterName)
 		}
 	},
 }
@@ -165,5 +281,5 @@ func init() {
 	twBuildCmd.Flags().String("tag", "", "Image tag (default: 'latest' or from config)")
 	twBuildCmd.Flags().Bool("no-cache", false, "Do not use cache when building the image")
 	twBuildCmd.Flags().StringArray("arg", []string{}, "Build arguments for Docker (KEY=VALUE)")
-	twBuildCmd.Flags().String("kind-load", "", "Load the image into a Kind cluster after building")
+	twBuildCmd.Flags().Bool("kind-load", false, "Load the built image into the Kind cluster defined in kindenv.yaml")
 }

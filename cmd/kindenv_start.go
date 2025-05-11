@@ -750,7 +750,13 @@ stringData:
 			}
 
 			// Create kvv2-redis secret with redis address
-			kvv2RedisSecretYaml := `
+			redisPassword := ""
+			// If Redis auth is enabled, use default password
+			if config.Components.Redis.Auth.Enabled {
+				redisPassword = "redis"
+			}
+			
+			kvv2RedisSecretYaml := fmt.Sprintf(`
 apiVersion: v1
 kind: Secret
 metadata:
@@ -759,15 +765,38 @@ metadata:
 type: Opaque
 stringData:
   address: "redis-master.redis.svc.cluster.local:6379"
-`
+  redis-password: "%s"
+`, redisPassword)
 
 			cmd = exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(kvv2RedisSecretYaml)
 			err = cmd.Run()
 			if err != nil {
-				fmt.Printf("%s Error creating Redis secret: %v\n", red("❌"), err)
+				fmt.Printf("%s Error creating Redis secret in redis namespace: %v\n", red("❌"), err)
+			} else {
+				fmt.Printf("%s Redis secret created successfully in redis namespace\n", green("✅"))
 			}
 
+			// Also create kvv2-redis secret in default namespace for other components
+			defaultRedisSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-redis
+  namespace: default
+type: Opaque
+stringData:
+  address: "redis-master.redis.svc.cluster.local:6379"
+  redis-password: "%s"
+`, redisPassword)
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(defaultRedisSecretYaml)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("%s Error creating Redis secret in default namespace: %v\n", red("❌"), err)
+			} else {
+				fmt.Printf("%s Redis secret created successfully in default namespace\n", green("✅"))
+			}
 		}
 
 		// Install Dapr
@@ -1247,7 +1276,13 @@ spec:
 			var helmArgs []string
 			if config.Components.Redis.Enabled {
 				// Create kvv2-redis secret with redis address
-				kvv2RedisSecretYaml := `
+				redisPassword := ""
+				// If Redis auth is enabled, use default password
+				if config.Components.Redis.Auth.Enabled {
+					redisPassword = "redis"
+				}
+				
+				kvv2RedisSecretYaml := fmt.Sprintf(`
 apiVersion: v1
 kind: Secret
 metadata:
@@ -1256,7 +1291,8 @@ metadata:
 type: Opaque
 stringData:
   address: "redis-master.redis.svc.cluster.local:6379"
-`
+  redis-password: "%s"
+`, redisPassword)
 
 				cmd := exec.Command("kubectl", "apply", "-f", "-")
 				cmd.Stdin = strings.NewReader(kvv2RedisSecretYaml)
