@@ -105,7 +105,7 @@ func CreateDefaultConfig(name string, workerType string) *TemporalWorkerConfig {
 
 	// Set default spec values
 	config.Spec.Enabled = true
-	
+
 	// Set worker type based on provided flag or extract from name
 	if workerType != "" {
 		// Use explicitly provided worker type
@@ -122,7 +122,7 @@ func CreateDefaultConfig(name string, workerType string) *TemporalWorkerConfig {
 	}
 
 	// Image defaults
-	config.Spec.Image.Registry = "992979781608.dkr.ecr.eu-west-1.amazonaws.com"
+	config.Spec.Image.Registry = "null"
 	config.Spec.Image.Tag = "latest"
 
 	// Temporal defaults
@@ -186,26 +186,26 @@ func extractWorkerTypeFromName(name string) string {
 	if name == "" {
 		return ""
 	}
-	
+
 	// Parse worker type from name (e.g., temporal-ingestion-parsing -> ingestion)
 	parts := strings.Split(name, "-")
 	if len(parts) <= 1 {
 		return ""
 	}
-	
+
 	// Try to find a meaningful part after "temporal" if present
 	for i, part := range parts {
 		if part == "temporal" && i+1 < len(parts) {
 			return parts[i+1]
 		}
 	}
-	
+
 	// If no "temporal" prefix found, just use the second part
 	// Special case for names ending with "temporal"
 	if parts[len(parts)-1] == "temporal" && len(parts) > 1 {
 		return parts[len(parts)-2]
 	}
-	
+
 	return parts[1]
 }
 
