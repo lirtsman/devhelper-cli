@@ -222,7 +222,7 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 
 			// Add Temporal Helm repository
 			fmt.Println("Adding Temporal Helm repository...")
-			temporalOutput, err := executeCommandWithOutput("helm", "repo", "add", "temporal", "https://go.temporal.io/helm-charts")
+			temporalOutput, err := executeCommandWithOutput("helm", "repo", "add", "temporalio", "https://go.temporal.io/helm-charts")
 			if err != nil {
 				if strings.Contains(temporalOutput, "already exists") {
 					fmt.Println("✅ Temporal Helm repository already configured")
@@ -283,7 +283,7 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 			} else {
 				fmt.Println("✅ OpenSearch Helm repository added successfully")
 			}
-			
+
 			// Add Metrics Server Helm repository
 			fmt.Println("Adding Metrics Server Helm repository...")
 			metricsOutput, err := executeCommandWithOutput("helm", "repo", "add", "metrics-server", "https://kubernetes-sigs.github.io/metrics-server/")
@@ -332,7 +332,7 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 			} else {
 				fmt.Println("✅ Shield Temporal Worker Operator CRDs chart is available")
 			}
-			
+
 			// Verify Indices Operator chart availability
 			indicesOutput, err := executeCommandWithOutput("helm", "search", "repo", "shield/indices-operator")
 			if err != nil || !strings.Contains(indicesOutput, "shield/indices-operator") {
@@ -340,7 +340,7 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 			} else {
 				fmt.Println("✅ Shield Indices Operator chart is available")
 			}
-			
+
 			// Verify Metrics Server chart availability
 			metricsServerOutput, err := executeCommandWithOutput("helm", "search", "repo", "metrics-server/metrics-server")
 			if err != nil || !strings.Contains(metricsServerOutput, "metrics-server/metrics-server") {
