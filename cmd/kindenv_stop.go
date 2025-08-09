@@ -25,10 +25,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// stopCluster stops and deletes a Kind cluster
+// stopCluster completely stops and deletes a Kind cluster, removing all deployed components
 func stopCluster(clusterName string, verbose bool) error {
 	if verbose {
-		fmt.Printf("Stopping Kind cluster: %s\n", clusterName)
+		fmt.Printf("Stopping and DELETING Kind cluster: %s\n", clusterName)
+		fmt.Println("This will remove all deployed components and data!")
 	}
 
 	// Delete the cluster using 'kind delete cluster' command
@@ -45,9 +46,10 @@ func stopCluster(clusterName string, verbose bool) error {
 var kindenvStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop a Kind-based development environment",
-	Long: `Stop a Kind-based development environment.
+	Long: `Stop and DELETE a Kind-based development environment.
 
-This command stops and deletes a Kind cluster used for development.
+This command completely stops and DELETES the Kind cluster used for development.
+All deployed services, applications, and data within the cluster will be removed.
 
 By default, the command will use the cluster name from kindenv.yaml.
 You can override this with the --name flag.
@@ -64,7 +66,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 		configPath, _ := cmd.Flags().GetString("config")
 		clusterName, _ := cmd.Flags().GetString("name")
 
-		fmt.Println(green("Stopping Kind-based development environment..."))
+		fmt.Println(green("Stopping and DELETING Kind-based development environment..."))
 
 		// Load config
 		config, err := kindenv.LoadConfig(configPath)
@@ -77,15 +79,15 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 		if cmd.Flags().Changed("name") {
 			config.Cluster.Name = clusterName
 			if verbose {
-				fmt.Printf("%s Using specified cluster name: %s\n", yellow("⚙️"), clusterName)
+				fmt.Printf("%s Using specified cluster name for deletion: %s\n", yellow("⚙️"), clusterName)
 			}
 		} else if verbose {
-			fmt.Printf("%s Using cluster name from config: %s\n", yellow("📄"), config.Cluster.Name)
+			fmt.Printf("%s Using cluster name from config for deletion: %s\n", yellow("📄"), config.Cluster.Name)
 		}
 
 		if verbose {
 			fmt.Println(yellow("Verbose mode enabled"))
-			fmt.Printf("Using cluster name: %s\n", config.Cluster.Name)
+			fmt.Printf("Target cluster for deletion: %s\n", config.Cluster.Name)
 		}
 
 		// First check if the cluster exists
@@ -96,7 +98,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 		}
 
 		if !exists {
-			fmt.Printf("%s Kind cluster '%s' does not exist or is already stopped\n", yellow("⚠️"), config.Cluster.Name)
+			fmt.Printf("%s Kind cluster '%s' does not exist or has already been deleted\n", yellow("⚠️"), config.Cluster.Name)
 			return
 		}
 
@@ -107,7 +109,9 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			os.Exit(1)
 		}
 
-		fmt.Printf("%s Kind-based development environment '%s' stopped successfully!\n", green("✅"), config.Cluster.Name)
+		fmt.Printf("%s Kind-based development environment '%s' has been completely stopped and DELETED!\n", green("✅"), config.Cluster.Name)
+		fmt.Println(yellow("All deployed services, applications, and their data have been removed."))
+		fmt.Println(yellow("To recreate the environment, use: devhelper-cli kindenv start"))
 	},
 }
 

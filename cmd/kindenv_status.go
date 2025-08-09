@@ -176,6 +176,32 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				fmt.Printf("- %s Dapr is disabled in config\n", yellow("ℹ️"))
 			}
 
+			// Check OpenSearch status
+			if config.Components.OpenSearch.Enabled {
+				openSearchCmd := exec.Command("kubectl", "get", "pod", "-n", config.Components.OpenSearch.Namespace, "-l", "app=opensearch", "--no-headers")
+				openSearchOutput, err := openSearchCmd.CombinedOutput()
+				if err == nil && string(openSearchOutput) != "" {
+					fmt.Printf("- %s OpenSearch is installed and running\n", green("✅"))
+				} else {
+					fmt.Printf("- %s OpenSearch is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s OpenSearch is disabled in config\n", yellow("ℹ️"))
+			}
+
+			// Check OpenSearch Dashboards status
+			if config.Components.OpenSearchDashboards.Enabled {
+				dashboardsCmd := exec.Command("kubectl", "get", "pod", "-n", config.Components.OpenSearchDashboards.Namespace, "-l", "app=opensearch-dashboards", "--no-headers")
+				dashboardsOutput, err := dashboardsCmd.CombinedOutput()
+				if err == nil && string(dashboardsOutput) != "" {
+					fmt.Printf("- %s OpenSearch Dashboards is installed and running\n", green("✅"))
+				} else {
+					fmt.Printf("- %s OpenSearch Dashboards is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s OpenSearch Dashboards is disabled in config\n", yellow("ℹ️"))
+			}
+
 			// Check Temporal Worker Operator status
 			if config.Components.TemporalWorkerOperator.Enabled {
 				operatorCmd := exec.Command("kubectl", "get", "deployment", "-n", "shield-system", "--no-headers")
@@ -198,12 +224,57 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			} else {
 				fmt.Printf("- %s Temporal Worker Operator is disabled in config\n", yellow("ℹ️"))
 			}
+			
+			// Check Indices Operator status
+			if config.Components.IndicesOperator.Enabled {
+				operatorCmd := exec.Command("kubectl", "get", "deployment", "-n", "default", "-l", "app.kubernetes.io/name=indices-operator", "--no-headers")
+				operatorOutput, err := operatorCmd.CombinedOutput()
+
+				// Check CRDs
+				crdCmd := exec.Command("kubectl", "get", "crd", "indices.opensearch.shieldfc.com", "--no-headers")
+				crdOutput, crdErr := crdCmd.CombinedOutput()
+
+				if err == nil && string(operatorOutput) != "" {
+					fmt.Printf("- %s Indices Operator is installed and running\n", green("✅"))
+					if crdErr == nil && string(crdOutput) != "" {
+						fmt.Printf("  %s CRDs are properly installed\n", green("✓"))
+					} else {
+						fmt.Printf("  %s CRDs not found, operator may not function correctly\n", yellow("⚠️"))
+					}
+				} else {
+					fmt.Printf("- %s Indices Operator is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Indices Operator is disabled in config\n", yellow("ℹ️"))
+			}
+			
+			// Check Metrics Server status
+			if config.Components.MetricsServer.Enabled {
+				metricsCmd := exec.Command("kubectl", "get", "deployment", "-n", "kube-system", "metrics-server", "--no-headers")
+				metricsOutput, err := metricsCmd.CombinedOutput()
+				
+				if err == nil && string(metricsOutput) != "" {
+					fmt.Printf("- %s Metrics Server is installed and running\n", green("✅"))
+					// Try to run kubectl top nodes to verify it's working
+					topCmd := exec.Command("kubectl", "top", "nodes")
+					_, topErr := topCmd.CombinedOutput()
+					if topErr == nil {
+						fmt.Printf("  %s Resource metrics are available\n", green("✓"))
+					} else {
+						fmt.Printf("  %s Resource metrics not available yet (may need a few minutes)\n", yellow("⚠️"))
+					}
+				} else {
+					fmt.Printf("- %s Metrics Server is not running or not installed\n", yellow("⚠️"))
+				}
+			} else {
+				fmt.Printf("- %s Metrics Server is disabled in config\n", yellow("ℹ️"))
+			}
 
 			// Print service access information
 			fmt.Println(green("Access services:"))
 
 			// Find host ports from the port mappings
-			var temporalWebPort, temporalFrontendPort, redisPort int
+			var temporalWebPort, temporalFrontendPort, redisPort, openSearchPort, openSearchDashboardsPort int
 
 			for _, portMap := range config.Cluster.MapPorts {
 				// Check if containerPort matches any of our known nodePort values
@@ -220,6 +291,14 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					// Redis
 					if cp == config.Components.Redis.NodePorts.Redis {
 						redisPort = portMap.HostPort
+					}
+					// OpenSearch REST
+					if cp == config.Components.OpenSearch.NodePorts.Rest {
+						openSearchPort = portMap.HostPort
+					}
+					// OpenSearch Dashboards
+					if cp == config.Components.OpenSearchDashboards.NodePorts.Http {
+						openSearchDashboardsPort = portMap.HostPort
 					}
 				}
 			}
@@ -246,6 +325,30 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					fmt.Printf("- Redis: localhost:%d\n", redisPort)
 				} else if verbose {
 					fmt.Printf("%s Redis namespace not found or port mapping missing. Redis may not be installed.\n", yellow("⚠️"))
+				}
+			}
+
+			if config.Components.OpenSearch.Enabled {
+				// Check if OpenSearch is actually deployed
+				openSearchCmd := exec.Command("kubectl", "get", "namespace", config.Components.OpenSearch.Namespace)
+				_, err := openSearchCmd.CombinedOutput()
+
+				if err == nil && openSearchPort > 0 {
+					fmt.Printf("- OpenSearch: http://localhost:%d\n", openSearchPort)
+				} else if verbose {
+					fmt.Printf("%s OpenSearch namespace not found or port mapping missing. OpenSearch may not be installed.\n", yellow("⚠️"))
+				}
+			}
+
+			if config.Components.OpenSearchDashboards.Enabled {
+				// Check if OpenSearch Dashboards is actually deployed
+				dashboardsCmd := exec.Command("kubectl", "get", "namespace", config.Components.OpenSearchDashboards.Namespace)
+				_, err := dashboardsCmd.CombinedOutput()
+
+				if err == nil && openSearchDashboardsPort > 0 {
+					fmt.Printf("- OpenSearch Dashboards: http://localhost:%d\n", openSearchDashboardsPort)
+				} else if verbose {
+					fmt.Printf("%s OpenSearch Dashboards namespace not found or port mapping missing. OpenSearch Dashboards may not be installed.\n", yellow("⚠️"))
 				}
 			}
 
