@@ -610,11 +610,11 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.MySQL.Persistence.Enabled = false
 	config.Components.MySQL.Persistence.Size = "8Gi"
 
-	config.Components.TemporalWorkerOperator.Enabled = true
+	config.Components.TemporalWorkerOperator.Enabled = false
 	config.Components.TemporalWorkerOperator.ChartVersion = "0.1.46-dev"
 	config.Components.TemporalWorkerOperator.TemporalNamespace = "default"
 
-	config.Components.IndicesOperator.Enabled = true
+	config.Components.IndicesOperator.Enabled = false
 	config.Components.IndicesOperator.ChartVersion = "0.1.79-dev"
 
 	config.Components.MetricsServer.Enabled = true
