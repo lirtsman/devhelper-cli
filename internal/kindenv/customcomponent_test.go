@@ -318,6 +318,63 @@ func TestGenerateDeploymentYAML_CustomLabels(t *testing.T) {
 	assert.Equal(t, "dev", labels["environment"])
 }
 
+// T043: Test for command override
+func TestGenerateDeploymentYAML_CommandOverride(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "my-app",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		Command:   []string{"/bin/sh", "-c"},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	command := container["command"].([]interface{})
+	assert.Equal(t, []interface{}{"/bin/sh", "-c"}, command)
+	// Args should not be present when not specified
+	_, hasArgs := container["args"]
+	assert.False(t, hasArgs, "Args should not be present when not specified")
+}
+
+// T044: Test for args without command
+func TestGenerateDeploymentYAML_ArgsWithoutCommand(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "my-app",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		Args:      []string{"-g", "daemon off;"},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	args := container["args"].([]interface{})
+	assert.Equal(t, []interface{}{"-g", "daemon off;"}, args)
+	// Command should not be present when not specified
+	_, hasCommand := container["command"]
+	assert.False(t, hasCommand, "Command should not be present when not specified")
+}
+
+// T045: Test for command + args together
 func TestGenerateDeploymentYAML_CommandAndArgs(t *testing.T) {
 	component := &CustomComponent{
 		Name:      "my-app",
@@ -346,6 +403,117 @@ func TestGenerateDeploymentYAML_CommandAndArgs(t *testing.T) {
 	assert.Equal(t, []interface{}{"-jar", "/app/application.jar", "--spring.profiles.active=local"}, args)
 }
 
+// T049: Test for single port mapping
+func TestGenerateDeploymentYAML_SinglePortMapping(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "web-app",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		Ports: []PortMapping{
+			{
+				ContainerPort: 8080,
+				Protocol:      "TCP",
+			},
+		},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	ports := container["ports"].([]interface{})
+	require.Len(t, ports, 1)
+
+	port := ports[0].(map[string]interface{})
+	assert.Equal(t, 8080, port["containerPort"])
+	assert.Equal(t, "TCP", port["protocol"])
+}
+
+// T050: Test for multiple port mappings
+func TestGenerateDeploymentYAML_MultiplePortMappings(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "multi-port-app",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		Ports: []PortMapping{
+			{
+				ContainerPort: 8080,
+				Protocol:      "TCP",
+			},
+			{
+				ContainerPort: 8443,
+				Protocol:      "TCP",
+			},
+			{
+				ContainerPort: 9090,
+				Protocol:      "UDP",
+			},
+		},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	ports := container["ports"].([]interface{})
+	require.Len(t, ports, 3)
+
+	// Verify all ports are present
+	portMap := make(map[int]string)
+	for _, p := range ports {
+		portObj := p.(map[string]interface{})
+		portNum := portObj["containerPort"].(int)
+		protocol := portObj["protocol"].(string)
+		portMap[portNum] = protocol
+	}
+
+	assert.Equal(t, "TCP", portMap[8080])
+	assert.Equal(t, "TCP", portMap[8443])
+	assert.Equal(t, "UDP", portMap[9090])
+}
+
+// T052: Test for NodePort auto-assignment
+func TestAssignPorts_NodePortAutoAssignment(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "test-app",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		Ports: []PortMapping{
+			{
+				ContainerPort: 8080,
+				Protocol:      "TCP",
+				// NodePort not specified - should be auto-assigned
+			},
+		},
+	}
+	component.SetDefaults()
+
+	usedPorts := make(map[int]bool)
+	err := assignPorts(component, usedPorts)
+	require.NoError(t, err)
+
+	// Verify NodePort was assigned in valid range
+	assert.GreaterOrEqual(t, component.Ports[0].NodePort, 30000, "NodePort should be >= 30000")
+	assert.LessOrEqual(t, component.Ports[0].NodePort, 32767, "NodePort should be <= 32767")
+	assert.True(t, usedPorts[component.Ports[0].NodePort], "NodePort should be marked as used")
+}
+
 // Helper function to check if YAML contains a substring (for basic validation)
 func yamlContains(yamlStr, substr string) bool {
 	return strings.Contains(yamlStr, substr)
@@ -364,4 +532,148 @@ func TestDeployCustomComponentsIntegration(t *testing.T) {
 	}
 	// TODO: Implement integration tests with real Kind cluster
 	t.Skip("integration tests not yet implemented")
+}
+
+// T035: Test for secretKeyRef environment variables
+func TestGenerateDeploymentYAML_WithSecretKeyRef(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "my-app",
+		Image:     "myregistry/my-app:v1.0",
+		Namespace: "default",
+		Env: []EnvVar{
+			{
+				Name:  "DB_PASSWORD",
+				ValueFrom: &EnvVarSource{
+					SecretKeyRef: &SecretKeySelector{
+						Name: "mysql-secret",
+						Key:  "password",
+					},
+				},
+			},
+			{
+				Name:  "DB_USER",
+				ValueFrom: &EnvVarSource{
+					SecretKeyRef: &SecretKeySelector{
+						Name: "mysql-secret",
+						Key:  "username",
+					},
+				},
+			},
+		},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	envVars := container["env"].([]interface{})
+	require.Len(t, envVars, 2)
+
+	// Verify secretKeyRef structure
+	dbPasswordEnv := envVars[0].(map[string]interface{})
+	assert.Equal(t, "DB_PASSWORD", dbPasswordEnv["name"])
+	assert.Nil(t, dbPasswordEnv["value"]) // Should not have direct value
+	valueFrom := dbPasswordEnv["valueFrom"].(map[string]interface{})
+	secretKeyRef := valueFrom["secretKeyRef"].(map[string]interface{})
+	assert.Equal(t, "mysql-secret", secretKeyRef["name"])
+	assert.Equal(t, "password", secretKeyRef["key"])
+
+	dbUserEnv := envVars[1].(map[string]interface{})
+	assert.Equal(t, "DB_USER", dbUserEnv["name"])
+	valueFrom2 := dbUserEnv["valueFrom"].(map[string]interface{})
+	secretKeyRef2 := valueFrom2["secretKeyRef"].(map[string]interface{})
+	assert.Equal(t, "mysql-secret", secretKeyRef2["name"])
+	assert.Equal(t, "username", secretKeyRef2["key"])
+}
+
+// T036: Test for mixed direct values and secret references
+func TestGenerateDeploymentYAML_MixedEnvVars(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "my-app",
+		Image:     "myregistry/my-app:v1.0",
+		Namespace: "default",
+		Env: []EnvVar{
+			{
+				Name:  "APP_ENV",
+				Value: "production",
+			},
+			{
+				Name:  "DB_PASSWORD",
+				ValueFrom: &EnvVarSource{
+					SecretKeyRef: &SecretKeySelector{
+						Name: "mysql-secret",
+						Key:  "password",
+					},
+				},
+			},
+			{
+				Name:  "LOG_LEVEL",
+				Value: "info",
+			},
+			{
+				Name:  "DB_HOST",
+				ValueFrom: &EnvVarSource{
+					SecretKeyRef: &SecretKeySelector{
+						Name: "mysql-secret",
+						Key:  "host",
+					},
+				},
+			},
+		},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	envVars := container["env"].([]interface{})
+	require.Len(t, envVars, 4)
+
+	// Build a map for easier checking
+	envMap := make(map[string]interface{})
+	for _, env := range envVars {
+		envObj := env.(map[string]interface{})
+		name := envObj["name"].(string)
+		envMap[name] = envObj
+	}
+
+	// Check direct values
+	appEnv := envMap["APP_ENV"].(map[string]interface{})
+	assert.Equal(t, "production", appEnv["value"])
+	assert.Nil(t, appEnv["valueFrom"])
+
+	logLevel := envMap["LOG_LEVEL"].(map[string]interface{})
+	assert.Equal(t, "info", logLevel["value"])
+	assert.Nil(t, logLevel["valueFrom"])
+
+	// Check secret references
+	dbPassword := envMap["DB_PASSWORD"].(map[string]interface{})
+	assert.Nil(t, dbPassword["value"])
+	valueFrom := dbPassword["valueFrom"].(map[string]interface{})
+	secretKeyRef := valueFrom["secretKeyRef"].(map[string]interface{})
+	assert.Equal(t, "mysql-secret", secretKeyRef["name"])
+	assert.Equal(t, "password", secretKeyRef["key"])
+
+	dbHost := envMap["DB_HOST"].(map[string]interface{})
+	assert.Nil(t, dbHost["value"])
+	valueFrom2 := dbHost["valueFrom"].(map[string]interface{})
+	secretKeyRef2 := valueFrom2["secretKeyRef"].(map[string]interface{})
+	assert.Equal(t, "mysql-secret", secretKeyRef2["name"])
+	assert.Equal(t, "host", secretKeyRef2["key"])
 }

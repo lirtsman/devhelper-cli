@@ -1,8 +1,10 @@
 package kindenv
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 )
@@ -33,6 +35,22 @@ func ValidateCustomComponent(component *CustomComponent) error {
 	// Replicas validation (only validate if set, don't mutate)
 	if component.Replicas != nil && *component.Replicas < 1 {
 		return fmt.Errorf("custom component '%s': replicas must be >= 1", component.Name)
+	}
+
+	// Command and args validation
+	if len(component.Command) > 0 {
+		for i, cmd := range component.Command {
+			if cmd == "" {
+				return fmt.Errorf("custom component '%s': command[%d] cannot be empty", component.Name, i)
+			}
+		}
+	}
+	if len(component.Args) > 0 {
+		for i, arg := range component.Args {
+			if arg == "" {
+				return fmt.Errorf("custom component '%s': args[%d] cannot be empty", component.Name, i)
+			}
+		}
 	}
 
 	// Environment variables validation
@@ -243,12 +261,80 @@ func ValidateConfigFile(configFile *ConfigFile) error {
 	return nil
 }
 
-// validateSecretReferences validates that all referenced secrets exist
-func validateSecretReferences(ctx context.Context, component *CustomComponent) error {
-	// TODO: Implement secret reference validation
-	// - Check each secretKeyRef exists in the cluster
-	// This will be implemented when we have kubectl integration
+// validatePortConflicts validates that ports don't conflict with already used ports
+func validatePortConflicts(component *CustomComponent, usedPorts map[int]bool) error {
+	for _, port := range component.Ports {
+		if port.NodePort != 0 {
+			if usedPorts[port.NodePort] {
+				return fmt.Errorf("component '%s': NodePort %d is already in use", component.Name, port.NodePort)
+			}
+		}
+	}
 	return nil
+}
+
+// validateSecretReferences validates that all referenced secrets exist in the cluster
+func validateSecretReferences(ctx context.Context, component *CustomComponent) error {
+	if len(component.Env) == 0 {
+		return nil
+	}
+
+	// Collect all unique secret references
+	secretRefs := make(map[string]map[string]bool) // namespace -> secretName -> keys
+	for _, env := range component.Env {
+		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+			secretName := env.ValueFrom.SecretKeyRef.Name
+			namespace := component.Namespace
+			if namespace == "" {
+				namespace = "default"
+			}
+
+			if secretRefs[namespace] == nil {
+				secretRefs[namespace] = make(map[string]bool)
+			}
+			secretRefs[namespace][secretName] = true
+		}
+	}
+
+	// Check each secret exists
+	var missingSecrets []string
+	for namespace, secrets := range secretRefs {
+		for secretName := range secrets {
+			exists, err := secretExists(ctx, namespace, secretName)
+			if err != nil {
+				return fmt.Errorf("failed to check secret '%s' in namespace '%s': %w", secretName, namespace, err)
+			}
+			if !exists {
+				missingSecrets = append(missingSecrets, fmt.Sprintf("%s/%s", namespace, secretName))
+			}
+		}
+	}
+
+	if len(missingSecrets) > 0 {
+		return fmt.Errorf("component '%s' references secrets that do not exist: %s. Please ensure these secrets are created before deploying", component.Name, strings.Join(missingSecrets, ", "))
+	}
+
+	return nil
+}
+
+// secretExists checks if a secret exists in the specified namespace using kubectl
+func secretExists(ctx context.Context, namespace, secretName string) (bool, error) {
+	// Use kubectl to check if secret exists
+	// kubectl get secret <name> -n <namespace> --ignore-not-found
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", secretName, "-n", namespace, "--ignore-not-found", "-o", "name")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	err := cmd.Run()
+	if err != nil {
+		// If command fails, assume secret doesn't exist
+		return false, nil
+	}
+	
+	output := strings.TrimSpace(stdout.String())
+	// If output contains the secret name, it exists
+	return strings.Contains(output, secretName), nil
 }
 
 // Helper validation functions

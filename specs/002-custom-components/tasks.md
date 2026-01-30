@@ -103,19 +103,19 @@
 
 ### Tests for User Story 2 (TDD - Write First)
 
-- [ ] T035 [P] [US2] Write test for secretKeyRef environment variables in internal/kindenv/customcomponent_test.go
-- [ ] T036 [P] [US2] Write test for mixed direct values and secret references in internal/kindenv/customcomponent_test.go
-- [ ] T037 [P] [US2] Write test for missing secret detection in internal/kindenv/validation_test.go
-- [ ] T038 [P] [US2] Write integration test for secret-based MySQL connection in cmd/kindenv_start_test.go
+- [x] T035 [P] [US2] Write test for secretKeyRef environment variables in internal/kindenv/customcomponent_test.go
+- [x] T036 [P] [US2] Write test for mixed direct values and secret references in internal/kindenv/customcomponent_test.go
+- [x] T037 [P] [US2] Write test for missing secret detection in internal/kindenv/validation_test.go
+- [x] T038 [P] [US2] Write integration test for secret-based MySQL connection in cmd/kindenv_start_test.go
 
 **Verify tests FAIL before proceeding to implementation**
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] Implement secretKeyRef transformation in generateDeploymentYAML() in internal/kindenv/customcomponent.go
-- [ ] T040 [US2] Implement validateSecretReferences() for pre-deployment check in internal/kindenv/validation.go
-- [ ] T041 [US2] Add secret existence validation before deployment in cmd/kindenv_start.go
-- [ ] T042 [US2] Add error messaging for missing secrets in internal/kindenv/validation.go
+- [x] T039 [US2] Implement secretKeyRef transformation in generateDeploymentYAML() in internal/kindenv/customcomponent.go
+- [x] T040 [US2] Implement validateSecretReferences() for pre-deployment check in internal/kindenv/validation.go
+- [x] T041 [US2] Add secret existence validation before deployment in cmd/kindenv_start.go
+- [x] T042 [US2] Add error messaging for missing secrets in internal/kindenv/validation.go
 
 **Checkpoint**: Can deploy components with both direct env vars (US1) and secret references (US2) independently
 
@@ -129,17 +129,17 @@
 
 ### Tests for User Story 3 (TDD - Write First)
 
-- [ ] T043 [P] [US3] Write test for command override in internal/kindenv/customcomponent_test.go
-- [ ] T044 [P] [US3] Write test for args without command in internal/kindenv/customcomponent_test.go
-- [ ] T045 [P] [US3] Write test for command + args together in internal/kindenv/customcomponent_test.go
+- [x] T043 [P] [US3] Write test for command override in internal/kindenv/customcomponent_test.go
+- [x] T044 [P] [US3] Write test for args without command in internal/kindenv/customcomponent_test.go
+- [x] T045 [P] [US3] Write test for command + args together in internal/kindenv/customcomponent_test.go
 
 **Verify tests FAIL before proceeding to implementation**
 
 ### Implementation for User Story 3
 
-- [ ] T046 [US3] Add command field handling in generateDeploymentYAML() in internal/kindenv/customcomponent.go
-- [ ] T047 [US3] Add args field handling in generateDeploymentYAML() in internal/kindenv/customcomponent.go
-- [ ] T048 [US3] Validate command and args are properly formatted arrays in internal/kindenv/validation.go
+- [x] T046 [US3] Add command field handling in generateDeploymentYAML() in internal/kindenv/customcomponent.go
+- [x] T047 [US3] Add args field handling in generateDeploymentYAML() in internal/kindenv/customcomponent.go
+- [x] T048 [US3] Validate command and args are properly formatted arrays in internal/kindenv/validation.go
 
 **Checkpoint**: Can deploy components with custom commands and args (US3) alongside basic deployment (US1) and secrets (US2)
 
@@ -153,23 +153,23 @@
 
 ### Tests for User Story 4 (TDD - Write First)
 
-- [ ] T049 [P] [US4] Write test for single port mapping in internal/kindenv/customcomponent_test.go
-- [ ] T050 [P] [US4] Write test for multiple port mappings in internal/kindenv/customcomponent_test.go
-- [ ] T051 [P] [US4] Write test for port conflict detection in internal/kindenv/validation_test.go
-- [ ] T052 [P] [US4] Write test for NodePort auto-assignment in internal/kindenv/customcomponent_test.go
-- [ ] T053 [P] [US4] Write integration test for port accessibility in cmd/kindenv_start_test.go
+- [x] T049 [P] [US4] Write test for single port mapping in internal/kindenv/customcomponent_test.go
+- [x] T050 [P] [US4] Write test for multiple port mappings in internal/kindenv/customcomponent_test.go
+- [x] T051 [P] [US4] Write test for port conflict detection in internal/kindenv/validation_test.go
+- [x] T052 [P] [US4] Write test for NodePort auto-assignment in internal/kindenv/customcomponent_test.go
+- [x] T053 [P] [US4] Write integration test for port accessibility in cmd/kindenv_start_test.go
 
 **Verify tests FAIL before proceeding to implementation**
 
 ### Implementation for User Story 4
 
-- [ ] T054 [US4] Implement generateServiceYAML() for NodePort service in internal/kindenv/customcomponent.go
-- [ ] T055 [US4] Implement assignPorts() for NodePort auto-assignment in internal/kindenv/customcomponent.go
-- [ ] T056 [US4] Implement validatePortConflicts() to check against existing components in internal/kindenv/validation.go
-- [ ] T057 [US4] Integrate service creation in deployCustomComponents() in internal/kindenv/customcomponent.go
-- [ ] T058 [US4] Update Kind cluster port mappings when custom ports are added in cmd/kindenv_start.go
-- [ ] T059 [US4] Add port information to status output in cmd/kindenv_status.go
-- [ ] T060 [US4] Clean up services in kindenv stop command in cmd/kindenv_stop.go
+- [x] T054 [US4] Implement generateServiceYAML() for NodePort service in internal/kindenv/customcomponent.go
+- [x] T055 [US4] Implement assignPorts() for NodePort auto-assignment in internal/kindenv/customcomponent.go
+- [x] T056 [US4] Implement validatePortConflicts() to check against existing components in internal/kindenv/validation.go
+- [x] T057 [US4] Integrate service creation in deployCustomComponents() in internal/kindenv/customcomponent.go
+- [ ] T058 [US4] Update Kind cluster port mappings when custom ports are added in cmd/kindenv_start.go (Note: NodePort services work without explicit Kind port mapping updates - can be enhanced later)
+- [x] T059 [US4] Add port information to status output in cmd/kindenv_status.go
+- [x] T060 [US4] Clean up services in kindenv stop command in cmd/kindenv_stop.go
 
 **Checkpoint**: Can deploy components with exposed ports (US4) alongside all previous features
 

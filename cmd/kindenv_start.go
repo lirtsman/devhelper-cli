@@ -1780,6 +1780,26 @@ stringData:
 						continue
 					}
 
+					// Apply service YAML if ports are configured
+					if deploymentInfo.ServiceYAML != "" {
+						fmt.Printf("Creating service for custom component '%s'...\n", component.Name)
+						cmd = exec.Command("kubectl", "apply", "-f", "-")
+						cmd.Stdin = strings.NewReader(deploymentInfo.ServiceYAML)
+						if err := cmd.Run(); err != nil {
+							fmt.Printf("%s Warning: Error creating service for '%s': %v\n", yellow("⚠️"), component.Name, err)
+							fmt.Println(yellow("Continuing despite service creation error..."))
+						} else {
+							// Show port information
+							if len(component.Ports) > 0 {
+								for _, port := range component.Ports {
+									if port.NodePort != 0 {
+										fmt.Printf("  Service exposed on NodePort %d (container port %d)\n", port.NodePort, port.ContainerPort)
+									}
+								}
+							}
+						}
+					}
+
 					// Wait for deployment to be available
 					err = waitForDeployment(deploymentInfo.Namespace, component.Name, 5)
 					if err != nil {

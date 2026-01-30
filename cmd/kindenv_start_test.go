@@ -562,6 +562,245 @@ func TestCustomComponentBasicDeployment(t *testing.T) {
 	}
 }
 
+// T038: Integration test for secret-based MySQL connection
+func TestCustomComponentWithSecretReferences(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	
+	tests := []struct {
+		name        string
+		component   kindenv.CustomComponent
+		expectError bool
+		checkYAML   func(*testing.T, string)
+		skipIfNoCluster bool
+	}{
+		{
+			name: "component with secretKeyRef for MySQL connection",
+			component: kindenv.CustomComponent{
+				Name:  "mysql-client",
+				Image: "mysql:8.0",
+				Env: []kindenv.EnvVar{
+					{
+						Name:  "MYSQL_HOST",
+						Value: "mysql.mysql.svc.cluster.local",
+					},
+					{
+						Name: "MYSQL_PASSWORD",
+						ValueFrom: &kindenv.EnvVarSource{
+							SecretKeyRef: &kindenv.SecretKeySelector{
+								Name: "mysql-secret",
+								Key:  "password",
+							},
+						},
+					},
+					{
+						Name: "MYSQL_USER",
+						ValueFrom: &kindenv.EnvVarSource{
+							SecretKeyRef: &kindenv.SecretKeySelector{
+								Name: "mysql-secret",
+								Key:  "username",
+							},
+						},
+					},
+				},
+			},
+			expectError: false,
+			skipIfNoCluster: true,
+			checkYAML: func(t *testing.T, yaml string) {
+				assert.Contains(t, yaml, "name: mysql-client", "YAML should contain component name")
+				assert.Contains(t, yaml, "MYSQL_HOST", "YAML should contain direct env var")
+				assert.Contains(t, yaml, "mysql.mysql.svc.cluster.local", "YAML should contain direct env var value")
+				assert.Contains(t, yaml, "MYSQL_PASSWORD", "YAML should contain secret ref env var")
+				assert.Contains(t, yaml, "valueFrom", "YAML should contain valueFrom")
+				assert.Contains(t, yaml, "secretKeyRef", "YAML should contain secretKeyRef")
+				assert.Contains(t, yaml, "mysql-secret", "YAML should contain secret name")
+			},
+		},
+		{
+			name: "component with secretKeyRef - validation error when secret missing",
+			component: kindenv.CustomComponent{
+				Name:  "test-app",
+				Image: "nginx:latest",
+				Env: []kindenv.EnvVar{
+					{
+						Name: "DB_PASSWORD",
+						ValueFrom: &kindenv.EnvVarSource{
+							SecretKeyRef: &kindenv.SecretKeySelector{
+								Name: "nonexistent-secret",
+								Key:  "password",
+							},
+						},
+					},
+				},
+			},
+			expectError: true,
+			skipIfNoCluster: false, // This test should run even without cluster to test validation
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set defaults
+			tt.component.SetDefaults()
+
+			// Validate component structure
+			err := tt.component.Validate()
+			assert.NoError(t, err, "Component structure should be valid")
+
+			// Generate deployment YAML (this will trigger secret validation)
+			config := &kindenv.KindEnvConfig{
+				CustomComponents: []kindenv.CustomComponent{tt.component},
+			}
+
+			deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+			if tt.expectError {
+				assert.Error(t, err, "Expected deployment error due to missing secret")
+				assert.Contains(t, err.Error(), "references secrets that do not exist", "Error should mention missing secrets")
+				return
+			}
+
+			// If we expect success but cluster might not be available, skip gracefully
+			if tt.skipIfNoCluster && err != nil {
+				if strings.Contains(err.Error(), "references secrets that do not exist") {
+					t.Skip("Skipping test: secret validation requires a running cluster with the secret")
+				}
+			}
+
+			assert.NoError(t, err, "Deployment should succeed")
+			assert.Len(t, deploymentInfos, 1, "Should have one deployment info")
+
+			deploymentInfo := deploymentInfos[0]
+			assert.Equal(t, tt.component.Name, deploymentInfo.Name, "Deployment name should match")
+			assert.NotEmpty(t, deploymentInfo.DeploymentYAML, "Deployment YAML should not be empty")
+
+			// Check YAML content
+			if tt.checkYAML != nil {
+				tt.checkYAML(t, deploymentInfo.DeploymentYAML)
+			}
+		})
+	}
+}
+
+// T053: Integration test for port accessibility
+func TestCustomComponentWithPortMappings(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+
+	tests := []struct {
+		name        string
+		component   kindenv.CustomComponent
+		expectError bool
+		checkYAML   func(*testing.T, string, string) // deploymentYAML, serviceYAML
+	}{
+		{
+			name: "component with single port mapping",
+			component: kindenv.CustomComponent{
+				Name:  "web-app",
+				Image: "nginx:latest",
+				Ports: []kindenv.PortMapping{
+					{
+						ContainerPort: 8080,
+						Protocol:      "TCP",
+					},
+				},
+			},
+			expectError: false,
+			checkYAML: func(t *testing.T, deploymentYAML, serviceYAML string) {
+				// Check deployment has container port
+				assert.Contains(t, deploymentYAML, "containerPort: 8080", "Deployment should contain container port")
+				// Check service YAML exists and has NodePort
+				assert.NotEmpty(t, serviceYAML, "Service YAML should be generated")
+				assert.Contains(t, serviceYAML, "kind: Service", "Service YAML should be a Service")
+				assert.Contains(t, serviceYAML, "type: NodePort", "Service should be NodePort type")
+				assert.Contains(t, serviceYAML, "port: 8080", "Service should expose port 8080")
+			},
+		},
+		{
+			name: "component with multiple port mappings",
+			component: kindenv.CustomComponent{
+				Name:  "multi-port-app",
+				Image: "nginx:latest",
+				Ports: []kindenv.PortMapping{
+					{
+						ContainerPort: 8080,
+						Protocol:      "TCP",
+					},
+					{
+						ContainerPort: 8443,
+						Protocol:      "TCP",
+					},
+				},
+			},
+			expectError: false,
+			checkYAML: func(t *testing.T, deploymentYAML, serviceYAML string) {
+				assert.Contains(t, deploymentYAML, "containerPort: 8080", "Deployment should contain port 8080")
+				assert.Contains(t, deploymentYAML, "containerPort: 8443", "Deployment should contain port 8443")
+				assert.NotEmpty(t, serviceYAML, "Service YAML should be generated")
+				assert.Contains(t, serviceYAML, "port: 8080", "Service should expose port 8080")
+				assert.Contains(t, serviceYAML, "port: 8443", "Service should expose port 8443")
+			},
+		},
+		{
+			name: "component with explicit NodePort",
+			component: kindenv.CustomComponent{
+				Name:  "explicit-port-app",
+				Image: "nginx:latest",
+				Ports: []kindenv.PortMapping{
+					{
+						ContainerPort: 8080,
+						NodePort:      30001,
+						Protocol:     "TCP",
+					},
+				},
+			},
+			expectError: false,
+			checkYAML: func(t *testing.T, deploymentYAML, serviceYAML string) {
+				assert.Contains(t, serviceYAML, "nodePort: 30001", "Service should use specified NodePort")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set defaults
+			tt.component.SetDefaults()
+
+			// Validate component
+			err := tt.component.Validate()
+			if tt.expectError {
+				assert.Error(t, err, "Expected validation error")
+				return
+			}
+			assert.NoError(t, err, "Component should be valid")
+
+			// Generate deployment info
+			config := &kindenv.KindEnvConfig{
+				CustomComponents: []kindenv.CustomComponent{tt.component},
+			}
+
+			deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+			if tt.expectError {
+				assert.Error(t, err, "Expected deployment error")
+				return
+			}
+
+			assert.NoError(t, err, "Deployment should succeed")
+			assert.Len(t, deploymentInfos, 1, "Should have one deployment info")
+
+			deploymentInfo := deploymentInfos[0]
+			assert.Equal(t, tt.component.Name, deploymentInfo.Name, "Deployment name should match")
+			assert.NotEmpty(t, deploymentInfo.DeploymentYAML, "Deployment YAML should not be empty")
+
+			// Check YAML content
+			if tt.checkYAML != nil {
+				tt.checkYAML(t, deploymentInfo.DeploymentYAML, deploymentInfo.ServiceYAML)
+			}
+		})
+	}
+}
+
 // Helper function for creating int pointers
 func intPtr(i int) *int {
 	return &i

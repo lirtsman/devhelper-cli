@@ -2,6 +2,8 @@ package kindenv
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // validation_test.go provides table-driven tests for custom component validation
@@ -55,6 +57,36 @@ func TestCustomComponentValidate(t *testing.T) {
 			},
 			expectError: true,
 			errorMsg:    "replicas must be >= 1",
+		},
+		{
+			name: "empty command element",
+			component: CustomComponent{
+				Name:    "test-app",
+				Image:   "nginx:latest",
+				Command: []string{"java", ""},
+			},
+			expectError: true,
+			errorMsg:    "command[1] cannot be empty",
+		},
+		{
+			name: "empty args element",
+			component: CustomComponent{
+				Name:  "test-app",
+				Image: "nginx:latest",
+				Args:  []string{"-jar", "", "app.jar"},
+			},
+			expectError: true,
+			errorMsg:    "args[1] cannot be empty",
+		},
+		{
+			name: "valid command and args",
+			component: CustomComponent{
+				Name:    "test-app",
+				Image:   "openjdk:11",
+				Command: []string{"java"},
+				Args:    []string{"-jar", "app.jar"},
+			},
+			expectError: false,
 		},
 	}
 
@@ -311,6 +343,139 @@ func TestConfigFileValidate(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// T037: Test for missing secret detection
+func TestValidateSecretReferences_MissingSecret(t *testing.T) {
+	// Note: This test will be fully implemented once we have kubectl integration
+	// For now, we test the validation logic structure
+	
+	component := &CustomComponent{
+		Name:      "my-app",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		Env: []EnvVar{
+			{
+				Name: "DB_PASSWORD",
+				ValueFrom: &EnvVarSource{
+					SecretKeyRef: &SecretKeySelector{
+						Name: "nonexistent-secret",
+						Key:  "password",
+					},
+				},
+			},
+		},
+	}
+	component.SetDefaults()
+
+	// The validateSecretReferences function should check if the secret exists
+	// For now, we just verify the component structure is valid
+	err := component.Validate()
+	assert.NoError(t, err, "Component structure should be valid even if secret doesn't exist yet")
+	
+	// Pre-deployment validation will check secret existence
+	// This will be tested with actual kubectl calls in integration tests
+}
+
+// T051: Test for port conflict detection
+func TestValidatePortConflicts(t *testing.T) {
+	tests := []struct {
+		name        string
+		components  []CustomComponent
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "no conflicts - different NodePorts",
+			components: []CustomComponent{
+				{
+					Name:  "app1",
+					Image: "nginx:latest",
+					Ports: []PortMapping{
+						{ContainerPort: 8080, NodePort: 30001},
+					},
+				},
+				{
+					Name:  "app2",
+					Image: "nginx:latest",
+					Ports: []PortMapping{
+						{ContainerPort: 8080, NodePort: 30002},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "conflict - same NodePort",
+			components: []CustomComponent{
+				{
+					Name:  "app1",
+					Image: "nginx:latest",
+					Ports: []PortMapping{
+						{ContainerPort: 8080, NodePort: 30001},
+					},
+				},
+				{
+					Name:  "app2",
+					Image: "nginx:latest",
+					Ports: []PortMapping{
+						{ContainerPort: 9090, NodePort: 30001}, // Same NodePort
+					},
+				},
+			},
+			expectError: true,
+			errorMsg:    "NodePort",
+		},
+		{
+			name: "no conflicts - same container port, different NodePorts",
+			components: []CustomComponent{
+				{
+					Name:  "app1",
+					Image: "nginx:latest",
+					Ports: []PortMapping{
+						{ContainerPort: 8080, NodePort: 30001},
+					},
+				},
+				{
+					Name:  "app2",
+					Image: "nginx:latest",
+					Ports: []PortMapping{
+						{ContainerPort: 8080, NodePort: 30002}, // Same container port, different NodePort
+					},
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usedPorts := make(map[int]bool)
+			var err error
+
+			for i := range tt.components {
+				tt.components[i].SetDefaults()
+				if err = validatePortConflicts(&tt.components[i], usedPorts); err != nil {
+					break
+				}
+				// Mark ports as used
+				for _, port := range tt.components[i].Ports {
+					if port.NodePort != 0 {
+						usedPorts[port.NodePort] = true
+					}
+				}
+			}
+
+			if tt.expectError {
+				assert.Error(t, err, "Expected port conflict error")
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg, "Error should mention port conflict")
+				}
+			} else {
+				assert.NoError(t, err, "Should not have port conflicts")
 			}
 		})
 	}

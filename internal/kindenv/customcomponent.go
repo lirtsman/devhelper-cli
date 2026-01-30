@@ -16,6 +16,7 @@ import (
 type DeploymentInfo struct {
 	Component      CustomComponent
 	DeploymentYAML string
+	ServiceYAML    string // Service YAML if ports are configured
 	Namespace      string
 	Name           string
 }
@@ -47,9 +48,37 @@ func DeployCustomComponents(ctx context.Context, config *KindEnvConfig) ([]Deplo
 		// Set defaults
 		component.SetDefaults()
 
-		// Validate component
+		// Validate component configuration
 		if err := component.Validate(); err != nil {
 			return nil, fmt.Errorf("validation failed for component '%s': %w", component.Name, err)
+		}
+
+		// Validate secret references exist (pre-deployment check)
+		if err := validateSecretReferences(ctx, component); err != nil {
+			return nil, fmt.Errorf("pre-deployment validation failed for component '%s': %w", component.Name, err)
+		}
+
+		// Assign ports and validate conflicts
+		usedPorts := make(map[int]bool)
+		if len(component.Ports) > 0 {
+			// Collect used ports from other components
+			for j := 0; j < i; j++ {
+				for _, port := range enabledComponents[j].Ports {
+					if port.NodePort != 0 {
+						usedPorts[port.NodePort] = true
+					}
+				}
+			}
+
+			// Validate port conflicts
+			if err := validatePortConflicts(component, usedPorts); err != nil {
+				return nil, fmt.Errorf("port conflict detected for component '%s': %w", component.Name, err)
+			}
+
+			// Assign ports (auto-assign NodePorts if needed)
+			if err := assignPorts(component, usedPorts); err != nil {
+				return nil, fmt.Errorf("failed to assign ports for component '%s': %w", component.Name, err)
+			}
 		}
 
 		// Generate deployment YAML
@@ -58,9 +87,19 @@ func DeployCustomComponents(ctx context.Context, config *KindEnvConfig) ([]Deplo
 			return nil, fmt.Errorf("failed to generate deployment YAML for component '%s': %w", component.Name, err)
 		}
 
+		// Generate service YAML if ports are configured
+		var serviceYAML string
+		if len(component.Ports) > 0 {
+			serviceYAML, err = generateServiceYAML(component)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate service YAML for component '%s': %w", component.Name, err)
+			}
+		}
+
 		deploymentInfos = append(deploymentInfos, DeploymentInfo{
 			Component:      *component,
 			DeploymentYAML: deploymentYAML,
+			ServiceYAML:    serviceYAML,
 			Namespace:      component.Namespace,
 			Name:           component.Name,
 		})
@@ -297,6 +336,151 @@ func generateDeploymentYAML(component *CustomComponent) (string, error) {
 	yamlBytes, err := yaml.Marshal(deployment)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal deployment to YAML: %w", err)
+	}
+
+	return string(yamlBytes), nil
+}
+
+// assignPorts assigns NodePort and HostPort values to ports that don't have them specified
+func assignPorts(component *CustomComponent, usedPorts map[int]bool) error {
+	for i := range component.Ports {
+		port := &component.Ports[i]
+
+		// Auto-assign NodePort if not specified
+		if port.NodePort == 0 {
+			nodePort, err := findAvailableNodePort(usedPorts)
+			if err != nil {
+				return fmt.Errorf("failed to assign NodePort for component '%s': %w", component.Name, err)
+			}
+			port.NodePort = nodePort
+			usedPorts[nodePort] = true
+		} else {
+			// Validate specified NodePort is not in use
+			if usedPorts[port.NodePort] {
+				return fmt.Errorf("NodePort %d is already in use (component: %s)", port.NodePort, component.Name)
+			}
+			usedPorts[port.NodePort] = true
+		}
+
+		// Default HostPort to ContainerPort if not specified
+		if port.HostPort == 0 {
+			port.HostPort = port.ContainerPort
+		}
+	}
+
+	return nil
+}
+
+// findAvailableNodePort finds an available NodePort in the range 30000-32767
+func findAvailableNodePort(usedPorts map[int]bool) (int, error) {
+	// Start from 30000 and find first available port
+	for port := 30000; port <= 32767; port++ {
+		if !usedPorts[port] {
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("no available NodePort in range 30000-32767")
+}
+
+// ServiceYAML represents the Kubernetes Service structure for YAML generation
+type ServiceYAML struct {
+	APIVersion string            `yaml:"apiVersion"`
+	Kind       string            `yaml:"kind"`
+	Metadata   ServiceMetadata   `yaml:"metadata"`
+	Spec       ServiceSpec       `yaml:"spec"`
+}
+
+// ServiceMetadata represents service metadata
+type ServiceMetadata struct {
+	Name      string            `yaml:"name"`
+	Namespace string            `yaml:"namespace"`
+	Labels    map[string]string `yaml:"labels,omitempty"`
+}
+
+// ServiceSpec represents service specification
+type ServiceSpec struct {
+	Type     string            `yaml:"type"`
+	Selector map[string]string `yaml:"selector"`
+	Ports    []ServicePortYAML `yaml:"ports"`
+}
+
+// ServicePortYAML represents a service port
+type ServicePortYAML struct {
+	Name       string `yaml:"name,omitempty"`
+	Protocol   string `yaml:"protocol"`
+	Port       int    `yaml:"port"`
+	TargetPort int    `yaml:"targetPort"`
+	NodePort   int    `yaml:"nodePort,omitempty"`
+}
+
+// generateServiceYAML generates Kubernetes Service YAML for a custom component
+func generateServiceYAML(component *CustomComponent) (string, error) {
+	if len(component.Ports) == 0 {
+		return "", nil // No service needed if no ports
+	}
+
+	// Build labels (same as deployment)
+	labels := make(map[string]string)
+	labels["app"] = component.Name
+	labels["managed-by"] = "kindenv"
+	labels["component-type"] = "custom"
+	for k, v := range component.Labels {
+		labels[k] = v
+	}
+
+	// Build selector (same as deployment)
+	selector := map[string]string{
+		"app":        component.Name,
+		"managed-by": "kindenv",
+	}
+
+	// Build service ports
+	var servicePorts []ServicePortYAML
+	for _, port := range component.Ports {
+		protocol := port.Protocol
+		if protocol == "" {
+			protocol = "TCP"
+		}
+
+		servicePort := ServicePortYAML{
+			Protocol:   strings.ToUpper(protocol),
+			Port:       port.ContainerPort,
+			TargetPort: port.ContainerPort,
+		}
+
+		// Add name if multiple ports
+		if len(component.Ports) > 1 {
+			servicePort.Name = fmt.Sprintf("port-%d", port.ContainerPort)
+		}
+
+		// Add NodePort if specified
+		if port.NodePort != 0 {
+			servicePort.NodePort = port.NodePort
+		}
+
+		servicePorts = append(servicePorts, servicePort)
+	}
+
+	// Build service
+	service := ServiceYAML{
+		APIVersion: "v1",
+		Kind:       "Service",
+		Metadata: ServiceMetadata{
+			Name:      component.Name,
+			Namespace: component.Namespace,
+			Labels:    labels,
+		},
+		Spec: ServiceSpec{
+			Type:     "NodePort",
+			Selector: selector,
+			Ports:    servicePorts,
+		},
+	}
+
+	// Marshal to YAML
+	yamlBytes, err := yaml.Marshal(service)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal service to YAML: %w", err)
 	}
 
 	return string(yamlBytes), nil
