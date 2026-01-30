@@ -104,8 +104,8 @@ type KindEnvConfig struct {
 			} `yaml:"nodePorts"`
 		} `yaml:"openSearchDashboards"`
 		TemporalWorkerOperator struct {
-			Enabled          bool   `yaml:"enabled"`
-			ChartVersion     string `yaml:"chartVersion"`
+			Enabled           bool   `yaml:"enabled"`
+			ChartVersion      string `yaml:"chartVersion"`
 			TemporalNamespace string `yaml:"temporalNamespace"`
 		} `yaml:"temporalWorkerOperator"`
 		IndicesOperator struct {
@@ -146,6 +146,8 @@ type KindEnvConfig struct {
 			EcrRegistry string `yaml:"ecrRegistry"`
 			Profile     string `yaml:"profile"`
 		} `yaml:"aws"`
+		UseHarbor      bool   `yaml:"useHarbor"`
+		HarborRegistry string `yaml:"harborRegistry"`
 	} `yaml:"images"`
 	Secrets struct {
 		MySQL struct {
@@ -168,18 +170,18 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Cluster.CreateIfNotExists = true
 
 	// Set component defaults
-	config.Components.Temporal.Enabled = true
+	config.Components.Temporal.Enabled = false
 	config.Components.Temporal.Namespace = "temporal"
 	config.Components.Temporal.ChartVersion = "0.62.0"
 	config.Components.Temporal.NodePorts.Web = 30080
 	config.Components.Temporal.NodePorts.Frontend = 30733
 
-	config.Components.Redis.Enabled = true
+	config.Components.Redis.Enabled = false
 	config.Components.Redis.NodePorts.Redis = 30679
 	config.Components.Redis.ChartVersion = "17.3.7"
 	config.Components.Redis.Auth.Enabled = false
 
-	config.Components.Dapr.Enabled = true
+	config.Components.Dapr.Enabled = false
 	config.Components.Dapr.ChartVersion = "1.15.3"
 	config.Components.Dapr.NodePorts.Dashboard = 30479
 	config.Components.Dapr.LogLevel = "debug"
@@ -196,7 +198,7 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Components.OpenSearchDashboards.Version = "2.17.1"
 	config.Components.OpenSearchDashboards.NodePorts.Http = 30601
 
-	config.Components.MySQL.Enabled = false
+	config.Components.MySQL.Enabled = true
 	config.Components.MySQL.Namespace = "mysql"
 	config.Components.MySQL.ChartVersion = "9.4.6"
 	config.Components.MySQL.Database = "mysql"
@@ -345,18 +347,16 @@ func generateDefaultPortMappings(config *KindEnvConfig) []struct {
 		})
 	}
 
-	// Add MySQL if enabled
-	if config.Components.MySQL.Enabled {
-		mappings = append(mappings, struct {
-			ContainerPort interface{} `yaml:"containerPort"`
-			HostPort      int         `yaml:"hostPort"`
-			Protocol      string      `yaml:"protocol"`
-		}{
-			ContainerPort: "${{ components.mysql.nodePorts.mysql }}",
-			HostPort:      3306,
-			Protocol:      "TCP",
-		})
-	}
+	// Add MySQL port mapping (always include, even if disabled, so users can see what will be mapped)
+	mappings = append(mappings, struct {
+		ContainerPort interface{} `yaml:"containerPort"`
+		HostPort      int         `yaml:"hostPort"`
+		Protocol      string      `yaml:"protocol"`
+	}{
+		ContainerPort: "${{ components.mysql.nodePorts.mysql }}",
+		HostPort:      3306,
+		Protocol:      "TCP",
+	})
 
 	return mappings
 }
@@ -570,18 +570,18 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Cluster.CreateIfNotExists = true
 
 	// Components section
-	config.Components.Temporal.Enabled = true
+	config.Components.Temporal.Enabled = false
 	config.Components.Temporal.Namespace = "temporal"
 	config.Components.Temporal.ChartVersion = "0.62.0"
 	config.Components.Temporal.NodePorts.Web = 30080
 	config.Components.Temporal.NodePorts.Frontend = 30733
 
-	config.Components.Redis.Enabled = true
+	config.Components.Redis.Enabled = false
 	config.Components.Redis.NodePorts.Redis = 30679
 	config.Components.Redis.ChartVersion = "17.3.7"
 	config.Components.Redis.Auth.Enabled = false
 
-	config.Components.Dapr.Enabled = true
+	config.Components.Dapr.Enabled = false
 	config.Components.Dapr.ChartVersion = "1.15.3"
 	config.Components.Dapr.NodePorts.Dashboard = 30479
 	config.Components.Dapr.LogLevel = "debug"
@@ -600,7 +600,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.OpenSearchDashboards.Version = "2.17.1"
 	config.Components.OpenSearchDashboards.NodePorts.Http = 30601
 
-	config.Components.MySQL.Enabled = false
+	config.Components.MySQL.Enabled = true
 	config.Components.MySQL.Namespace = "mysql"
 	config.Components.MySQL.ChartVersion = "9.4.6"
 	config.Components.MySQL.Database = "mysql"
@@ -628,6 +628,8 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Images.AWS.Region = "eu-west-1"
 	config.Images.AWS.EcrRegistry = "992979781608.dkr.ecr.eu-west-1.amazonaws.com"
 	config.Images.AWS.Profile = ""
+	config.Images.UseHarbor = true // Harbor is used for third-party components (MySQL, Redis, OpenSearch, etc.)
+	config.Images.HarborRegistry = "harbor.shieldfis.com"
 
 	// Secrets section
 	config.Secrets.MySQL.Enabled = true

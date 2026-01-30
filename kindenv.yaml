@@ -1,0 +1,124 @@
+tools:
+    podman:
+        path: /opt/homebrew/bin/podman
+        version: 5.6.0
+    docker:
+        path: /opt/homebrew/bin/docker
+        version: 29.1.5,
+    kind:
+        path: /opt/homebrew/bin/kind
+        version: version
+    kubectl:
+        path: /usr/local/bin/kubectl
+        version: ""
+    helm:
+        path: /opt/homebrew/bin/helm
+        version: ""
+    aws:
+        path: /opt/homebrew/bin/aws
+        version: aws-cli/2.27.55 Python/3.13.9 Darwin/24.6.0 source/arm64
+cluster:
+    name: devhelper-cli
+    createIfNotExists: true
+    mapPorts:
+        - containerPort: ${{ components.temporal.nodePorts.web }}
+          hostPort: 8080
+          protocol: TCP
+        - containerPort: ${{ components.temporal.nodePorts.frontend }}
+          hostPort: 7233
+          protocol: TCP
+        - containerPort: ${{ components.dapr.nodePorts.dashboard }}
+          hostPort: 3500
+          protocol: TCP
+        - containerPort: ${{ components.openSearch.nodePorts.rest }}
+          hostPort: 9200
+          protocol: TCP
+        - containerPort: ${{ components.openSearchDashboards.nodePorts.http }}
+          hostPort: 5601
+          protocol: TCP
+        - containerPort: ${{ components.mysql.nodePorts.mysql }}
+          hostPort: 3306
+          protocol: TCP
+components:
+    temporal:
+        enabled: false
+        namespace: temporal
+        chartVersion: 0.62.0
+        nodePorts:
+            web: 30080
+            frontend: 30733
+    redis:
+        enabled: false
+        nodePorts:
+            redis: 30679
+        chartVersion: 17.3.7
+        auth:
+            enabled: false
+    dapr:
+        enabled: false
+        chartVersion: 1.15.3
+        nodePorts:
+            dashboard: 30479
+        logLevel: debug
+        mtls:
+            enabled: false
+        ha:
+            enabled: false
+    openSearch:
+        enabled: true
+        namespace: opensearch
+        version: 2.17.1
+        nodePorts:
+            rest: 30920
+        security:
+            disabled: true
+        indexManagement:
+            enabled: true
+    openSearchDashboards:
+        enabled: true
+        namespace: opensearch
+        version: 2.17.1
+        nodePorts:
+            http: 30601
+    temporalWorkerOperator:
+        enabled: false
+        chartVersion: 0.1.46-dev
+        temporalNamespace: default
+    indicesOperator:
+        enabled: false
+        chartVersion: 0.1.79-dev
+    metricsServer:
+        enabled: true
+        chartVersion: 3.10.0
+    mysql:
+        enabled: true
+        namespace: mysql
+        chartVersion: 9.4.6
+        database: mysql
+        nodePorts:
+            mysql: 30306
+        resources:
+            cpu: 500m
+            memory: 1Gi
+        persistence:
+            enabled: false
+            size: 8Gi
+images:
+    skipPull: false
+    dockerHub:
+        username: ""
+        password: ""
+    useAwsEcr: true
+    aws:
+        region: eu-west-1
+        ecrRegistry: 992979781608.dkr.ecr.eu-west-1.amazonaws.com
+        profile: ""
+    useHarbor: true
+    harborRegistry: harbor.shieldfis.com
+secrets:
+    mysql:
+        enabled: true
+        name: kvv2-mysql
+        namespace: default
+        username: root
+        password: password

@@ -121,7 +121,8 @@ if config.Components.MySQL.Enabled {
         "--set", fmt.Sprintf("primary.persistence.enabled=%t", config.Components.MySQL.Persistence.Enabled),
         "--set", fmt.Sprintf("primary.resources.requests.cpu=%s", config.Components.MySQL.Resources.CPU),
         "--set", fmt.Sprintf("primary.resources.requests.memory=%s", config.Components.MySQL.Resources.Memory),
-        "--set", "secondary.replicaCount=0",
+        "--set", "replica.replicaCount=0",
+        "--set", "networkPolicy.enabled=false",
     }
 
     // Add secret configuration if MySQL secrets are enabled
