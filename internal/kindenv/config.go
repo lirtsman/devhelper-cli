@@ -132,6 +132,7 @@ type KindEnvConfig struct {
 				Enabled bool   `yaml:"enabled"`
 				Size    string `yaml:"size"`
 			} `yaml:"persistence"`
+			InitScripts map[string]string `yaml:"initScripts,omitempty"` // Map of filename -> SQL script content
 		} `yaml:"mysql"`
 	} `yaml:"components"`
 	Images struct {
@@ -158,6 +159,188 @@ type KindEnvConfig struct {
 			Password  string `yaml:"password"`
 		} `yaml:"mysql"`
 	} `yaml:"secrets"`
+	// CustomComponents defines user-configured services to deploy
+	CustomComponents []CustomComponent `yaml:"customComponents,omitempty"`
+}
+
+// CustomComponent defines a user-configured service deployment
+// CustomComponent defines a user-deployed service in the Kind environment.
+// It supports container images, environment variables, port mappings, resource limits,
+// and configuration file mounting.
+type CustomComponent struct {
+	// Identity
+	Name      string `yaml:"name" json:"name"`
+	Enabled   *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Namespace string `yaml:"namespace" json:"namespace"`
+
+	// Container Specification
+	Image   string   `yaml:"image" json:"image"`
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
+	Args    []string `yaml:"args,omitempty" json:"args,omitempty"`
+
+	// Configuration
+	Env         []EnvVar              `yaml:"env,omitempty" json:"env,omitempty"`
+	Ports       []PortMapping         `yaml:"ports,omitempty" json:"ports,omitempty"`
+	Resources   *ResourceRequirements `yaml:"resources,omitempty" json:"resources,omitempty"`
+	ConfigFiles []ConfigFile          `yaml:"configFiles,omitempty" json:"configFiles,omitempty"`
+
+	// Scaling and Metadata
+	Replicas    *int              `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
+}
+
+// EnvVar defines an environment variable for a container
+type EnvVar struct {
+	Name      string        `yaml:"name" json:"name"`
+	Value     string        `yaml:"value,omitempty" json:"value,omitempty"`
+	ValueFrom *EnvVarSource `yaml:"valueFrom,omitempty" json:"valueFrom,omitempty"`
+}
+
+// EnvVarSource defines the source for an environment variable value
+type EnvVarSource struct {
+	SecretKeyRef *SecretKeySelector `yaml:"secretKeyRef,omitempty" json:"secretKeyRef,omitempty"`
+}
+
+// SecretKeySelector selects a key from a Secret
+type SecretKeySelector struct {
+	Name string `yaml:"name" json:"name"`
+	Key  string `yaml:"key" json:"key"`
+}
+
+// PortMapping defines port exposure for a custom component
+type PortMapping struct {
+	ContainerPort int    `yaml:"containerPort" json:"containerPort"`
+	HostPort      int    `yaml:"hostPort,omitempty" json:"hostPort,omitempty"`
+	Protocol      string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	NodePort      int    `yaml:"nodePort,omitempty" json:"nodePort,omitempty"`
+	ServiceName   string `yaml:"serviceName,omitempty" json:"serviceName,omitempty"`
+}
+
+// ResourceRequirements defines resource requests and limits
+type ResourceRequirements struct {
+	Requests *ResourceList `yaml:"requests,omitempty" json:"requests,omitempty"`
+	Limits   *ResourceList `yaml:"limits,omitempty" json:"limits,omitempty"`
+}
+
+// ResourceList defines CPU and memory resource quantities.
+// Values must follow Kubernetes resource quantity format:
+// CPU: "100m" (100 millicores), "1" (1 core), "2000m" (2 cores)
+// Memory: "128Mi" (128 mebibytes), "1Gi" (1 gibibyte), "512M" (512 megabytes)
+type ResourceList struct {
+	CPU    string `yaml:"cpu,omitempty" json:"cpu,omitempty"`
+	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
+}
+
+// ConfigFile defines a configuration file to be mounted in the container
+type ConfigFile struct {
+	Name     string `yaml:"name" json:"name"`
+	Path     string `yaml:"path" json:"path"`
+	Contents string `yaml:"contents" json:"contents"`
+}
+
+// VolumeSpec defines a volume for mounting in a pod.
+// Only one of ConfigMap or Secret should be set.
+type VolumeSpec struct {
+	Name      string
+	ConfigMap *ConfigMapVolumeSource
+	Secret    *SecretVolumeSource
+}
+
+// ConfigMapVolumeSource defines a ConfigMap volume source for mounting configuration files.
+// DefaultMode specifies file permissions in octal format (e.g., 0644).
+type ConfigMapVolumeSource struct {
+	Name        string
+	DefaultMode int // File permissions (e.g., 0644)
+}
+
+// SecretVolumeSource defines a Secret volume source for mounting secrets.
+// DefaultMode specifies file permissions in octal format (e.g., 0644).
+type SecretVolumeSource struct {
+	Name        string
+	DefaultMode int
+}
+
+// VolumeMountSpec defines how a volume is mounted in a container.
+// SubPath is used to mount individual files from a ConfigMap or Secret volume.
+// ReadOnly should be true for ConfigMaps and Secrets.
+type VolumeMountSpec struct {
+	Name      string
+	MountPath string
+	SubPath   string // For mounting individual files from ConfigMap
+	ReadOnly  bool
+}
+
+// Validate validates the config file configuration
+func (cf *ConfigFile) Validate() error {
+	return ValidateConfigFile(cf)
+}
+
+// Validate validates the environment variable configuration
+func (e *EnvVar) Validate() error {
+	return ValidateEnvVar(e)
+}
+
+// Validate validates the port mapping configuration
+func (p *PortMapping) Validate() error {
+	return ValidatePortMapping(p)
+}
+
+// Validate validates the resource requirements configuration
+func (r *ResourceRequirements) Validate() error {
+	return ValidateResourceRequirements(r)
+}
+
+// Validate validates the custom component configuration
+func (c *CustomComponent) Validate() error {
+	return ValidateCustomComponent(c)
+}
+
+// SetDefaults applies default values to a CustomComponent.
+// Sets namespace to "default", replicas to 1, enabled to true,
+// and applies default resource requirements if not specified.
+func (c *CustomComponent) SetDefaults() {
+	if c.Namespace == "" {
+		c.Namespace = "default"
+	}
+
+	if c.Replicas == nil {
+		replicas := 1
+		c.Replicas = &replicas
+	}
+
+	if c.Resources == nil {
+		c.Resources = defaultResourceRequirements()
+	}
+
+	if c.Labels == nil {
+		c.Labels = make(map[string]string)
+	}
+
+	// Auto-generate standard labels
+	c.Labels["app"] = c.Name
+	c.Labels["managed-by"] = "kindenv"
+	c.Labels["component-type"] = "custom"
+
+	// Default enabled to true if not explicitly set
+	if c.Enabled == nil {
+		enabled := true
+		c.Enabled = &enabled
+	}
+}
+
+// defaultResourceRequirements returns default resource requirements
+func defaultResourceRequirements() *ResourceRequirements {
+	return &ResourceRequirements{
+		Requests: &ResourceList{
+			CPU:    "100m",
+			Memory: "128Mi",
+		},
+		Limits: &ResourceList{
+			CPU:    "500m",
+			Memory: "512Mi",
+		},
+	}
 }
 
 // LoadConfig loads the configuration from a file
@@ -234,6 +417,11 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	// Parse YAML
 	if err := yaml.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// Set defaults for custom components
+	for i := range config.CustomComponents {
+		config.CustomComponents[i].SetDefaults()
 	}
 
 	// Process variable substitutions if mapPorts is provided

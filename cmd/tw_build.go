@@ -67,7 +67,7 @@ Examples:
 		kindLoad, _ := cmd.Flags().GetBool("kind-load")
 
 		if verbose {
-			fmt.Printf("Flags: config=%s, tag=%s, no-cache=%v, args=%v, kind-load=%v\n", 
+			fmt.Printf("Flags: config=%s, tag=%s, no-cache=%v, args=%v, kind-load=%v\n",
 				configPath, tag, noCache, buildArgs, kindLoad)
 		}
 
@@ -158,7 +158,7 @@ Examples:
 		if kindLoad {
 			// Figure out cluster name to use
 			var kindClusterName string
-			
+
 			// First check for kindenv.yaml configuration
 			kindEnvConfig, err := kindenv.LoadConfig("")
 			if err == nil && kindEnvConfig.Cluster.Name != "" {
@@ -169,14 +169,14 @@ Examples:
 				kindClusterName = imageName
 				fmt.Printf("%s Using image name as Kind cluster name: %s\n", yellow("⚙️"), kindClusterName)
 			}
-		
+
 			// Check if the kind command exists
 			_, err = exec.LookPath("kind")
 			if err != nil {
 				fmt.Printf("%s Kind command not found: %v\n", red("❌"), err)
 				os.Exit(1)
 			}
-		
+
 			// Get list of clusters to check if ours exists
 			kindCmd := exec.Command("kind", "get", "clusters")
 			kindOutput, err := kindCmd.Output()
@@ -184,7 +184,7 @@ Examples:
 				fmt.Printf("%s Failed to get Kind clusters: %v\n", red("❌"), err)
 				os.Exit(1)
 			}
-		
+
 			// Check if our cluster exists in the list
 			kindClusters := strings.Split(string(kindOutput), "\n")
 			clusterExists := false
@@ -199,23 +199,23 @@ Examples:
 				fmt.Printf("%s No Kind cluster found with name: %s\n", red("❌"), kindClusterName)
 				os.Exit(1)
 			}
-		
+
 			fmt.Printf("%s Loading image %s into Kind cluster: %s\n", yellow("⚙️"), fullImageName, kindClusterName)
-		
+
 			// Determine if we're using podman or docker
 			containerRuntime := "docker"
-			
+
 			// First check for podman
 			_, podmanErr := exec.LookPath("podman")
 			if podmanErr == nil {
 				containerRuntime = "podman"
 			}
-			
+
 			// Then check for docker, prefer docker if both are available
 			_, dockerErr := exec.LookPath("docker")
 			if dockerErr == nil {
 				containerRuntime = "docker"
-				
+
 				// Use podman if this is running in a podman environment
 				// This detects if we're using kind with its experimental podman provider
 				kindInfoCmd := exec.Command("kind", "version")
@@ -224,13 +224,13 @@ Examples:
 					containerRuntime = "podman"
 				}
 			}
-			
+
 			if verbose {
 				fmt.Printf("Using container runtime: %s\n", containerRuntime)
 			}
-			
+
 			var loadCmd *exec.Cmd
-			
+
 			if containerRuntime == "podman" {
 				fmt.Printf("%s Using podman to load image into Kind cluster...\n", yellow("⚙️"))
 				// For podman, we need to save the image to a tarball first
@@ -240,10 +240,10 @@ Examples:
 					os.Exit(1)
 				}
 				defer os.RemoveAll(tempDir)
-				
+
 				tarballPath := filepath.Join(tempDir, "image.tar")
 				fmt.Printf("%s Saving image to tarball...\n", yellow("⚙️"))
-				
+
 				// Save the image to a tarball
 				saveCmd := exec.Command("podman", "save", "-o", tarballPath, fullImageName)
 				saveCmd.Stdout = os.Stdout
@@ -252,7 +252,7 @@ Examples:
 					fmt.Printf("%s Failed to save image to tarball: %v\n", red("❌"), err)
 					os.Exit(1)
 				}
-				
+
 				// Load the tarball into kind
 				fmt.Printf("%s Loading tarball into Kind cluster...\n", yellow("⚙️"))
 				loadCmd = exec.Command("kind", "load", "image-archive", tarballPath, "--name", kindClusterName)
@@ -260,15 +260,15 @@ Examples:
 				// Using Docker - can load directly
 				loadCmd = exec.Command("kind", "load", "docker-image", fullImageName, "--name", kindClusterName)
 			}
-			
+
 			loadCmd.Stdout = os.Stdout
 			loadCmd.Stderr = os.Stderr
 
 			if err := loadCmd.Run(); err != nil {
 				fmt.Printf("%s Failed to load image %s into Kind cluster: %v\n", red("❌"), fullImageName, err)
 				os.Exit(1)
-			} 
-			
+			}
+
 			fmt.Printf("%s Image %s loaded into Kind cluster %s successfully\n", green("✅"), fullImageName, kindClusterName)
 		}
 	},

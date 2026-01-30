@@ -275,6 +275,35 @@ The `kindenv` command uses a YAML configuration file (by default `kindenv.yaml` 
 - Component settings (Temporal, Redis, Dapr)
 - Image registry configuration (Docker Hub, AWS ECR)
 - Secret management
+- **Custom Components**: Deploy your own services alongside infrastructure components
+
+### Custom Components
+
+Deploy your own services alongside infrastructure components (MySQL, OpenSearch, etc.) in your Kind environment. Custom components support:
+
+- **Container Images**: Deploy any container image (public or private registries)
+- **Environment Variables**: Configure your app with direct values or secret references
+- **Port Mapping**: Expose services to your local machine via NodePort
+- **Resource Limits**: Control CPU and memory usage
+- **Configuration Files**: Mount config files without rebuilding images
+- **Multi-Component**: Deploy multiple services together
+
+**Quick Example:**
+
+```yaml
+customComponents:
+  - name: my-app
+    image: nginx:latest
+    env:
+      - name: APP_ENV
+        value: "development"
+    ports:
+      - containerPort: 80
+        protocol: TCP
+        nodePort: 30088
+```
+
+For detailed documentation and examples, see [CUSTOM_COMPONENTS.md](CUSTOM_COMPONENTS.md).
 
 ### Detailed Command Reference
 

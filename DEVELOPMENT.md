@@ -44,4 +44,97 @@ make lint
 
 ## YAML Package Usage
 
-Throughout the codebase, we use `gopkg.in/yaml.v3` imported with the alias `yamlv3` to avoid potential namespace conflicts. 
+Throughout the codebase, we use `gopkg.in/yaml.v3` imported with the alias `yamlv3` to avoid potential namespace conflicts.
+
+## Custom Components Development
+
+When developing or testing custom components functionality, you can use the following examples:
+
+### Minimal Example
+
+```yaml
+customComponents:
+  - name: test-app
+    image: nginx:latest
+```
+
+### With Environment Variables
+
+```yaml
+customComponents:
+  - name: test-app
+    image: nginx:latest
+    env:
+      - name: TEST_VAR
+        value: "test-value"
+```
+
+### With Port Mapping
+
+```yaml
+customComponents:
+  - name: test-app
+    image: nginx:latest
+    ports:
+      - containerPort: 80
+        protocol: TCP
+        nodePort: 30088
+```
+
+### With Config Files
+
+```yaml
+customComponents:
+  - name: test-app
+    image: nginx:latest
+    configFiles:
+      - name: config.yaml
+        path: /config/config.yaml
+        contents: |
+          key: value
+```
+
+### Complete Example
+
+```yaml
+customComponents:
+  - name: test-app
+    image: nginx:latest
+    namespace: default
+    replicas: 1
+    env:
+      - name: APP_ENV
+        value: "development"
+      - name: DB_HOST
+        valueFrom:
+          secretKeyRef:
+            name: mysql-secret
+            key: host
+    ports:
+      - containerPort: 80
+        protocol: TCP
+        nodePort: 30088
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    configFiles:
+      - name: application.yaml
+        path: /config/application.yaml
+        contents: |
+          server:
+            port: 8080
+```
+
+### Testing Custom Components
+
+1. Add a custom component to your `kindenv.yaml`
+2. Start the environment: `devhelper-cli kindenv start`
+3. Check status: `devhelper-cli kindenv status`
+4. Verify deployment: `kubectl get pods -l component-type=custom`
+5. View logs: `kubectl logs -l app=test-app`
+
+For more examples and detailed documentation, see [CUSTOM_COMPONENTS.md](CUSTOM_COMPONENTS.md) and [specs/002-custom-components/quickstart.md](specs/002-custom-components/quickstart.md). 

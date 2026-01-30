@@ -64,39 +64,39 @@ func TestExtractWorkerTypeFromName(t *testing.T) {
 
 func TestCreateDefaultConfig(t *testing.T) {
 	tests := []struct {
-		name           string
-		projectName    string
-		workerType     string
-		expectedName   string
-		expectedType   string
+		name         string
+		projectName  string
+		workerType   string
+		expectedName string
+		expectedType string
 	}{
 		{
-			name:           "explicit worker type",
-			projectName:    "temporal-ingestion-worker",
-			workerType:     "parser",
-			expectedName:   "temporal-ingestion-worker",
-			expectedType:   "parser",
+			name:         "explicit worker type",
+			projectName:  "temporal-ingestion-worker",
+			workerType:   "parser",
+			expectedName: "temporal-ingestion-worker",
+			expectedType: "parser",
 		},
 		{
-			name:           "extracted worker type",
-			projectName:    "temporal-ingestion-worker",
-			workerType:     "",
-			expectedName:   "temporal-ingestion-worker",
-			expectedType:   "ingestion",
+			name:         "extracted worker type",
+			projectName:  "temporal-ingestion-worker",
+			workerType:   "",
+			expectedName: "temporal-ingestion-worker",
+			expectedType: "ingestion",
 		},
 		{
-			name:           "simple name with no extraction",
-			projectName:    "myworker",
-			workerType:     "",
-			expectedName:   "myworker",
-			expectedType:   "myworker",
+			name:         "simple name with no extraction",
+			projectName:  "myworker",
+			workerType:   "",
+			expectedName: "myworker",
+			expectedType: "myworker",
 		},
 		{
-			name:           "empty name defaults",
-			projectName:    "",
-			workerType:     "",
-			expectedName:   "temporal-worker", // This might be different based on implementation
-			expectedType:   "temporal-worker", // Depends on what name is set to by default
+			name:         "empty name defaults",
+			projectName:  "",
+			workerType:   "",
+			expectedName: "temporal-worker", // This might be different based on implementation
+			expectedType: "temporal-worker", // Depends on what name is set to by default
 		},
 	}
 
@@ -108,14 +108,14 @@ func TestCreateDefaultConfig(t *testing.T) {
 			}
 
 			config := CreateDefaultConfig(tt.projectName, tt.workerType)
-			
+
 			if config.Metadata.Name != tt.expectedName {
-				t.Errorf("CreateDefaultConfig(%q, %q): expected name %q, got %q", 
+				t.Errorf("CreateDefaultConfig(%q, %q): expected name %q, got %q",
 					tt.projectName, tt.workerType, tt.expectedName, config.Metadata.Name)
 			}
-			
+
 			if config.Spec.WorkerType != tt.expectedType {
-				t.Errorf("CreateDefaultConfig(%q, %q): expected worker type %q, got %q", 
+				t.Errorf("CreateDefaultConfig(%q, %q): expected worker type %q, got %q",
 					tt.projectName, tt.workerType, tt.expectedType, config.Spec.WorkerType)
 			}
 		})

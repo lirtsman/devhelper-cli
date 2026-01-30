@@ -57,12 +57,12 @@ type MySQLStatusReporter interface {
 
 // MySQLConfig represents MySQL component configuration
 type MySQLConfig struct {
-	Enabled      bool              `yaml:"enabled"`
-	ChartVersion string            `yaml:"chartVersion"`
-	Database     string            `yaml:"database"`
-	NodePorts    MySQLNodePorts    `yaml:"nodePorts"`
-	Resources    MySQLResources    `yaml:"resources"`
-	Persistence  MySQLPersistence  `yaml:"persistence"`
+	Enabled      bool             `yaml:"enabled"`
+	ChartVersion string           `yaml:"chartVersion"`
+	Database     string           `yaml:"database"`
+	NodePorts    MySQLNodePorts   `yaml:"nodePorts"`
+	Resources    MySQLResources   `yaml:"resources"`
+	Persistence  MySQLPersistence `yaml:"persistence"`
 }
 
 // MySQLNodePorts represents NodePort configuration

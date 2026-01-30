@@ -62,7 +62,7 @@ Example:
 		verbose, _ := cmd.Flags().GetBool("verbose")
 
 		if verbose {
-			fmt.Printf("Flags: output=%s, force=%v, template=%s, name=%s, worker-type=%s\n", 
+			fmt.Printf("Flags: output=%s, force=%v, template=%s, name=%s, worker-type=%s\n",
 				configPath, force, template, workerName, workerType)
 		}
 

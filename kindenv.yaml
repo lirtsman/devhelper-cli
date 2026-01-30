@@ -21,15 +21,6 @@ cluster:
     name: devhelper-cli
     createIfNotExists: true
     mapPorts:
-        - containerPort: ${{ components.temporal.nodePorts.web }}
-          hostPort: 8080
-          protocol: TCP
-        - containerPort: ${{ components.temporal.nodePorts.frontend }}
-          hostPort: 7233
-          protocol: TCP
-        - containerPort: ${{ components.dapr.nodePorts.dashboard }}
-          hostPort: 3500
-          protocol: TCP
         - containerPort: ${{ components.openSearch.nodePorts.rest }}
           hostPort: 9200
           protocol: TCP
@@ -103,6 +94,8 @@ components:
         persistence:
             enabled: false
             size: 8Gi
+        initScripts:
+          init-dss-databases.sql: ./scripts/init-dss-databases.sql
 images:
     skipPull: false
     dockerHub:
@@ -122,3 +115,38 @@ secrets:
         namespace: default
         username: root
         password: password
+customComponents:
+  - name: dss
+    image: 992979781608.dkr.ecr.eu-west-1.amazonaws.com/dss:dev-3846
+    namespace: default
+    enabled: true
+    replicas: 1
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+    # Environment variables
+    env:
+      - name: SPRING_PROFILES_ACTIVE
+        value: "local"
+      - name: SPRING_DATASOURCE_URL
+        value: "jdbc:mysql://mysql.mysql.svc.cluster.local:3306/shieldcoredb"
+      - name: SPRING_DATASOURCE_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: kvv2-mysql
+            key: username
+      - name: SPRING_DATASOURCE_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: kvv2-mysql
+            key: password
+      - name: SEARCH_ENGINE_OPENSEARCH_CLUSTER_URIS
+        value: "http://opensearch.opensearch.svc.cluster.local:9200"
+      - name: SEARCH_ENGINE_OPENSEARCH_CLUSTER_USERNAME
+        value: "admin"
+      - name: SEARCH_ENGINE_OPENSEARCH_CLUSTER_PASSWORD
+        value: "admin"
