@@ -700,7 +700,8 @@ stringData:
 				"--set", "master.service.type=NodePort",
 				"--set", fmt.Sprintf("master.service.nodePorts.redis=%d", config.Components.Redis.NodePorts.Redis),
 				"--set", fmt.Sprintf("auth.enabled=%t", config.Components.Redis.Auth.Enabled),
-				"--set", "replica.replicaCount=0")
+				"--set", "replica.replicaCount=0",
+				"--set", "image.repository=bitnamilegacy/redis")
 			if err != nil {
 				fmt.Printf("%s Error installing Redis: %v\n", red("❌"), err)
 				os.Exit(1)
@@ -755,7 +756,7 @@ stringData:
 			if config.Components.Redis.Auth.Enabled {
 				redisPassword = "redis"
 			}
-			
+
 			kvv2RedisSecretYaml := fmt.Sprintf(`
 apiVersion: v1
 kind: Secret
@@ -1281,7 +1282,7 @@ spec:
 				if config.Components.Redis.Auth.Enabled {
 					redisPassword = "redis"
 				}
-				
+
 				kvv2RedisSecretYaml := fmt.Sprintf(`
 apiVersion: v1
 kind: Secret
@@ -1612,7 +1613,7 @@ stringData:
 		var openSearchPort, openSearchDashboardsPort int
 		if config.Components.OpenSearch.Enabled {
 			openSearchPort = findHostPort(config.Components.OpenSearch.NodePorts.Rest)
-			
+
 			// If port is not found in the mappings, use default
 			if openSearchPort == 0 {
 				openSearchPort = 9200 // Default host port for OpenSearch
@@ -1621,10 +1622,10 @@ stringData:
 				}
 			}
 		}
-		
+
 		if config.Components.OpenSearchDashboards.Enabled {
 			openSearchDashboardsPort = findHostPort(config.Components.OpenSearchDashboards.NodePorts.Http)
-			
+
 			// If port is not found in the mappings, use default
 			if openSearchDashboardsPort == 0 {
 				openSearchDashboardsPort = 5601 // Default host port for OpenSearch Dashboards
