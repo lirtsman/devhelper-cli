@@ -196,6 +196,23 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Components.OpenSearchDashboards.Version = "2.17.1"
 	config.Components.OpenSearchDashboards.NodePorts.Http = 30601
 
+	config.Components.MySQL.Enabled = false
+	config.Components.MySQL.Namespace = "mysql"
+	config.Components.MySQL.ChartVersion = "9.4.6"
+	config.Components.MySQL.Database = "mysql"
+	config.Components.MySQL.NodePorts.MySQL = 30306
+	config.Components.MySQL.Resources.CPU = "500m"
+	config.Components.MySQL.Resources.Memory = "1Gi"
+	config.Components.MySQL.Persistence.Enabled = false
+	config.Components.MySQL.Persistence.Size = "8Gi"
+
+	// Set MySQL secret defaults
+	config.Secrets.MySQL.Enabled = true
+	config.Secrets.MySQL.Name = "mysql-credentials"
+	config.Secrets.MySQL.Namespace = "mysql"
+	config.Secrets.MySQL.Username = "root"
+	config.Secrets.MySQL.Password = "password"
+
 	// If configPath is empty, check if kindenv.yaml exists in the current directory
 	if configPath == "" {
 		if _, err := os.Stat("kindenv.yaml"); err == nil {

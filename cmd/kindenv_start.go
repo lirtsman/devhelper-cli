@@ -658,10 +658,10 @@ metadata:
   namespace: %s
 type: Opaque
 stringData:
-  username: "%s"
-  password: "%s"
+  mysql-root-password: "%s"
+  mysql-password: "%s"
 `, config.Secrets.MySQL.Name, config.Secrets.MySQL.Namespace,
-				config.Secrets.MySQL.Username, config.Secrets.MySQL.Password)
+				config.Secrets.MySQL.Password, config.Secrets.MySQL.Password)
 
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = strings.NewReader(mysqlSecretYaml)
