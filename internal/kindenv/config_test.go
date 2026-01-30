@@ -2,6 +2,8 @@ package kindenv
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -713,5 +715,96 @@ func TestValidatePersistenceConfiguration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Helper functions for testing CustomComponents
+
+func createTempYAMLFile(t *testing.T, content string) string {
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test-config.yaml")
+	err := os.WriteFile(tmpFile, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	return tmpFile
+}
+
+func cleanupTempFile(t *testing.T, path string) {
+	// No-op since we use t.TempDir() which auto-cleans
+}
+
+func TestLoadConfigWithCustomComponents(t *testing.T) {
+	tests := []struct {
+		name        string
+		yamlContent string
+		expectError bool
+		checkFunc   func(*testing.T, *KindEnvConfig)
+	}{
+		{
+			name: "valid custom component with minimal config",
+			yamlContent: `
+customComponents:
+  - name: test-app
+    image: nginx:latest
+`,
+			expectError: false,
+			checkFunc: func(t *testing.T, config *KindEnvConfig) {
+				if len(config.CustomComponents) != 1 {
+					t.Fatalf("expected 1 custom component, got %d", len(config.CustomComponents))
+				}
+				cc := config.CustomComponents[0]
+				if cc.Name != "test-app" {
+					t.Errorf("expected name 'test-app', got '%s'", cc.Name)
+				}
+				if cc.Image != "nginx:latest" {
+					t.Errorf("expected image 'nginx:latest', got '%s'", cc.Image)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile := createTempYAMLFile(t, tt.yamlContent)
+			defer cleanupTempFile(t, tmpFile)
+
+			config, err := LoadConfig(tmpFile)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.checkFunc != nil {
+				tt.checkFunc(t, config)
+			}
+		})
+	}
+}
+
+func TestCustomComponentSetDefaults(t *testing.T) {
+	cc := CustomComponent{
+		Name:  "test-app",
+		Image: "nginx:latest",
+	}
+	cc.SetDefaults()
+
+	if cc.Namespace != "default" {
+		t.Errorf("expected namespace 'default', got '%s'", cc.Namespace)
+	}
+	if cc.Replicas == nil || *cc.Replicas != 1 {
+		t.Errorf("expected replicas 1, got %v", cc.Replicas)
+	}
+	if cc.Enabled == nil || !*cc.Enabled {
+		t.Errorf("expected enabled true, got %v", cc.Enabled)
+	}
+	if cc.Resources == nil {
+		t.Fatal("expected resources to be set")
 	}
 }
