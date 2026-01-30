@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1732,6 +1733,62 @@ stringData:
 				fmt.Println(yellow("You can check again later with:"))
 				fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
 				fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
+			}
+		}
+
+		// Deploy custom components
+		if len(config.CustomComponents) > 0 {
+			fmt.Println(yellow("Deploying custom components..."))
+
+			deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+			if err != nil {
+				fmt.Printf("%s Error preparing custom components: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite custom component preparation errors..."))
+			} else if len(deploymentInfos) > 0 {
+				for _, deploymentInfo := range deploymentInfos {
+					component := deploymentInfo.Component
+
+					// Create namespace if it doesn't exist
+					namespaceYaml, err := executeCommand("kubectl", "create", "namespace", deploymentInfo.Namespace, "--dry-run=client", "-o", "yaml")
+					if err != nil {
+						fmt.Printf("%s Error creating namespace %s: %v\n", red("❌"), deploymentInfo.Namespace, err)
+						continue
+					}
+
+					cmd := exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = strings.NewReader(namespaceYaml)
+					if err := cmd.Run(); err != nil {
+						fmt.Printf("%s Error applying namespace %s: %v\n", red("❌"), deploymentInfo.Namespace, err)
+						continue
+					}
+
+					// Set up ECR credentials if needed
+					if config.Images.UseAwsEcr {
+						err = setupECRCreds(deploymentInfo.Namespace, ecrRegistry, ecrPassword)
+						if err != nil {
+							fmt.Printf("%s Warning: Error setting up ECR credentials for %s: %v\n", yellow("⚠️"), deploymentInfo.Namespace, err)
+							fmt.Println(yellow("Continuing despite ECR credential setup error..."))
+						}
+					}
+
+					// Apply deployment YAML
+					fmt.Printf("Deploying custom component '%s' to namespace '%s'...\n", component.Name, deploymentInfo.Namespace)
+					cmd = exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = strings.NewReader(deploymentInfo.DeploymentYAML)
+					if err := cmd.Run(); err != nil {
+						fmt.Printf("%s Error deploying custom component '%s': %v\n", red("❌"), component.Name, err)
+						continue
+					}
+
+					// Wait for deployment to be available
+					err = waitForDeployment(deploymentInfo.Namespace, component.Name, 5)
+					if err != nil {
+						fmt.Printf("%s Warning: Custom component '%s' deployment not ready: %v\n", yellow("⚠️"), component.Name, err)
+						fmt.Println(yellow("Continuing despite deployment not being ready..."))
+					} else {
+						fmt.Printf("%s Custom component '%s' deployed successfully\n", green("✅"), component.Name)
+					}
+				}
 			}
 		}
 

@@ -30,18 +30,9 @@ func ValidateCustomComponent(component *CustomComponent) error {
 		return fmt.Errorf("custom component '%s': invalid image format '%s' (expected: [registry/]repository[:tag])", component.Name, component.Image)
 	}
 
-	// Namespace validation
-	if component.Namespace == "" {
-		component.Namespace = "default" // Set default
-	}
-
-	// Replicas validation
+	// Replicas validation (only validate if set, don't mutate)
 	if component.Replicas != nil && *component.Replicas < 1 {
 		return fmt.Errorf("custom component '%s': replicas must be >= 1", component.Name)
-	}
-	if component.Replicas == nil {
-		replicas := 1
-		component.Replicas = &replicas
 	}
 
 	// Environment variables validation
@@ -58,13 +49,11 @@ func ValidateCustomComponent(component *CustomComponent) error {
 		}
 	}
 
-	// Resource validation
+	// Resource validation (only validate if set, don't mutate)
 	if component.Resources != nil {
 		if err := ValidateResourceRequirements(component.Resources); err != nil {
 			return fmt.Errorf("custom component '%s': resources: %w", component.Name, err)
 		}
-	} else {
-		component.Resources = defaultResourceRequirements()
 	}
 
 	// Config files validation
@@ -161,12 +150,13 @@ func ValidatePortMapping(port *PortMapping) error {
 		}
 	}
 
-	// Protocol validation
-	if port.Protocol == "" {
-		port.Protocol = "TCP"
+	// Protocol validation (check validity without mutating)
+	protocol := port.Protocol
+	if protocol == "" {
+		protocol = "TCP" // Default, but don't mutate the original
 	}
-	port.Protocol = strings.ToUpper(port.Protocol)
-	if port.Protocol != "TCP" && port.Protocol != "UDP" {
+	protocol = strings.ToUpper(protocol)
+	if protocol != "TCP" && protocol != "UDP" {
 		return fmt.Errorf("protocol must be TCP or UDP, got %s", port.Protocol)
 	}
 
