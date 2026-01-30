@@ -17,6 +17,7 @@ type DeploymentInfo struct {
 	Component      CustomComponent
 	DeploymentYAML string
 	ServiceYAML    string // Service YAML if ports are configured
+	ConfigMapYAML  string // ConfigMap YAML if config files are configured
 	Namespace      string
 	Name           string
 }
@@ -96,10 +97,20 @@ func DeployCustomComponents(ctx context.Context, config *KindEnvConfig) ([]Deplo
 			}
 		}
 
+		// Generate ConfigMap YAML if config files are configured
+		var configMapYAML string
+		if len(component.ConfigFiles) > 0 {
+			configMapYAML, err = generateConfigMapYAML(component)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate ConfigMap YAML for component '%s': %w", component.Name, err)
+			}
+		}
+
 		deploymentInfos = append(deploymentInfos, DeploymentInfo{
 			Component:      *component,
 			DeploymentYAML: deploymentYAML,
 			ServiceYAML:    serviceYAML,
+			ConfigMapYAML:  configMapYAML,
 			Namespace:      component.Namespace,
 			Name:           component.Name,
 		})
@@ -110,10 +121,10 @@ func DeployCustomComponents(ctx context.Context, config *KindEnvConfig) ([]Deplo
 
 // DeploymentYAML represents the Kubernetes Deployment structure for YAML generation
 type DeploymentYAML struct {
-	APIVersion string                 `yaml:"apiVersion"`
-	Kind       string                 `yaml:"kind"`
-	Metadata   DeploymentMetadata     `yaml:"metadata"`
-	Spec       DeploymentSpec         `yaml:"spec"`
+	APIVersion string             `yaml:"apiVersion"`
+	Kind       string             `yaml:"kind"`
+	Metadata   DeploymentMetadata `yaml:"metadata"`
+	Spec       DeploymentSpec     `yaml:"spec"`
 }
 
 // DeploymentMetadata represents deployment metadata
@@ -125,9 +136,9 @@ type DeploymentMetadata struct {
 
 // DeploymentSpec represents deployment specification
 type DeploymentSpec struct {
-	Replicas *int              `yaml:"replicas"`
-	Selector Selector          `yaml:"selector"`
-	Template PodTemplate       `yaml:"template"`
+	Replicas *int        `yaml:"replicas"`
+	Selector Selector    `yaml:"selector"`
+	Template PodTemplate `yaml:"template"`
 }
 
 // Selector represents label selector
@@ -154,13 +165,13 @@ type PodSpec struct {
 
 // Container represents a container specification
 type Container struct {
-	Name      string                 `yaml:"name"`
-	Image     string                 `yaml:"image"`
-	Command   []string               `yaml:"command,omitempty"`
-	Args      []string               `yaml:"args,omitempty"`
-	Env       []EnvVarYAML           `yaml:"env,omitempty"`
-	Ports     []ContainerPort        `yaml:"ports,omitempty"`
-	Resources  *ContainerResources    `yaml:"resources,omitempty"`
+	Name         string              `yaml:"name"`
+	Image        string              `yaml:"image"`
+	Command      []string            `yaml:"command,omitempty"`
+	Args         []string            `yaml:"args,omitempty"`
+	Env          []EnvVarYAML        `yaml:"env,omitempty"`
+	Ports        []ContainerPort     `yaml:"ports,omitempty"`
+	Resources    *ContainerResources `yaml:"resources,omitempty"`
 	VolumeMounts []VolumeMount       `yaml:"volumeMounts,omitempty"`
 }
 
@@ -186,7 +197,7 @@ type ContainerResources struct {
 
 // Volume represents a volume specification
 type Volume struct {
-	Name     string            `yaml:"name"`
+	Name      string           `yaml:"name"`
 	ConfigMap *ConfigMapVolume `yaml:"configMap,omitempty"`
 }
 
@@ -301,12 +312,53 @@ func generateDeploymentYAML(component *CustomComponent) (string, error) {
 		container.Args = component.Args
 	}
 
-	// Build volumes and volume mounts for config files (will be implemented in US6)
-	// For now, we'll leave this empty for User Story 1
+	// Build volumes and volume mounts for config files
+	var volumes []Volume
+	var volumeMounts []VolumeMount
+	if len(component.ConfigFiles) > 0 {
+		// Generate volume specs
+		volumeSpecs, err := generateVolumes(component)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate volumes: %w", err)
+		}
+
+		// Convert VolumeSpec to Volume for YAML generation
+		for _, vs := range volumeSpecs {
+			if vs.ConfigMap != nil {
+				volumes = append(volumes, Volume{
+					Name: vs.Name,
+					ConfigMap: &ConfigMapVolume{
+						Name:        vs.ConfigMap.Name,
+						DefaultMode: vs.ConfigMap.DefaultMode,
+					},
+				})
+			}
+		}
+
+		// Generate volumeMount specs
+		volumeMountSpecs, err := generateVolumeMounts(component)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate volumeMounts: %w", err)
+		}
+
+		// Convert VolumeMountSpec to VolumeMount for YAML generation
+		for _, vms := range volumeMountSpecs {
+			volumeMounts = append(volumeMounts, VolumeMount{
+				Name:      vms.Name,
+				MountPath: vms.MountPath,
+				SubPath:   vms.SubPath,
+				ReadOnly:  vms.ReadOnly,
+			})
+		}
+
+		// Add volumeMounts to container
+		container.VolumeMounts = volumeMounts
+	}
 
 	// Build pod spec
 	podSpec := PodSpec{
 		Containers: []Container{container},
+		Volumes:    volumes,
 	}
 
 	// Build deployment
@@ -384,10 +436,10 @@ func findAvailableNodePort(usedPorts map[int]bool) (int, error) {
 
 // ServiceYAML represents the Kubernetes Service structure for YAML generation
 type ServiceYAML struct {
-	APIVersion string            `yaml:"apiVersion"`
-	Kind       string            `yaml:"kind"`
-	Metadata   ServiceMetadata   `yaml:"metadata"`
-	Spec       ServiceSpec       `yaml:"spec"`
+	APIVersion string          `yaml:"apiVersion"`
+	Kind       string          `yaml:"kind"`
+	Metadata   ServiceMetadata `yaml:"metadata"`
+	Spec       ServiceSpec     `yaml:"spec"`
 }
 
 // ServiceMetadata represents service metadata

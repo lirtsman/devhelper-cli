@@ -25,7 +25,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
 // stopCluster completely stops and deletes a Kind cluster, removing all deployed components
 func stopCluster(clusterName string, verbose bool) error {
 	if verbose {

@@ -261,6 +261,33 @@ func ValidateConfigFile(configFile *ConfigFile) error {
 	return nil
 }
 
+// DetectMountPathOverride checks if a mount path might override existing files in the container
+// Returns true if the path is in a common system directory that might contain existing files
+func DetectMountPathOverride(mountPath string) bool {
+	// Common system directories that might contain existing files
+	systemDirs := []string{
+		"/etc/",
+		"/usr/",
+		"/bin/",
+		"/sbin/",
+		"/lib/",
+		"/lib64/",
+		"/opt/",
+		"/var/",
+		"/root/",
+		"/home/",
+	}
+
+	mountPathLower := strings.ToLower(mountPath)
+	for _, dir := range systemDirs {
+		if strings.HasPrefix(mountPathLower, dir) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // validatePortConflicts validates that ports don't conflict with already used ports
 func validatePortConflicts(component *CustomComponent, usedPorts map[int]bool) error {
 	for _, port := range component.Ports {
@@ -320,21 +347,25 @@ func validateSecretReferences(ctx context.Context, component *CustomComponent) e
 // secretExists checks if a secret exists in the specified namespace using kubectl
 func secretExists(ctx context.Context, namespace, secretName string) (bool, error) {
 	// Use kubectl to check if secret exists
-	// kubectl get secret <name> -n <namespace> --ignore-not-found
+	// kubectl get secret <name> -n <namespace> --ignore-not-found -o name
+	// Output: "secret/secret-name" if exists, empty string if not found
 	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", secretName, "-n", namespace, "--ignore-not-found", "-o", "name")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	
+
 	err := cmd.Run()
 	if err != nil {
 		// If command fails, assume secret doesn't exist
 		return false, nil
 	}
-	
+
 	output := strings.TrimSpace(stdout.String())
-	// If output contains the secret name, it exists
-	return strings.Contains(output, secretName), nil
+	// kubectl -o name outputs "secret/secret-name" when found, empty when not found
+	// Check for exact match: "secret/secretName" to avoid false positives
+	// (e.g., searching for "my-secret" shouldn't match "secret/my-secret-name")
+	expectedOutput := fmt.Sprintf("secret/%s", secretName)
+	return output == expectedOutput, nil
 }
 
 // Helper validation functions

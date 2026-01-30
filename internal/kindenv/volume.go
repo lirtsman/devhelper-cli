@@ -1,7 +1,5 @@
 package kindenv
 
-import "fmt"
-
 // volume.go provides functionality for generating Kubernetes volume and volumeMount
 // specifications for mounting ConfigMaps as volumes in pods.
 
@@ -11,8 +9,17 @@ func generateVolumes(component *CustomComponent) ([]VolumeSpec, error) {
 		return nil, nil
 	}
 
-	// TODO: Implement volume generation
-	return nil, fmt.Errorf("generateVolumes not yet implemented")
+	// Generate a single volume for all config files (ConfigMap contains all files)
+	configMapName := component.Name + "-config"
+	volume := VolumeSpec{
+		Name: configMapName + "-volume",
+		ConfigMap: &ConfigMapVolumeSource{
+			Name:        configMapName,
+			DefaultMode: 0644, // Read-only, 0644 permissions
+		},
+	}
+
+	return []VolumeSpec{volume}, nil
 }
 
 // generateVolumeMounts generates volumeMount specifications for mounting config files
@@ -21,6 +28,19 @@ func generateVolumeMounts(component *CustomComponent) ([]VolumeMountSpec, error)
 		return nil, nil
 	}
 
-	// TODO: Implement volumeMount generation with subPath support
-	return nil, fmt.Errorf("generateVolumeMounts not yet implemented")
+	volumeName := component.Name + "-config-volume"
+	var volumeMounts []VolumeMountSpec
+
+	// Generate a volumeMount for each config file using subPath
+	for _, configFile := range component.ConfigFiles {
+		volumeMount := VolumeMountSpec{
+			Name:      volumeName,
+			MountPath: configFile.Path,
+			SubPath:   configFile.Name, // Mount individual file using subPath
+			ReadOnly:  true,            // ConfigMaps are read-only
+		}
+		volumeMounts = append(volumeMounts, volumeMount)
+	}
+
+	return volumeMounts, nil
 }

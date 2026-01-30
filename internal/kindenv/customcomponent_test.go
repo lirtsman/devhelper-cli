@@ -15,7 +15,7 @@ import (
 func TestGenerateDeploymentYAML_MinimalComponent(t *testing.T) {
 	component := &CustomComponent{
 		Name:      "nginx-test",
-		Image:      "nginx:latest",
+		Image:     "nginx:latest",
 		Namespace: "default",
 	}
 	component.SetDefaults()
@@ -70,7 +70,7 @@ func TestGenerateDeploymentYAML_MinimalComponent(t *testing.T) {
 func TestGenerateDeploymentYAML_WithEnvironmentVariables(t *testing.T) {
 	component := &CustomComponent{
 		Name:      "my-app",
-		Image:      "myregistry/my-app:v1.0",
+		Image:     "myregistry/my-app:v1.0",
 		Namespace: "default",
 		Env: []EnvVar{
 			{Name: "APP_ENV", Value: "development"},
@@ -179,10 +179,10 @@ func TestFilterEnabledComponents(t *testing.T) {
 // T025: Test for namespace specification
 func TestGenerateDeploymentYAML_NamespaceSpecification(t *testing.T) {
 	tests := []struct {
-		name          string
-		component     *CustomComponent
-		expectedNs    string
-		description   string
+		name        string
+		component   *CustomComponent
+		expectedNs  string
+		description string
 	}{
 		{
 			name: "explicit namespace",
@@ -290,8 +290,8 @@ func TestGenerateDeploymentYAML_CustomLabels(t *testing.T) {
 		Image:     "nginx:latest",
 		Namespace: "default",
 		Labels: map[string]string{
-			"tier":       "backend",
-			"version":    "v1.0",
+			"tier":        "backend",
+			"version":     "v1.0",
 			"environment": "dev",
 		},
 	}
@@ -381,7 +381,7 @@ func TestGenerateDeploymentYAML_CommandAndArgs(t *testing.T) {
 		Image:     "openjdk:11",
 		Namespace: "default",
 		Command:   []string{"java"},
-		Args:     []string{"-jar", "/app/application.jar", "--spring.profiles.active=local"},
+		Args:      []string{"-jar", "/app/application.jar", "--spring.profiles.active=local"},
 	}
 	component.SetDefaults()
 
@@ -542,7 +542,7 @@ func TestGenerateDeploymentYAML_WithSecretKeyRef(t *testing.T) {
 		Namespace: "default",
 		Env: []EnvVar{
 			{
-				Name:  "DB_PASSWORD",
+				Name: "DB_PASSWORD",
 				ValueFrom: &EnvVarSource{
 					SecretKeyRef: &SecretKeySelector{
 						Name: "mysql-secret",
@@ -551,7 +551,7 @@ func TestGenerateDeploymentYAML_WithSecretKeyRef(t *testing.T) {
 				},
 			},
 			{
-				Name:  "DB_USER",
+				Name: "DB_USER",
 				ValueFrom: &EnvVarSource{
 					SecretKeyRef: &SecretKeySelector{
 						Name: "mysql-secret",
@@ -606,7 +606,7 @@ func TestGenerateDeploymentYAML_MixedEnvVars(t *testing.T) {
 				Value: "production",
 			},
 			{
-				Name:  "DB_PASSWORD",
+				Name: "DB_PASSWORD",
 				ValueFrom: &EnvVarSource{
 					SecretKeyRef: &SecretKeySelector{
 						Name: "mysql-secret",
@@ -619,7 +619,7 @@ func TestGenerateDeploymentYAML_MixedEnvVars(t *testing.T) {
 				Value: "info",
 			},
 			{
-				Name:  "DB_HOST",
+				Name: "DB_HOST",
 				ValueFrom: &EnvVarSource{
 					SecretKeyRef: &SecretKeySelector{
 						Name: "mysql-secret",
@@ -676,4 +676,147 @@ func TestGenerateDeploymentYAML_MixedEnvVars(t *testing.T) {
 	secretKeyRef2 := valueFrom2["secretKeyRef"].(map[string]interface{})
 	assert.Equal(t, "mysql-secret", secretKeyRef2["name"])
 	assert.Equal(t, "host", secretKeyRef2["key"])
+}
+
+// T061: Test for custom resource limits
+func TestGenerateDeploymentYAML_WithCustomResources(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "resource-test",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		Resources: &ResourceRequirements{
+			Requests: &ResourceList{
+				CPU:    "500m",
+				Memory: "512Mi",
+			},
+			Limits: &ResourceList{
+				CPU:    "2000m",
+				Memory: "2Gi",
+			},
+		},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	resources := container["resources"].(map[string]interface{})
+	requests := resources["requests"].(map[string]interface{})
+	limits := resources["limits"].(map[string]interface{})
+
+	// Verify custom resources are applied
+	assert.Equal(t, "500m", requests["cpu"])
+	assert.Equal(t, "512Mi", requests["memory"])
+	assert.Equal(t, "2000m", limits["cpu"])
+	assert.Equal(t, "2Gi", limits["memory"])
+}
+
+// T062: Test for default resource application
+func TestGenerateDeploymentYAML_WithDefaultResources(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "default-resource-test",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		// No Resources specified - should use defaults
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	containers := template["spec"].(map[string]interface{})["containers"].([]interface{})
+	container := containers[0].(map[string]interface{})
+
+	resources := container["resources"].(map[string]interface{})
+	requests := resources["requests"].(map[string]interface{})
+	limits := resources["limits"].(map[string]interface{})
+
+	// Verify default resources are applied
+	assert.Equal(t, "100m", requests["cpu"])
+	assert.Equal(t, "128Mi", requests["memory"])
+	assert.Equal(t, "500m", limits["cpu"])
+	assert.Equal(t, "512Mi", limits["memory"])
+}
+
+// T076: Integration test for config file mounting in deployment
+func TestGenerateDeploymentYAML_WithConfigFiles(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "config-test",
+		Image:     "nginx:latest",
+		Namespace: "default",
+		ConfigFiles: []ConfigFile{
+			{
+				Name:     "app.yaml",
+				Path:     "/config/app.yaml",
+				Contents: "server:\n  port: 8080",
+			},
+			{
+				Name:     "logback.xml",
+				Path:     "/config/logback.xml",
+				Contents: "<configuration></configuration>",
+			},
+		},
+	}
+	component.SetDefaults()
+
+	yamlStr, err := generateDeploymentYAML(component)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	podSpec := template["spec"].(map[string]interface{})
+
+	// Verify volumes are present
+	volumes := podSpec["volumes"].([]interface{})
+	require.Len(t, volumes, 1)
+	volume := volumes[0].(map[string]interface{})
+	assert.Equal(t, "config-test-config-volume", volume["name"])
+	configMapVolume := volume["configMap"].(map[string]interface{})
+	assert.Equal(t, "config-test-config", configMapVolume["name"])
+	assert.Equal(t, 420, configMapVolume["defaultMode"]) // 0644 in decimal
+
+	// Verify volumeMounts are present in container
+	containers := podSpec["containers"].([]interface{})
+	require.Len(t, containers, 1)
+	container := containers[0].(map[string]interface{})
+
+	volumeMounts := container["volumeMounts"].([]interface{})
+	require.Len(t, volumeMounts, 2)
+
+	// Build a map of mount paths for easier checking
+	mountPaths := make(map[string]map[string]interface{})
+	for _, vm := range volumeMounts {
+		vmMap := vm.(map[string]interface{})
+		mountPaths[vmMap["mountPath"].(string)] = vmMap
+	}
+
+	// Verify first config file mount
+	appYamlMount := mountPaths["/config/app.yaml"]
+	require.NotNil(t, appYamlMount)
+	assert.Equal(t, "config-test-config-volume", appYamlMount["name"])
+	assert.Equal(t, "app.yaml", appYamlMount["subPath"])
+	assert.True(t, appYamlMount["readOnly"].(bool))
+
+	// Verify second config file mount
+	logbackMount := mountPaths["/config/logback.xml"]
+	require.NotNil(t, logbackMount)
+	assert.Equal(t, "config-test-config-volume", logbackMount["name"])
+	assert.Equal(t, "logback.xml", logbackMount["subPath"])
+	assert.True(t, logbackMount["readOnly"].(bool))
 }

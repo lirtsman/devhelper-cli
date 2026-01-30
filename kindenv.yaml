@@ -122,3 +122,48 @@ secrets:
         namespace: default
         username: root
         password: password
+
+# Custom Components - Deploy your own services alongside infrastructure components
+# Uncomment and customize the examples below to deploy custom applications
+# customComponents:
+#   - name: my-app
+#     image: nginx:latest
+#     namespace: default
+#     enabled: true
+#     replicas: 1
+#     env:
+#       - name: APP_ENV
+#         value: "development"
+#       - name: DB_HOST
+#         valueFrom:
+#           secretKeyRef:
+#             name: mysql-secret
+#             key: host
+#     ports:
+#       - containerPort: 80
+#         protocol: TCP
+#         nodePort: 30088
+#     resources:
+#       requests:
+#         cpu: "100m"
+#         memory: "128Mi"
+#       limits:
+#         cpu: "500m"
+#         memory: "512Mi"
+#     configFiles:
+#       - name: application.yaml
+#         path: /config/application.yaml
+#         contents: |
+#           server:
+#             port: 8080
+#           database:
+#             host: mysql
+#   - name: api-service
+#     image: myregistry/api-service:v1.0
+#     namespace: default
+#     command: ["java"]
+#     args: ["-jar", "app.jar"]
+#     ports:
+#       - containerPort: 8080
+#         protocol: TCP
+#         nodePort: 30089

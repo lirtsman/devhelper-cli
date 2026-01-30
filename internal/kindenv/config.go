@@ -181,7 +181,7 @@ type CustomComponent struct {
 	ConfigFiles []ConfigFile          `yaml:"configFiles,omitempty" json:"configFiles,omitempty"`
 
 	// Scaling and Metadata
-	Replicas    *int               `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	Replicas    *int              `yaml:"replicas,omitempty" json:"replicas,omitempty"`
 	Labels      map[string]string `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Annotations map[string]string `yaml:"annotations,omitempty" json:"annotations,omitempty"`
 }

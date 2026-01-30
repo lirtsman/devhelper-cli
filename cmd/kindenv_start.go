@@ -1771,6 +1771,24 @@ stringData:
 						}
 					}
 
+					// Apply ConfigMap YAML if config files are configured
+					if deploymentInfo.ConfigMapYAML != "" {
+						// Check for mount path overrides and warn
+						for _, configFile := range component.ConfigFiles {
+							if kindenv.DetectMountPathOverride(configFile.Path) {
+								fmt.Printf("%s Warning: Config file '%s' mounted at '%s' may override existing files in the container image\n", yellow("⚠️"), configFile.Name, configFile.Path)
+							}
+						}
+
+						fmt.Printf("Creating ConfigMap for custom component '%s'...\n", component.Name)
+						cmd = exec.Command("kubectl", "apply", "-f", "-")
+						cmd.Stdin = strings.NewReader(deploymentInfo.ConfigMapYAML)
+						if err := cmd.Run(); err != nil {
+							fmt.Printf("%s Warning: Error creating ConfigMap for '%s': %v\n", yellow("⚠️"), component.Name, err)
+							fmt.Println(yellow("Continuing despite ConfigMap creation error..."))
+						}
+					}
+
 					// Apply deployment YAML
 					fmt.Printf("Deploying custom component '%s' to namespace '%s'...\n", component.Name, deploymentInfo.Namespace)
 					cmd = exec.Command("kubectl", "apply", "-f", "-")

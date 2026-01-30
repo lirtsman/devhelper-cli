@@ -224,7 +224,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			} else {
 				fmt.Printf("- %s Temporal Worker Operator is disabled in config\n", yellow("ℹ️"))
 			}
-			
+
 			// Check Indices Operator status
 			if config.Components.IndicesOperator.Enabled {
 				operatorCmd := exec.Command("kubectl", "get", "deployment", "-n", "default", "-l", "app.kubernetes.io/name=indices-operator", "--no-headers")
@@ -247,12 +247,12 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			} else {
 				fmt.Printf("- %s Indices Operator is disabled in config\n", yellow("ℹ️"))
 			}
-			
+
 			// Check Metrics Server status
 			if config.Components.MetricsServer.Enabled {
 				metricsCmd := exec.Command("kubectl", "get", "deployment", "-n", "kube-system", "metrics-server", "--no-headers")
 				metricsOutput, err := metricsCmd.CombinedOutput()
-				
+
 				if err == nil && string(metricsOutput) != "" {
 					fmt.Printf("- %s Metrics Server is installed and running\n", green("✅"))
 					// Try to run kubectl top nodes to verify it's working
@@ -277,15 +277,15 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "mysql-0"
 				mysqlPodCmd := exec.Command("kubectl", "get", "pod", "mysql-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
 				mysqlPodOutput, podErr := mysqlPodCmd.CombinedOutput()
-				
+
 				// Check MySQL service status
 				mysqlSvcCmd := exec.Command("kubectl", "get", "service", "mysql", "-n", config.Components.MySQL.Namespace, "--no-headers")
 				mysqlSvcOutput, svcErr := mysqlSvcCmd.CombinedOutput()
-				
+
 				podReady := false
 				serviceReady := false
 				var podStatus string
-				
+
 				if podErr == nil && string(mysqlPodOutput) != "" {
 					fields := strings.Fields(string(mysqlPodOutput))
 					if len(fields) >= 3 {
@@ -295,11 +295,11 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 						}
 					}
 				}
-				
+
 				if svcErr == nil && string(mysqlSvcOutput) != "" {
 					serviceReady = true
 				}
-				
+
 				if podReady && serviceReady {
 					fmt.Printf("- %s MySQL is installed and running\n", green("✅"))
 					fmt.Printf("  Pod: Ready, Service: Available\n")
@@ -322,7 +322,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					}
 				} else {
 					fmt.Printf("- %s MySQL is not running or not installed\n", yellow("⚠️"))
-					
+
 					// Enhanced error reporting
 					if podErr != nil {
 						// Try to get pod events for more details
@@ -346,7 +346,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 								}
 							}
 						}
-						
+
 						// Try to get pod logs for errors
 						if verbose {
 							logsCmd := exec.Command("kubectl", "logs", "mysql-0", "-n", config.Components.MySQL.Namespace, "--tail=5", "--no-headers")
@@ -365,11 +365,11 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 							}
 						}
 					}
-					
+
 					if svcErr != nil && verbose {
 						fmt.Printf("  Service Error: %v\n", svcErr)
 					}
-					
+
 					// Check if namespace exists
 					nsCmd := exec.Command("kubectl", "get", "namespace", config.Components.MySQL.Namespace, "--no-headers")
 					_, nsErr := nsCmd.CombinedOutput()
@@ -533,6 +533,51 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					if len(component.Ports) > 0 && verbose {
 						for _, port := range component.Ports {
 							fmt.Printf("    Port: %d/%s\n", port.ContainerPort, port.Protocol)
+						}
+					}
+
+					// Show resource information if available and verbose
+					if component.Resources != nil && verbose {
+						if component.Resources.Requests != nil {
+							cpu := component.Resources.Requests.CPU
+							memory := component.Resources.Requests.Memory
+							if cpu != "" || memory != "" {
+								fmt.Printf("    Resources (requests):")
+								if cpu != "" {
+									fmt.Printf(" CPU=%s", cpu)
+								}
+								if memory != "" {
+									fmt.Printf(" Memory=%s", memory)
+								}
+								fmt.Println()
+							}
+						}
+						if component.Resources.Limits != nil {
+							cpu := component.Resources.Limits.CPU
+							memory := component.Resources.Limits.Memory
+							if cpu != "" || memory != "" {
+								fmt.Printf("    Resources (limits):")
+								if cpu != "" {
+									fmt.Printf(" CPU=%s", cpu)
+								}
+								if memory != "" {
+									fmt.Printf(" Memory=%s", memory)
+								}
+								fmt.Println()
+							}
+						}
+					}
+
+					// Show ConfigMap status if config files are configured
+					if len(component.ConfigFiles) > 0 && verbose {
+						configMapName := component.Name + "-config"
+						configMapCmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", component.Namespace, "--ignore-not-found", "-o", "jsonpath={.metadata.name}")
+						configMapOutput, err := configMapCmd.CombinedOutput()
+						if err == nil && len(strings.TrimSpace(string(configMapOutput))) > 0 {
+							fmt.Printf("    ConfigMap: %s (exists)\n", configMapName)
+							fmt.Printf("    Config files: %d mounted\n", len(component.ConfigFiles))
+						} else {
+							fmt.Printf("    ConfigMap: %s (not found)\n", configMapName)
 						}
 					}
 				}

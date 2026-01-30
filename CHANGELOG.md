@@ -111,6 +111,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Add `--clean-logs` flag to `localenv stop` command to remove log files when stopping components
+- Add custom components support to kindenv for deploying user-defined services
+  - Support for container images, commands, and arguments
+  - Environment variable configuration (direct values and secret references)
+  - Port mapping with NodePort services
+  - Resource limits (CPU and memory requests/limits)
+  - Configuration file mounting via ConfigMaps
+  - Multi-component deployment support
+  - Status reporting and cleanup integration
 
 ## [v0.2.3] - 2025-03-30
 
