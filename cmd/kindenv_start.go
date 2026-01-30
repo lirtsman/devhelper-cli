@@ -947,8 +947,10 @@ stringData:
 			time.Sleep(10 * time.Second)
 
 			// Wait for MySQL pod
-			fmt.Println(yellow("Waiting for mysql-primary-0 pod to be created..."))
-			podCheckCmd := exec.Command("kubectl", "get", "pod", "mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
+			// Bitnami MySQL Helm chart creates a StatefulSet named "mysql" (same as release name)
+			// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "mysql-0"
+			fmt.Println(yellow("Waiting for mysql-0 pod to be created..."))
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "mysql-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
 
 			var podExists bool
 			for i := 0; i < 10; i++ { // Try for up to 5 minutes (10 * 30s)
@@ -961,14 +963,14 @@ stringData:
 					break
 				}
 				if i < 9 {
-					fmt.Printf("Waiting for mysql-primary-0 pod to appear (attempt %d/10)...\n", i+1)
+					fmt.Printf("Waiting for mysql-0 pod to appear (attempt %d/10)...\n", i+1)
 					time.Sleep(30 * time.Second)
 				}
 			}
 
 			if podExists {
-				fmt.Println(yellow("Found mysql-primary-0 pod, waiting for it to be ready..."))
-				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--timeout=5m")
+				fmt.Println(yellow("Found mysql-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/mysql-0", "-n", config.Components.MySQL.Namespace, "--timeout=5m")
 				if err != nil {
 					fmt.Printf("%s Warning: MySQL pod is not ready: %v\n", yellow("⚠️"), err)
 					fmt.Println(yellow("Continuing despite MySQL not being fully ready..."))
@@ -976,7 +978,7 @@ stringData:
 					fmt.Printf("%s MySQL installed successfully\n", green("✅"))
 				}
 			} else {
-				fmt.Printf("%s MySQL master pod (mysql-primary-0) not found\n", yellow("⚠️"))
+				fmt.Printf("%s MySQL pod (mysql-0) not found\n", yellow("⚠️"))
 				fmt.Println(yellow("Continuing despite MySQL pod not being detected..."))
 			}
 		}

@@ -273,7 +273,9 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			// Check MySQL status
 			if config.Components.MySQL.Enabled {
 				// Check MySQL pod status
-				mysqlPodCmd := exec.Command("kubectl", "get", "pod", "mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
+				// Bitnami MySQL Helm chart creates a StatefulSet named "mysql" (same as release name)
+				// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "mysql-0"
+				mysqlPodCmd := exec.Command("kubectl", "get", "pod", "mysql-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
 				mysqlPodOutput, podErr := mysqlPodCmd.CombinedOutput()
 				
 				// Check MySQL service status
@@ -324,7 +326,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					// Enhanced error reporting
 					if podErr != nil {
 						// Try to get pod events for more details
-						eventsCmd := exec.Command("kubectl", "get", "events", "-n", config.Components.MySQL.Namespace, "--field-selector", "involvedObject.name=mysql-primary-0", "--sort-by", ".lastTimestamp", "--no-headers")
+						eventsCmd := exec.Command("kubectl", "get", "events", "-n", config.Components.MySQL.Namespace, "--field-selector", "involvedObject.name=mysql-0", "--sort-by", ".lastTimestamp", "--no-headers")
 						eventsOutput, eventsErr := eventsCmd.CombinedOutput()
 						if eventsErr == nil && string(eventsOutput) != "" {
 							// Get the most recent event
@@ -347,7 +349,7 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 						
 						// Try to get pod logs for errors
 						if verbose {
-							logsCmd := exec.Command("kubectl", "logs", "mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--tail=5", "--no-headers")
+							logsCmd := exec.Command("kubectl", "logs", "mysql-0", "-n", config.Components.MySQL.Namespace, "--tail=5", "--no-headers")
 							logsOutput, logsErr := logsCmd.CombinedOutput()
 							if logsErr == nil && string(logsOutput) != "" {
 								fmt.Printf("  Recent Logs:\n")

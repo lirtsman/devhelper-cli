@@ -5,6 +5,7 @@ package kindenv
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -12,16 +13,16 @@ import (
 type MySQLManager interface {
 	// Install deploys MySQL using Helm chart with provided configuration
 	Install(ctx context.Context, config MySQLConfig) error
-	
+
 	// Uninstall removes MySQL deployment and cleans up resources
 	Uninstall(ctx context.Context, namespace string) error
-	
+
 	// GetStatus returns current MySQL deployment status and health
 	GetStatus(ctx context.Context, namespace string) (*MySQLStatus, error)
-	
+
 	// ValidateConfig validates MySQL configuration parameters
 	ValidateConfig(config MySQLConfig) error
-	
+
 	// WaitForReady waits for MySQL to be ready with timeout
 	WaitForReady(ctx context.Context, namespace string, timeout time.Duration) error
 }
@@ -30,13 +31,13 @@ type MySQLManager interface {
 type MySQLConfigValidator interface {
 	// ValidateDatabase validates database name format
 	ValidateDatabase(database string) error
-	
+
 	// ValidateResources validates CPU and memory resource specifications
 	ValidateResources(cpu, memory string) error
-	
+
 	// ValidateNodePort validates NodePort is in valid range and available
 	ValidateNodePort(port int) error
-	
+
 	// ValidateChartVersion validates Helm chart version format
 	ValidateChartVersion(version string) error
 }
@@ -45,13 +46,13 @@ type MySQLConfigValidator interface {
 type MySQLStatusReporter interface {
 	// GetPodStatus returns Kubernetes pod status information
 	GetPodStatus(ctx context.Context, namespace, podName string) (*PodStatus, error)
-	
-	// GetServiceStatus returns Kubernetes service status information  
+
+	// GetServiceStatus returns Kubernetes service status information
 	GetServiceStatus(ctx context.Context, namespace, serviceName string) (*ServiceStatus, error)
-	
+
 	// TestConnection tests MySQL database connectivity
 	TestConnection(ctx context.Context, connectionInfo MySQLConnectionInfo) error
-	
+
 	// GetHealthCheck performs comprehensive health check
 	GetHealthCheck(ctx context.Context, namespace string) (*MySQLHealthCheck, error)
 }
@@ -60,16 +61,16 @@ type MySQLStatusReporter interface {
 type HelmManager interface {
 	// AddRepository adds Bitnami Helm repository if not exists
 	AddRepository(ctx context.Context, name, url string) error
-	
+
 	// UpdateRepository updates Helm repository cache
 	UpdateRepository(ctx context.Context) error
-	
+
 	// InstallChart installs Helm chart with specified parameters
 	InstallChart(ctx context.Context, params HelmInstallParams) error
-	
+
 	// UninstallChart removes Helm release
 	UninstallChart(ctx context.Context, releaseName, namespace string) error
-	
+
 	// GetReleaseStatus returns Helm release status
 	GetReleaseStatus(ctx context.Context, releaseName, namespace string) (*ReleaseStatus, error)
 }
@@ -78,19 +79,19 @@ type HelmManager interface {
 type KubernetesManager interface {
 	// CreateNamespace creates Kubernetes namespace if not exists
 	CreateNamespace(ctx context.Context, namespace string) error
-	
+
 	// DeleteNamespace deletes Kubernetes namespace
 	DeleteNamespace(ctx context.Context, namespace string) error
-	
+
 	// CreateSecret creates Kubernetes secret with MySQL credentials
 	CreateSecret(ctx context.Context, secretConfig MySQLSecretConfig) error
-	
+
 	// DeleteSecret deletes Kubernetes secret
 	DeleteSecret(ctx context.Context, name, namespace string) error
-	
+
 	// GetPod returns pod information
 	GetPod(ctx context.Context, name, namespace string) (*PodInfo, error)
-	
+
 	// GetService returns service information
 	GetService(ctx context.Context, name, namespace string) (*ServiceInfo, error)
 }
@@ -99,12 +100,12 @@ type KubernetesManager interface {
 
 // MySQLConfig represents MySQL component configuration
 type MySQLConfig struct {
-	Enabled      bool              `yaml:"enabled"`
-	ChartVersion string            `yaml:"chartVersion"`
-	Database     string            `yaml:"database"`
-	NodePorts    MySQLNodePorts    `yaml:"nodePorts"`
-	Resources    MySQLResources    `yaml:"resources"`
-	Persistence  MySQLPersistence  `yaml:"persistence"`
+	Enabled      bool             `yaml:"enabled"`
+	ChartVersion string           `yaml:"chartVersion"`
+	Database     string           `yaml:"database"`
+	NodePorts    MySQLNodePorts   `yaml:"nodePorts"`
+	Resources    MySQLResources   `yaml:"resources"`
+	Persistence  MySQLPersistence `yaml:"persistence"`
 }
 
 // MySQLNodePorts represents NodePort configuration
@@ -175,12 +176,12 @@ type MySQLHealthCheck struct {
 
 // HelmInstallParams represents Helm installation parameters
 type HelmInstallParams struct {
-	ReleaseName  string            `json:"releaseName"`
-	ChartName    string            `json:"chartName"`
-	ChartVersion string            `json:"chartVersion"`
-	Namespace    string            `json:"namespace"`
-	Values       map[string]string `json:"values"`
-	CreateNamespace bool           `json:"createNamespace"`
+	ReleaseName     string            `json:"releaseName"`
+	ChartName       string            `json:"chartName"`
+	ChartVersion    string            `json:"chartVersion"`
+	Namespace       string            `json:"namespace"`
+	Values          map[string]string `json:"values"`
+	CreateNamespace bool              `json:"createNamespace"`
 }
 
 // ReleaseStatus represents Helm release status
@@ -245,9 +246,9 @@ func (e *MySQLError) Error() string {
 
 // Validation errors
 type ValidationError struct {
-	Field   string
-	Value   string
-	Reason  string
+	Field  string
+	Value  string
+	Reason string
 }
 
 func (e *ValidationError) Error() string {
