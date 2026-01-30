@@ -32,8 +32,11 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Prepare coverage directory
+        run: mkdir -p ./coverage
+
       - name: Test with coverage
-        run: make test-coverage
+        run: go test -short -coverprofile=./coverage/coverage.out ./...
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
