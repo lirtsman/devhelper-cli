@@ -163,6 +163,9 @@ type KindEnvConfig struct {
 }
 
 // CustomComponent defines a user-configured service deployment
+// CustomComponent defines a user-deployed service in the Kind environment.
+// It supports container images, environment variables, port mappings, resource limits,
+// and configuration file mounting.
 type CustomComponent struct {
 	// Identity
 	Name      string `yaml:"name" json:"name"`
@@ -219,7 +222,10 @@ type ResourceRequirements struct {
 	Limits   *ResourceList `yaml:"limits,omitempty" json:"limits,omitempty"`
 }
 
-// ResourceList defines CPU and memory quantities
+// ResourceList defines CPU and memory resource quantities.
+// Values must follow Kubernetes resource quantity format:
+// CPU: "100m" (100 millicores), "1" (1 core), "2000m" (2 cores)
+// Memory: "128Mi" (128 mebibytes), "1Gi" (1 gibibyte), "512M" (512 megabytes)
 type ResourceList struct {
 	CPU    string `yaml:"cpu,omitempty" json:"cpu,omitempty"`
 	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
@@ -232,26 +238,31 @@ type ConfigFile struct {
 	Contents string `yaml:"contents" json:"contents"`
 }
 
-// VolumeSpec defines a volume for mounting in a pod
+// VolumeSpec defines a volume for mounting in a pod.
+// Only one of ConfigMap or Secret should be set.
 type VolumeSpec struct {
 	Name      string
 	ConfigMap *ConfigMapVolumeSource
 	Secret    *SecretVolumeSource
 }
 
-// ConfigMapVolumeSource defines a ConfigMap volume source
+// ConfigMapVolumeSource defines a ConfigMap volume source for mounting configuration files.
+// DefaultMode specifies file permissions in octal format (e.g., 0644).
 type ConfigMapVolumeSource struct {
 	Name        string
 	DefaultMode int // File permissions (e.g., 0644)
 }
 
-// SecretVolumeSource defines a Secret volume source
+// SecretVolumeSource defines a Secret volume source for mounting secrets.
+// DefaultMode specifies file permissions in octal format (e.g., 0644).
 type SecretVolumeSource struct {
 	Name        string
 	DefaultMode int
 }
 
-// VolumeMountSpec defines how a volume is mounted in a container
+// VolumeMountSpec defines how a volume is mounted in a container.
+// SubPath is used to mount individual files from a ConfigMap or Secret volume.
+// ReadOnly should be true for ConfigMaps and Secrets.
 type VolumeMountSpec struct {
 	Name      string
 	MountPath string
@@ -284,7 +295,9 @@ func (c *CustomComponent) Validate() error {
 	return ValidateCustomComponent(c)
 }
 
-// SetDefaults applies default values to a CustomComponent
+// SetDefaults applies default values to a CustomComponent.
+// Sets namespace to "default", replicas to 1, enabled to true,
+// and applies default resource requirements if not specified.
 func (c *CustomComponent) SetDefaults() {
 	if c.Namespace == "" {
 		c.Namespace = "default"

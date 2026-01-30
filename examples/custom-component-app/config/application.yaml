@@ -1,0 +1,10 @@
+server:
+  port: 8080
+
+database:
+  host: mysql.mysql.svc.cluster.local
+  port: 3306
+
+logging:
+  level: INFO
+  format: json
