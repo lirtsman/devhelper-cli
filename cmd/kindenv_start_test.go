@@ -105,6 +105,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 							Enabled bool   `yaml:"enabled"`
 							Size    string `yaml:"size"`
 						} `yaml:"persistence"`
+						InitScripts map[string]string `yaml:"initScripts,omitempty"`
 					} `yaml:"mysql"`
 				}{
 					MySQL: struct {
@@ -123,6 +124,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 							Enabled bool   `yaml:"enabled"`
 							Size    string `yaml:"size"`
 						} `yaml:"persistence"`
+						InitScripts map[string]string `yaml:"initScripts,omitempty"`
 					}{
 						Enabled:      true,
 						Namespace:    "mysql",
@@ -234,6 +236,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 							Enabled bool   `yaml:"enabled"`
 							Size    string `yaml:"size"`
 						} `yaml:"persistence"`
+						InitScripts map[string]string `yaml:"initScripts,omitempty"`
 					} `yaml:"mysql"`
 				}{
 					MySQL: struct {
@@ -252,6 +255,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 							Enabled bool   `yaml:"enabled"`
 							Size    string `yaml:"size"`
 						} `yaml:"persistence"`
+						InitScripts map[string]string `yaml:"initScripts,omitempty"`
 					}{
 						Enabled:      true,
 						Namespace:    "mysql",

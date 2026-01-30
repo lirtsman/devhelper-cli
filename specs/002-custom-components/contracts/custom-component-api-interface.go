@@ -1,7 +1,11 @@
-package kindenv
+//go:build ignore
+// +build ignore
 
 // This file defines the interfaces and contracts for custom component management in kindenv.
 // These interfaces provide clear boundaries for testing, mocking, and future extensibility.
+// This file is excluded from normal compilation as it's part of the specification documentation.
+
+package kindenv
 
 import (
 	"context"
