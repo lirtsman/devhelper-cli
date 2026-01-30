@@ -352,6 +352,15 @@ Use --force-context to automatically switch without prompting.`,
 				}
 			}
 
+			// Ensure MySQL port is mapped if enabled
+			if config.Components.MySQL.Enabled {
+				mysqlPortKey := fmt.Sprintf("%d/TCP", config.Components.MySQL.NodePorts.MySQL)
+				if !mappedPorts[mysqlPortKey] {
+					fmt.Printf("%s Adding missing MySQL port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.MySQL.NodePorts.MySQL, 3306, "TCP")
+				}
+			}
+
 			if verbose {
 				fmt.Println(yellow("Port mapping configuration complete"))
 			}

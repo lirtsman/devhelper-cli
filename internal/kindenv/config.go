@@ -116,6 +116,22 @@ type KindEnvConfig struct {
 			Enabled      bool   `yaml:"enabled"`
 			ChartVersion string `yaml:"chartVersion"`
 		} `yaml:"metricsServer"`
+		MySQL struct {
+			Enabled      bool   `yaml:"enabled"`
+			ChartVersion string `yaml:"chartVersion"`
+			Database     string `yaml:"database"`
+			NodePorts    struct {
+				MySQL int `yaml:"mysql"`
+			} `yaml:"nodePorts"`
+			Resources struct {
+				CPU    string `yaml:"cpu"`
+				Memory string `yaml:"memory"`
+			} `yaml:"resources"`
+			Persistence struct {
+				Enabled bool   `yaml:"enabled"`
+				Size    string `yaml:"size"`
+			} `yaml:"persistence"`
+		} `yaml:"mysql"`
 	} `yaml:"components"`
 	Images struct {
 		SkipPull  bool `yaml:"skipPull"`
@@ -311,6 +327,19 @@ func generateDefaultPortMappings(config *KindEnvConfig) []struct {
 		})
 	}
 
+	// Add MySQL if enabled
+	if config.Components.MySQL.Enabled {
+		mappings = append(mappings, struct {
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
+		}{
+			ContainerPort: "${{ components.mysql.nodePorts.mysql }}",
+			HostPort:      3306,
+			Protocol:      "TCP",
+		})
+	}
+
 	return mappings
 }
 
@@ -367,6 +396,13 @@ func processVariableSubstitutions(config *KindEnvConfig) error {
 						value = config.Components.OpenSearchDashboards.NodePorts.Http
 					default:
 						return fmt.Errorf("unknown openSearchDashboards port: %s", portName)
+					}
+				case "mysql":
+					switch portName {
+					case "mysql":
+						value = config.Components.MySQL.NodePorts.MySQL
+					default:
+						return fmt.Errorf("unknown mysql port: %s", portName)
 					}
 				default:
 					return fmt.Errorf("unknown component: %s", componentName)
@@ -464,6 +500,43 @@ func (c *KindEnvConfig) Validate() error {
 		}
 	}
 
+	// Validate MySQL component configuration
+	if c.Components.MySQL.Enabled {
+		if c.Components.MySQL.ChartVersion == "" {
+			return errors.New("mysql chart version must be specified when enabled")
+		}
+		if c.Components.MySQL.Database == "" {
+			return errors.New("mysql database name must be specified when enabled")
+		}
+		if c.Components.MySQL.NodePorts.MySQL < 30000 || c.Components.MySQL.NodePorts.MySQL > 32767 {
+			return errors.New("mysql nodeport must be in range 30000-32767")
+		}
+		// Validate CPU format (e.g., "500m", "1")
+		if c.Components.MySQL.Resources.CPU != "" {
+			cpuRegex := regexp.MustCompile(`^[0-9]+m?$`)
+			if !cpuRegex.MatchString(c.Components.MySQL.Resources.CPU) {
+				return errors.New("mysql cpu resource must be in valid format (e.g., 500m, 1)")
+			}
+		}
+		// Validate memory format (e.g., "1Gi", "512Mi")
+		if c.Components.MySQL.Resources.Memory != "" {
+			memoryRegex := regexp.MustCompile(`^[0-9]+[KMGT]i$`)
+			if !memoryRegex.MatchString(c.Components.MySQL.Resources.Memory) {
+				return errors.New("mysql memory resource must be in valid format (e.g., 1Gi, 512Mi)")
+			}
+		}
+		// Validate persistence size if enabled
+		if c.Components.MySQL.Persistence.Enabled {
+			if c.Components.MySQL.Persistence.Size == "" {
+				return errors.New("mysql persistence size must be specified when persistence is enabled")
+			}
+			persistenceSizeRegex := regexp.MustCompile(`^[0-9]+[KMGT]i$`)
+			if !persistenceSizeRegex.MatchString(c.Components.MySQL.Persistence.Size) {
+				return errors.New("mysql persistence size must be in valid format (e.g., 8Gi, 10Gi)")
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -506,6 +579,15 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.OpenSearchDashboards.Version = "2.17.1"
 	config.Components.OpenSearchDashboards.NodePorts.Http = 30601
 
+	config.Components.MySQL.Enabled = false
+	config.Components.MySQL.ChartVersion = "9.4.6"
+	config.Components.MySQL.Database = "mysql"
+	config.Components.MySQL.NodePorts.MySQL = 30306
+	config.Components.MySQL.Resources.CPU = "500m"
+	config.Components.MySQL.Resources.Memory = "1Gi"
+	config.Components.MySQL.Persistence.Enabled = false
+	config.Components.MySQL.Persistence.Size = "8Gi"
+
 	config.Components.TemporalWorkerOperator.Enabled = true
 	config.Components.TemporalWorkerOperator.ChartVersion = "0.1.46-dev"
 	config.Components.TemporalWorkerOperator.TemporalNamespace = "default"
@@ -515,6 +597,15 @@ func CreateDefaultConfig() *KindEnvConfig {
 
 	config.Components.MetricsServer.Enabled = true
 	config.Components.MetricsServer.ChartVersion = "3.10.0"
+
+	config.Components.MySQL.Enabled = false
+	config.Components.MySQL.ChartVersion = "9.4.6"
+	config.Components.MySQL.Database = "mysql"
+	config.Components.MySQL.NodePorts.MySQL = 30306
+	config.Components.MySQL.Resources.CPU = "500m"
+	config.Components.MySQL.Resources.Memory = "1Gi"
+	config.Components.MySQL.Persistence.Enabled = false
+	config.Components.MySQL.Persistence.Size = "8Gi"
 
 	// Images section
 	config.Images.SkipPull = false

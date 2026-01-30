@@ -1,0 +1,29 @@
+# devhelper-cli Development Guidelines
+
+Auto-generated from all feature plans. Last updated: 2026-01-30
+
+## Active Technologies
+
+- Go 1.21+ (existing codebase) + Cobra CLI framework, Kubernetes client-go, Helm Go SDK, existing kindenv configuration system (001-mysql8-kindenv)
+
+## Project Structure
+
+```text
+src/
+tests/
+```
+
+## Commands
+
+# Add commands for Go 1.21+ (existing codebase)
+
+## Code Style
+
+Go 1.21+ (existing codebase): Follow standard conventions
+
+## Recent Changes
+
+- 001-mysql8-kindenv: Added Go 1.21+ (existing codebase) + Cobra CLI framework, Kubernetes client-go, Helm Go SDK, existing kindenv configuration system
+
+<!-- MANUAL ADDITIONS START -->
+<!-- MANUAL ADDITIONS END -->
