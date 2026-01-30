@@ -90,6 +90,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 					} `yaml:"metricsServer"`
 					MySQL struct {
 						Enabled      bool   `yaml:"enabled"`
+						Namespace    string `yaml:"namespace"`
 						ChartVersion string `yaml:"chartVersion"`
 						Database     string `yaml:"database"`
 						NodePorts    struct {
@@ -107,6 +108,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 				}{
 					MySQL: struct {
 						Enabled      bool   `yaml:"enabled"`
+						Namespace    string `yaml:"namespace"`
 						ChartVersion string `yaml:"chartVersion"`
 						Database     string `yaml:"database"`
 						NodePorts    struct {
@@ -122,6 +124,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 						} `yaml:"persistence"`
 					}{
 						Enabled:      true,
+						Namespace:    "mysql",
 						ChartVersion: "9.4.6",
 						Database:     "mydb",
 						NodePorts: struct {
@@ -216,6 +219,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 					} `yaml:"metricsServer"`
 					MySQL struct {
 						Enabled      bool   `yaml:"enabled"`
+						Namespace    string `yaml:"namespace"`
 						ChartVersion string `yaml:"chartVersion"`
 						Database     string `yaml:"database"`
 						NodePorts    struct {
@@ -233,6 +237,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 				}{
 					MySQL: struct {
 						Enabled      bool   `yaml:"enabled"`
+						Namespace    string `yaml:"namespace"`
 						ChartVersion string `yaml:"chartVersion"`
 						Database     string `yaml:"database"`
 						NodePorts    struct {
@@ -248,6 +253,7 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 						} `yaml:"persistence"`
 					}{
 						Enabled:      true,
+						Namespace:    "mysql",
 						ChartVersion: "9.4.6",
 						Database:     "customdb",
 						NodePorts: struct {
