@@ -270,11 +270,120 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				fmt.Printf("- %s Metrics Server is disabled in config\n", yellow("ℹ️"))
 			}
 
+			// Check MySQL status
+			if config.Components.MySQL.Enabled {
+				// Check MySQL pod status
+				mysqlPodCmd := exec.Command("kubectl", "get", "pod", "mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
+				mysqlPodOutput, podErr := mysqlPodCmd.CombinedOutput()
+				
+				// Check MySQL service status
+				mysqlSvcCmd := exec.Command("kubectl", "get", "service", "mysql", "-n", config.Components.MySQL.Namespace, "--no-headers")
+				mysqlSvcOutput, svcErr := mysqlSvcCmd.CombinedOutput()
+				
+				podReady := false
+				serviceReady := false
+				var podStatus string
+				
+				if podErr == nil && string(mysqlPodOutput) != "" {
+					fields := strings.Fields(string(mysqlPodOutput))
+					if len(fields) >= 3 {
+						podStatus = fields[2]
+						if strings.Contains(podStatus, "1/1") {
+							podReady = true
+						}
+					}
+				}
+				
+				if svcErr == nil && string(mysqlSvcOutput) != "" {
+					serviceReady = true
+				}
+				
+				if podReady && serviceReady {
+					fmt.Printf("- %s MySQL is installed and running\n", green("✅"))
+					fmt.Printf("  Pod: Ready, Service: Available\n")
+					if config.Secrets.MySQL.Enabled {
+						fmt.Printf("  Database: %s, Username: %s\n", config.Components.MySQL.Database, config.Secrets.MySQL.Username)
+					} else {
+						fmt.Printf("  Database: %s, Username: root\n", config.Components.MySQL.Database)
+					}
+				} else if podReady && !serviceReady {
+					fmt.Printf("- %s MySQL pod is ready but service is not available\n", yellow("⚠️"))
+					if podStatus != "" {
+						fmt.Printf("  Pod Status: %s\n", podStatus)
+					}
+				} else if !podReady && serviceReady {
+					fmt.Printf("- %s MySQL service exists but pod is not ready\n", yellow("⚠️"))
+					if podStatus != "" {
+						fmt.Printf("  Pod Status: %s\n", podStatus)
+					} else {
+						fmt.Printf("  Pod Status: Not found\n")
+					}
+				} else {
+					fmt.Printf("- %s MySQL is not running or not installed\n", yellow("⚠️"))
+					
+					// Enhanced error reporting
+					if podErr != nil {
+						// Try to get pod events for more details
+						eventsCmd := exec.Command("kubectl", "get", "events", "-n", config.Components.MySQL.Namespace, "--field-selector", "involvedObject.name=mysql-primary-0", "--sort-by", ".lastTimestamp", "--no-headers")
+						eventsOutput, eventsErr := eventsCmd.CombinedOutput()
+						if eventsErr == nil && string(eventsOutput) != "" {
+							// Get the most recent event
+							eventLines := strings.Split(strings.TrimSpace(string(eventsOutput)), "\n")
+							if len(eventLines) > 0 {
+								lastEvent := eventLines[len(eventLines)-1]
+								eventFields := strings.Fields(lastEvent)
+								if len(eventFields) >= 3 {
+									eventType := eventFields[1]
+									eventReason := eventFields[2]
+									if eventType == "Warning" {
+										fmt.Printf("  %s Recent Warning: %s\n", red("❌"), eventReason)
+										if verbose && len(eventFields) > 3 {
+											fmt.Printf("  Details: %s\n", strings.Join(eventFields[3:], " "))
+										}
+									}
+								}
+							}
+						}
+						
+						// Try to get pod logs for errors
+						if verbose {
+							logsCmd := exec.Command("kubectl", "logs", "mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--tail=5", "--no-headers")
+							logsOutput, logsErr := logsCmd.CombinedOutput()
+							if logsErr == nil && string(logsOutput) != "" {
+								fmt.Printf("  Recent Logs:\n")
+								logLines := strings.Split(strings.TrimSpace(string(logsOutput)), "\n")
+								for i, line := range logLines {
+									if i >= 3 { // Show only last 3 lines
+										break
+									}
+									if strings.Contains(strings.ToLower(line), "error") || strings.Contains(strings.ToLower(line), "fail") {
+										fmt.Printf("    %s %s\n", red("⚠️"), line)
+									}
+								}
+							}
+						}
+					}
+					
+					if svcErr != nil && verbose {
+						fmt.Printf("  Service Error: %v\n", svcErr)
+					}
+					
+					// Check if namespace exists
+					nsCmd := exec.Command("kubectl", "get", "namespace", config.Components.MySQL.Namespace, "--no-headers")
+					_, nsErr := nsCmd.CombinedOutput()
+					if nsErr != nil {
+						fmt.Printf("  %s MySQL namespace does not exist - MySQL may not have been installed\n", yellow("ℹ️"))
+					}
+				}
+			} else {
+				fmt.Printf("- %s MySQL is disabled in config\n", yellow("ℹ️"))
+			}
+
 			// Print service access information
 			fmt.Println(green("Access services:"))
 
 			// Find host ports from the port mappings
-			var temporalWebPort, temporalFrontendPort, redisPort, openSearchPort, openSearchDashboardsPort int
+			var temporalWebPort, temporalFrontendPort, redisPort, openSearchPort, openSearchDashboardsPort, mysqlPort int
 
 			for _, portMap := range config.Cluster.MapPorts {
 				// Check if containerPort matches any of our known nodePort values
@@ -299,6 +408,10 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					// OpenSearch Dashboards
 					if cp == config.Components.OpenSearchDashboards.NodePorts.Http {
 						openSearchDashboardsPort = portMap.HostPort
+					}
+					// MySQL
+					if cp == config.Components.MySQL.NodePorts.MySQL {
+						mysqlPort = portMap.HostPort
 					}
 				}
 			}
@@ -349,6 +462,24 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					fmt.Printf("- OpenSearch Dashboards: http://localhost:%d\n", openSearchDashboardsPort)
 				} else if verbose {
 					fmt.Printf("%s OpenSearch Dashboards namespace not found or port mapping missing. OpenSearch Dashboards may not be installed.\n", yellow("⚠️"))
+				}
+			}
+
+			if config.Components.MySQL.Enabled {
+				// Check if MySQL is actually deployed
+				mysqlCmd := exec.Command("kubectl", "get", "namespace", config.Components.MySQL.Namespace)
+				_, err := mysqlCmd.CombinedOutput()
+
+				if err == nil && mysqlPort > 0 {
+					fmt.Printf("- MySQL: localhost:%d\n", mysqlPort)
+					fmt.Printf("  Database: %s\n", config.Components.MySQL.Database)
+					if config.Secrets.MySQL.Enabled {
+						fmt.Printf("  Username: %s\n", config.Secrets.MySQL.Username)
+					} else {
+						fmt.Printf("  Username: root\n")
+					}
+				} else if verbose {
+					fmt.Printf("%s MySQL namespace not found or port mapping missing. MySQL may not be installed.\n", yellow("⚠️"))
 				}
 			}
 

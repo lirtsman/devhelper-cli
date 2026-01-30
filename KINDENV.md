@@ -9,6 +9,7 @@ This command creates and manages a Kind Kubernetes cluster with:
 - [Temporal](https://temporal.io/) server
 - [Dapr](https://dapr.io/) runtime
 - [Redis](https://redis.io/)
+- [MySQL 8](https://www.mysql.com/) database
 - Required infrastructure for Shield applications
 
 ## Prerequisites
@@ -67,17 +68,29 @@ components:
   temporal:
     enabled: true
     namespace: temporal
-    webPort: 8080
-    webNodePort: 30080
-    frontendPort: 7233
-    frontendNodePort: 30733
+    chartVersion: "0.62.0"
+    nodePorts:
+      web: 30080
+      frontend: 30733
   redis:
     enabled: true
-    port: 6379
-    nodePort: 30679
-    image: bitnami/redis:7.0.5-debian-11-r7
+    chartVersion: "17.3.7"
+    nodePorts:
+      redis: 30679
     auth:
       enabled: false
+  mysql:
+    enabled: true
+    chartVersion: "9.4.6"
+    database: "mysql"
+    nodePorts:
+      mysql: 30306
+    resources:
+      cpu: "500m"
+      memory: "1Gi"
+    persistence:
+      enabled: false
+      size: "8Gi"
 images:
   skipPull: false
   dockerHub:
@@ -125,7 +138,7 @@ This command performs two key setup tasks:
 2. **Helm repositories**: Adds and updates the necessary Helm repositories:
    - `temporal`: For Temporal server
    - `dapr`: For Dapr runtime
-   - `bitnami`: For Redis
+   - `bitnami`: For Redis and MySQL
 
 Options:
 - `--output`, `-o`: Specify a different output path for the configuration file (default: `kindenv.yaml`)
@@ -185,6 +198,73 @@ After starting the environment, services are accessible at:
 - **Temporal Web UI**: http://localhost:8080 (configurable)
 - **Temporal Frontend**: localhost:7233 (configurable)
 - **Redis**: localhost:6379 (configurable)
+- **MySQL**: localhost:3306 (configurable)
+
+### MySQL Configuration
+
+MySQL 8 is deployed using the Bitnami MySQL Helm chart. You can configure MySQL in the `components.mysql` section:
+
+```yaml
+components:
+  mysql:
+    enabled: true                    # Enable/disable MySQL installation
+    chartVersion: "9.4.6"            # Helm chart version
+    database: "mysql"                # Database name to create
+    nodePorts:
+      mysql: 30306                   # Kubernetes NodePort (30000-32767)
+    resources:
+      cpu: "500m"                    # CPU request (e.g., "500m", "1")
+      memory: "1Gi"                  # Memory request (e.g., "1Gi", "512Mi")
+    persistence:
+      enabled: false                 # Enable persistent storage
+      size: "8Gi"                    # Storage size when persistence enabled
+```
+
+#### MySQL Credentials
+
+MySQL credentials are managed through the `secrets.mysql` section:
+
+```yaml
+secrets:
+  mysql:
+    enabled: true                    # Enable MySQL secret creation
+    name: "mysql-credentials"        # Kubernetes secret name
+    namespace: "mysql"               # Namespace for the secret
+    username: "root"                 # MySQL username
+    password: "password"             # MySQL password
+```
+
+When `secrets.mysql.enabled` is `true`, the MySQL Helm chart will use the specified secret for authentication. Otherwise, default credentials (root/password) are used.
+
+#### MySQL Persistence
+
+By default, MySQL persistence is disabled for faster development cycles. To enable data persistence across restarts:
+
+```yaml
+components:
+  mysql:
+    persistence:
+      enabled: true
+      size: "8Gi"                    # Adjust size as needed
+```
+
+**Note**: When persistence is enabled, data will survive cluster restarts. When disabled, data is lost when the cluster is stopped.
+
+#### Connecting to MySQL
+
+After starting the environment, connect to MySQL using:
+
+```bash
+mysql -h localhost -P 3306 -u root -p
+```
+
+Or using the configured credentials:
+
+```bash
+mysql -h localhost -P 3306 -u <username> -p
+```
+
+The default password is `password` unless configured otherwise in `secrets.mysql.password`.
 
 ## Troubleshooting
 

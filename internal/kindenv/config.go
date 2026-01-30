@@ -118,6 +118,7 @@ type KindEnvConfig struct {
 		} `yaml:"metricsServer"`
 		MySQL struct {
 			Enabled      bool   `yaml:"enabled"`
+			Namespace    string `yaml:"namespace"`
 			ChartVersion string `yaml:"chartVersion"`
 			Database     string `yaml:"database"`
 			NodePorts    struct {
@@ -502,6 +503,9 @@ func (c *KindEnvConfig) Validate() error {
 
 	// Validate MySQL component configuration
 	if c.Components.MySQL.Enabled {
+		if c.Components.MySQL.Namespace == "" {
+			c.Components.MySQL.Namespace = "mysql"
+		}
 		if c.Components.MySQL.ChartVersion == "" {
 			return errors.New("mysql chart version must be specified when enabled")
 		}
@@ -580,6 +584,7 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.OpenSearchDashboards.NodePorts.Http = 30601
 
 	config.Components.MySQL.Enabled = false
+	config.Components.MySQL.Namespace = "mysql"
 	config.Components.MySQL.ChartVersion = "9.4.6"
 	config.Components.MySQL.Database = "mysql"
 	config.Components.MySQL.NodePorts.MySQL = 30306
@@ -597,15 +602,6 @@ func CreateDefaultConfig() *KindEnvConfig {
 
 	config.Components.MetricsServer.Enabled = true
 	config.Components.MetricsServer.ChartVersion = "3.10.0"
-
-	config.Components.MySQL.Enabled = false
-	config.Components.MySQL.ChartVersion = "9.4.6"
-	config.Components.MySQL.Database = "mysql"
-	config.Components.MySQL.NodePorts.MySQL = 30306
-	config.Components.MySQL.Resources.CPU = "500m"
-	config.Components.MySQL.Resources.Memory = "1Gi"
-	config.Components.MySQL.Persistence.Enabled = false
-	config.Components.MySQL.Persistence.Size = "8Gi"
 
 	// Images section
 	config.Images.SkipPull = false

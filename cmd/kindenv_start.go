@@ -809,6 +809,116 @@ stringData:
 			}
 		}
 
+		// Install MySQL
+		if config.Components.MySQL.Enabled {
+			fmt.Println(yellow("Installing MySQL"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.MySQL.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating MySQL namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying MySQL namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				err = setupECRCreds(config.Components.MySQL.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for MySQL: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Build Helm arguments for MySQL installation
+			helmArgs := []string{
+				"upgrade", "--install",
+				"mysql", "bitnami/mysql",
+				"--namespace", config.Components.MySQL.Namespace,
+				"--version", config.Components.MySQL.ChartVersion,
+				"--set", "primary.service.type=NodePort",
+				"--set", fmt.Sprintf("primary.service.nodePorts.mysql=%d", config.Components.MySQL.NodePorts.MySQL),
+				"--set", fmt.Sprintf("auth.database=%s", config.Components.MySQL.Database),
+				"--set", fmt.Sprintf("primary.persistence.enabled=%t", config.Components.MySQL.Persistence.Enabled),
+				"--set", fmt.Sprintf("primary.resources.requests.cpu=%s", config.Components.MySQL.Resources.CPU),
+				"--set", fmt.Sprintf("primary.resources.requests.memory=%s", config.Components.MySQL.Resources.Memory),
+				"--set", "secondary.replicaCount=0",
+			}
+
+			// Add secret configuration if MySQL secrets are enabled
+			if config.Secrets.MySQL.Enabled {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name))
+			} else {
+				// Use default credentials
+				helmArgs = append(helmArgs,
+					"--set", "auth.rootPassword=password",
+					"--set", "auth.username=mysql",
+					"--set", "auth.password=password")
+			}
+
+			// ECR-specific image configuration
+			if config.Images.UseAwsEcr {
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("global.imageRegistry=%s", ecrRegistry),
+					"--set", "image.repository=bitnamilegacy/mysql")
+			}
+
+			// Add persistence size if enabled
+			if config.Components.MySQL.Persistence.Enabled {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("primary.persistence.size=%s", config.Components.MySQL.Persistence.Size))
+			}
+
+			_, err = executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing MySQL: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for MySQL to be ready
+			fmt.Println(yellow("Waiting for MySQL to be ready..."))
+			time.Sleep(10 * time.Second)
+
+			// Wait for MySQL pod
+			fmt.Println(yellow("Waiting for mysql-primary-0 pod to be created..."))
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
+
+			var podExists bool
+			for i := 0; i < 10; i++ { // Try for up to 5 minutes (10 * 30s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 9 {
+					fmt.Printf("Waiting for mysql-primary-0 pod to appear (attempt %d/10)...\n", i+1)
+					time.Sleep(30 * time.Second)
+				}
+			}
+
+			if podExists {
+				fmt.Println(yellow("Found mysql-primary-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/mysql-primary-0", "-n", config.Components.MySQL.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: MySQL pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite MySQL not being fully ready..."))
+				} else {
+					fmt.Printf("%s MySQL installed successfully\n", green("✅"))
+				}
+			} else {
+				fmt.Printf("%s MySQL master pod (mysql-primary-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite MySQL pod not being detected..."))
+			}
+		}
+
 		// Install Dapr
 		if config.Components.Dapr.Enabled {
 			fmt.Println(yellow("Installing Dapr"))
@@ -1541,7 +1651,7 @@ stringData:
 		fmt.Println(green("Kind-based development environment setup complete!"))
 
 		// Find host ports from the port mappings and component configuration
-		var temporalWebPort, temporalFrontendPort, redisPort int
+		var temporalWebPort, temporalFrontendPort, redisPort, mysqlPort int
 
 		if verbose {
 			fmt.Println(yellow("Port mapping details for accessing services:"))
@@ -1579,6 +1689,9 @@ stringData:
 						return portMap.HostPort
 					}
 					if strings.Contains(cp, "redis.nodePorts.redis") && containerPort == config.Components.Redis.NodePorts.Redis {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "mysql.nodePorts.mysql") && containerPort == config.Components.MySQL.NodePorts.MySQL {
 						return portMap.HostPort
 					}
 				}
@@ -1656,6 +1769,24 @@ stringData:
 		}
 		if config.Components.Redis.Enabled && redisPort > 0 {
 			fmt.Printf("- Redis: localhost:%d\n", redisPort)
+		}
+		if config.Components.MySQL.Enabled {
+			mysqlPort = findHostPort(config.Components.MySQL.NodePorts.MySQL)
+			if mysqlPort == 0 {
+				mysqlPort = 3306 // Default host port for MySQL
+				if verbose {
+					fmt.Printf("%s Using default host port for MySQL: %d\n", yellow("ℹ️"), mysqlPort)
+				}
+			}
+			if mysqlPort > 0 {
+				fmt.Printf("- MySQL: localhost:%d\n", mysqlPort)
+				fmt.Printf("  Database: %s\n", config.Components.MySQL.Database)
+				if config.Secrets.MySQL.Enabled {
+					fmt.Printf("  Username: %s\n", config.Secrets.MySQL.Username)
+				} else {
+					fmt.Printf("  Username: root\n")
+				}
+			}
 		}
 		if config.Components.OpenSearch.Enabled && openSearchPort > 0 {
 			fmt.Printf("- OpenSearch: http://localhost:%d\n", openSearchPort)
