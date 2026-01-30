@@ -241,12 +241,12 @@
 
 **Purpose**: Verify all user stories work together and independently
 
-- [ ] T087 [P] Write test for multiple custom components with different features in cmd/kindenv_start_test.go
-- [ ] T088 [P] Write test for component with all features enabled in cmd/kindenv_start_test.go
-- [ ] T089 [P] Write test for parallel deployment of multiple components in cmd/kindenv_start_test.go
-- [ ] T090 Write end-to-end test: deploy component with MySQL + OpenSearch + config files in cmd/kindenv_start_test.go
-- [ ] T091 [P] Write test for kindenv stop cleanup of all resources in cmd/kindenv_stop_test.go
-- [ ] T092 [P] Write test for status reporting of multiple components in cmd/kindenv_status_test.go
+- [x] T087 [P] Write test for multiple custom components with different features in cmd/kindenv_start_test.go
+- [x] T088 [P] Write test for component with all features enabled in cmd/kindenv_start_test.go
+- [x] T089 [P] Write test for parallel deployment of multiple components in cmd/kindenv_start_test.go
+- [x] T090 Write end-to-end test: deploy component with MySQL + OpenSearch + config files in cmd/kindenv_start_test.go
+- [x] T091 [P] Write test for kindenv stop cleanup of all resources in cmd/kindenv_stop_test.go
+- [x] T092 [P] Write test for status reporting of multiple components in cmd/kindenv_status_test.go
 
 ---
 

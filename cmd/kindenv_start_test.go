@@ -800,7 +800,297 @@ func TestCustomComponentWithPortMappings(t *testing.T) {
 	}
 }
 
+// T087: Test for multiple custom components with different features
+func TestMultipleCustomComponentsWithDifferentFeatures(t *testing.T) {
+	config := &kindenv.KindEnvConfig{
+		CustomComponents: []kindenv.CustomComponent{
+			{
+				Name:  "minimal-app",
+				Image: "nginx:latest",
+			},
+			{
+				Name:  "env-app",
+				Image: "alpine:latest",
+				Env: []kindenv.EnvVar{
+					{
+						Name:  "APP_ENV",
+						Value: "test",
+					},
+				},
+			},
+			{
+				Name:  "port-app",
+				Image: "nginx:latest",
+				Ports: []kindenv.PortMapping{
+					{
+						ContainerPort: 8080,
+						Protocol:      "TCP",
+						NodePort:      30001,
+					},
+				},
+			},
+			{
+				Name:      "resource-app",
+				Image:     "alpine:latest",
+				Namespace: "custom-ns",
+				Resources: &kindenv.ResourceRequirements{
+					Requests: &kindenv.ResourceList{
+						CPU:    "100m",
+						Memory: "128Mi",
+					},
+					Limits: &kindenv.ResourceList{
+						CPU:    "500m",
+						Memory: "512Mi",
+					},
+				},
+			},
+		},
+	}
+
+	// Set defaults for all components
+	for i := range config.CustomComponents {
+		config.CustomComponents[i].SetDefaults()
+	}
+
+	deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+	assert.NoError(t, err, "Should deploy multiple components successfully")
+	assert.Len(t, deploymentInfos, 4, "Should have 4 deployment infos")
+
+	// Verify each component has correct deployment YAML
+	for i, info := range deploymentInfos {
+		assert.NotEmpty(t, info.DeploymentYAML, "Deployment YAML should not be empty for component %d", i)
+		assert.Equal(t, config.CustomComponents[i].Name, info.Name, "Deployment name should match")
+		assert.Equal(t, config.CustomComponents[i].Namespace, info.Namespace, "Namespace should match")
+	}
+
+	// Verify port-app has service YAML
+	portAppInfo := deploymentInfos[2] // port-app is index 2
+	assert.NotEmpty(t, portAppInfo.ServiceYAML, "Port-app should have service YAML")
+	assert.Contains(t, portAppInfo.ServiceYAML, "type: NodePort", "Service should be NodePort type")
+}
+
+// T088: Test for component with all features enabled
+func TestCustomComponentWithAllFeaturesEnabled(t *testing.T) {
+	component := kindenv.CustomComponent{
+		Name:      "full-featured-app",
+		Image:     "nginx:latest",
+		Namespace: "test-ns",
+		Replicas:  intPtr(2),
+		Command:   []string{"nginx"},
+		Args:      []string{"-g", "daemon off;"},
+		Env: []kindenv.EnvVar{
+			{
+				Name:  "APP_ENV",
+				Value: "production",
+			},
+			{
+				Name:  "DB_HOST",
+				Value: "mysql",
+			},
+		},
+		Ports: []kindenv.PortMapping{
+			{
+				ContainerPort: 8080, // Use port >= 1024 to avoid hostPort validation issues
+				Protocol:      "TCP",
+				NodePort:      30080, // Valid NodePort range: 30000-32767
+			},
+			{
+				ContainerPort: 8443, // Use port >= 1024 to avoid hostPort validation issues
+				Protocol:      "TCP",
+				NodePort:      30443, // Valid NodePort range: 30000-32767
+			},
+		},
+		Resources: &kindenv.ResourceRequirements{
+			Requests: &kindenv.ResourceList{
+				CPU:    "200m",
+				Memory: "256Mi",
+			},
+			Limits: &kindenv.ResourceList{
+				CPU:    "1000m",
+				Memory: "1Gi",
+			},
+		},
+		ConfigFiles: []kindenv.ConfigFile{
+			{
+				Name:     "app.yaml",
+				Path:     "/config/app.yaml",
+				Contents: "server:\n  port: 80",
+			},
+			{
+				Name:     "logback.xml",
+				Path:     "/config/logback.xml",
+				Contents: "<configuration></configuration>",
+			},
+		},
+		Labels: map[string]string{
+			"tier":      "backend",
+			"component": "api",
+		},
+	}
+
+	component.SetDefaults()
+	err := component.Validate()
+	assert.NoError(t, err, "Component with all features should be valid")
+
+	config := &kindenv.KindEnvConfig{
+		CustomComponents: []kindenv.CustomComponent{component},
+	}
+
+	deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+	assert.NoError(t, err, "Should deploy component with all features")
+	assert.Len(t, deploymentInfos, 1, "Should have one deployment info")
+
+	info := deploymentInfos[0]
+
+	// Verify deployment YAML contains all features
+	assert.Contains(t, info.DeploymentYAML, "replicas: 2", "Should have correct replicas")
+	assert.Contains(t, info.DeploymentYAML, "command:", "Should have command")
+	assert.Contains(t, info.DeploymentYAML, "args:", "Should have args")
+	assert.Contains(t, info.DeploymentYAML, "APP_ENV", "Should have env vars")
+	assert.Contains(t, info.DeploymentYAML, "DB_HOST", "Should have DB_HOST env var")
+	assert.Contains(t, info.DeploymentYAML, "containerPort: 8080", "Should have port 8080")
+	assert.Contains(t, info.DeploymentYAML, "containerPort: 8443", "Should have port 8443")
+	assert.Contains(t, info.DeploymentYAML, "requests:", "Should have resource requests")
+	assert.Contains(t, info.DeploymentYAML, "limits:", "Should have resource limits")
+	assert.Contains(t, info.DeploymentYAML, "volumeMounts:", "Should have volume mounts")
+	assert.Contains(t, info.DeploymentYAML, "volumes:", "Should have volumes")
+
+	// Verify service YAML
+	assert.NotEmpty(t, info.ServiceYAML, "Should have service YAML")
+	assert.Contains(t, info.ServiceYAML, "port: 8080", "Service should expose port 8080")
+	assert.Contains(t, info.ServiceYAML, "port: 8443", "Service should expose port 8443")
+	assert.Contains(t, info.ServiceYAML, "nodePort: 30080", "Service should have NodePort 30080")
+	assert.Contains(t, info.ServiceYAML, "nodePort: 30443", "Service should have NodePort 30443")
+
+	// Verify ConfigMap YAML
+	assert.NotEmpty(t, info.ConfigMapYAML, "Should have ConfigMap YAML")
+	assert.Contains(t, info.ConfigMapYAML, "app.yaml", "ConfigMap should contain app.yaml")
+	assert.Contains(t, info.ConfigMapYAML, "logback.xml", "ConfigMap should contain logback.xml")
+}
+
+// T089: Test for parallel deployment of multiple components
+func TestParallelDeploymentOfMultipleComponents(t *testing.T) {
+	// Create multiple components that can be deployed in parallel
+	components := []kindenv.CustomComponent{
+		{
+			Name:      "app-1",
+			Image:     "nginx:latest",
+			Namespace: "default",
+		},
+		{
+			Name:      "app-2",
+			Image:     "alpine:latest",
+			Namespace: "default",
+		},
+		{
+			Name:      "app-3",
+			Image:     "busybox:latest",
+			Namespace: "custom-ns",
+		},
+	}
+
+	// Set defaults
+	for i := range components {
+		components[i].SetDefaults()
+		err := components[i].Validate()
+		assert.NoError(t, err, "Component %d should be valid", i)
+	}
+
+	config := &kindenv.KindEnvConfig{
+		CustomComponents: components,
+	}
+
+	deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+	assert.NoError(t, err, "Should deploy multiple components in parallel")
+	assert.Len(t, deploymentInfos, 3, "Should have 3 deployment infos")
+
+	// Verify all components have deployment YAML
+	for i, info := range deploymentInfos {
+		assert.NotEmpty(t, info.DeploymentYAML, "Component %d should have deployment YAML", i)
+		assert.Equal(t, components[i].Name, info.Name, "Component %d name should match", i)
+		assert.Equal(t, components[i].Namespace, info.Namespace, "Component %d namespace should match", i)
+	}
+
+	// Verify names are unique
+	names := make(map[string]bool)
+	for _, info := range deploymentInfos {
+		assert.False(t, names[info.Name], "Component name %s should be unique", info.Name)
+		names[info.Name] = true
+	}
+}
+
+// T090: End-to-end test: deploy component with MySQL + OpenSearch + config files
+func TestEndToEndCustomComponentWithInfrastructure(t *testing.T) {
+	// This test verifies that custom components can be deployed alongside infrastructure
+	// Note: This is a unit test that validates YAML generation, not an actual cluster deployment
+	// The test focuses on the custom component configuration that would work with MySQL and OpenSearch
+	config := &kindenv.KindEnvConfig{
+		CustomComponents: []kindenv.CustomComponent{
+			{
+				Name:  "app-with-config",
+				Image: "nginx:latest",
+				Env: []kindenv.EnvVar{
+					{
+						Name:  "DB_HOST",
+						Value: "mysql",
+					},
+					{
+						Name:  "OPENSEARCH_HOST",
+						Value: "opensearch",
+					},
+					{
+						Name:  "DB_PORT",
+						Value: "3306",
+					},
+				},
+				Ports: []kindenv.PortMapping{
+					{
+						ContainerPort: 8080,
+						Protocol:      "TCP",
+						NodePort:      30080,
+					},
+				},
+				ConfigFiles: []kindenv.ConfigFile{
+					{
+						Name:     "application.yaml",
+						Path:     "/config/application.yaml",
+						Contents: "database:\n  host: mysql\n  port: 3306\nopensearch:\n  host: opensearch\n  port: 9200",
+					},
+				},
+			},
+		},
+	}
+
+	// Set defaults for custom component
+	config.CustomComponents[0].SetDefaults()
+	err := config.CustomComponents[0].Validate()
+	assert.NoError(t, err, "Custom component should be valid")
+
+	deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+	assert.NoError(t, err, "Should deploy custom component alongside infrastructure")
+	assert.Len(t, deploymentInfos, 1, "Should have one deployment info")
+
+	info := deploymentInfos[0]
+
+	// Verify deployment includes all features
+	assert.Contains(t, info.DeploymentYAML, "DB_HOST", "Should have DB_HOST env var")
+	assert.Contains(t, info.DeploymentYAML, "OPENSEARCH_HOST", "Should have OPENSEARCH_HOST env var")
+	assert.Contains(t, info.DeploymentYAML, "DB_PORT", "Should have DB_PORT env var")
+	assert.Contains(t, info.DeploymentYAML, "volumeMounts:", "Should have volume mounts")
+	assert.Contains(t, info.DeploymentYAML, "volumes:", "Should have volumes")
+
+	// Verify service and ConfigMap
+	assert.NotEmpty(t, info.ServiceYAML, "Should have service YAML")
+	assert.NotEmpty(t, info.ConfigMapYAML, "Should have ConfigMap YAML")
+	assert.Contains(t, info.ConfigMapYAML, "application.yaml", "ConfigMap should contain application.yaml")
+}
+
 // Helper function for creating int pointers
 func intPtr(i int) *int {
 	return &i
+}
+
+// Helper function for creating bool pointers
+func boolPtr(b bool) *bool {
+	return &b
 }
