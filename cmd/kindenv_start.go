@@ -863,10 +863,18 @@ stringData:
 				}
 			}
 
-			// Create MySQL secret in MySQL namespace if MySQL secrets are enabled
+			// Create MySQL secret in the component namespace if MySQL secrets are enabled
+			// Note: The secret must be in the same namespace as the MySQL deployment for Helm to find it
 			if config.Secrets.MySQL.Enabled {
+				// Warn if secret namespace differs from component namespace (Helm won't find it)
+				if config.Secrets.MySQL.Namespace != config.Components.MySQL.Namespace {
+					fmt.Printf("%s Warning: MySQL secret namespace (%s) differs from component namespace (%s). Helm will look for the secret in the component namespace.\n",
+						yellow("⚠️"), config.Secrets.MySQL.Namespace, config.Components.MySQL.Namespace)
+				}
+
 				fmt.Println(yellow("Creating MySQL credentials secret"))
 
+				// Create secret in component namespace (where Helm release will be deployed)
 				mysqlSecretYaml := fmt.Sprintf(`
 apiVersion: v1
 kind: Secret
@@ -909,7 +917,9 @@ stringData:
 
 			// Add secret configuration if MySQL secrets are enabled
 			if config.Secrets.MySQL.Enabled {
-				helmArgs = append(helmArgs, "--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name))
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name),
+					"--set", fmt.Sprintf("auth.username=%s", config.Secrets.MySQL.Username))
 			} else {
 				// Use default credentials
 				helmArgs = append(helmArgs,
