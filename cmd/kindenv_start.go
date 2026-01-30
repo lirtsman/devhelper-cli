@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -876,6 +877,7 @@ stringData:
 				fmt.Println(yellow("Creating MySQL credentials secret"))
 
 				// Create secret in component namespace (where Helm release will be deployed)
+				// Include username and password keys for custom components to reference
 				mysqlSecretYaml := fmt.Sprintf(`
 apiVersion: v1
 kind: Secret
@@ -884,9 +886,12 @@ metadata:
   namespace: %s
 type: Opaque
 stringData:
+  username: "%s"
+  password: "%s"
   mysql-root-password: "%s"
   mysql-password: "%s"
 `, config.Secrets.MySQL.Name, config.Components.MySQL.Namespace,
+					config.Secrets.MySQL.Username, config.Secrets.MySQL.Password,
 					config.Secrets.MySQL.Password, config.Secrets.MySQL.Password)
 
 				cmd := exec.Command("kubectl", "apply", "-f", "-")
@@ -898,6 +903,108 @@ stringData:
 				}
 
 				fmt.Printf("%s MySQL credentials secret created\n", green("✅"))
+			}
+
+			// Create ConfigMap for init scripts if provided
+			initScriptsConfigMapName := "mysql-init-scripts"
+			if len(config.Components.MySQL.InitScripts) > 0 {
+				fmt.Println(yellow("Creating MySQL initialization scripts ConfigMap"))
+
+				// Get the directory of the config file to resolve relative paths
+				// Resolve the actual config file path (handles empty/default case)
+				actualConfigPath := configPath
+				if actualConfigPath == "" {
+					actualConfigPath = "kindenv.yaml" // Default config file name
+				}
+				// Get absolute path to resolve relative paths correctly
+				absConfigPath, err := filepath.Abs(actualConfigPath)
+				if err != nil {
+					// Fallback to current directory if we can't resolve
+					absConfigPath, _ = os.Getwd()
+					if absConfigPath == "" {
+						absConfigPath = "."
+					}
+				}
+				configDir := filepath.Dir(absConfigPath)
+
+				// Build ConfigMap YAML with proper literal block scalars for multi-line SQL
+				var configMapBuilder strings.Builder
+				configMapBuilder.WriteString(fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+data:
+`, initScriptsConfigMapName, config.Components.MySQL.Namespace))
+
+				// Add each init script with proper YAML literal block scalar
+				for filename, contentOrPath := range config.Components.MySQL.InitScripts {
+					var content string
+					
+					// Check if contentOrPath looks like a file path
+					// File paths typically contain '/' or '\' or start with './' or '../' or are absolute paths
+					looksLikePath := strings.Contains(contentOrPath, "/") || 
+					                strings.Contains(contentOrPath, "\\") ||
+					                strings.HasPrefix(contentOrPath, "./") ||
+					                strings.HasPrefix(contentOrPath, "../") ||
+					                filepath.IsAbs(contentOrPath)
+					
+					if looksLikePath {
+						// Resolve file path relative to config file directory
+						filePath := contentOrPath
+						if !filepath.IsAbs(filePath) {
+							filePath = filepath.Join(configDir, filePath)
+						}
+						
+						// Check if file exists
+						if _, err := os.Stat(filePath); err == nil {
+							// File exists, read it
+							fileContent, err := os.ReadFile(filePath)
+							if err != nil {
+								fmt.Printf("%s Error reading init script file '%s': %v\n", red("❌"), filePath, err)
+								os.Exit(1)
+							}
+							content = string(fileContent)
+							
+							if verbose {
+								fmt.Printf("  Loaded init script from file: %s\n", filePath)
+							}
+						} else {
+							// File doesn't exist, treat as inline content (might be a SQL statement with slashes)
+							content = contentOrPath
+							if verbose {
+								fmt.Printf("  Warning: '%s' looks like a path but file not found, treating as inline content\n", contentOrPath)
+							}
+						}
+					} else {
+						// Treat as inline content
+						content = contentOrPath
+					}
+
+					// Use literal block scalar (|) to preserve newlines
+					// Indent each line of content
+					lines := strings.Split(content, "\n")
+					configMapBuilder.WriteString(fmt.Sprintf("  %s: |\n", filename))
+					for _, line := range lines {
+						configMapBuilder.WriteString(fmt.Sprintf("    %s\n", line))
+					}
+				}
+
+				configMapYaml := configMapBuilder.String()
+
+				// Apply the ConfigMap
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(configMapYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating MySQL init scripts ConfigMap: %v\n", red("❌"), err)
+					if verbose {
+						fmt.Printf("ConfigMap YAML:\n%s\n", configMapYaml)
+					}
+					os.Exit(1)
+				}
+
+				fmt.Printf("%s MySQL initialization scripts ConfigMap created with %d script(s)\n", green("✅"), len(config.Components.MySQL.InitScripts))
 			}
 
 			// Build Helm arguments for MySQL installation
@@ -919,8 +1026,15 @@ stringData:
 			// Add secret configuration if MySQL secrets are enabled
 			if config.Secrets.MySQL.Enabled {
 				helmArgs = append(helmArgs,
-					"--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name),
-					"--set", fmt.Sprintf("auth.username=%s", config.Secrets.MySQL.Username))
+					"--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name))
+				
+				// If username is "root", don't set auth.username (root already exists)
+				// Only set auth.username for non-root users (which creates a new user)
+				if config.Secrets.MySQL.Username != "root" {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("auth.username=%s", config.Secrets.MySQL.Username))
+				}
+				// For root user, the chart will use mysql-root-password from the secret automatically
 			} else {
 				// Use default credentials
 				helmArgs = append(helmArgs,
@@ -945,6 +1059,12 @@ stringData:
 			// Add persistence size if enabled
 			if config.Components.MySQL.Persistence.Enabled {
 				helmArgs = append(helmArgs, "--set", fmt.Sprintf("primary.persistence.size=%s", config.Components.MySQL.Persistence.Size))
+			}
+
+			// Add init scripts ConfigMap if provided
+			// Note: initdbScriptsConfigMap is at root level, not under primary
+			if len(config.Components.MySQL.InitScripts) > 0 {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("initdbScriptsConfigMap=%s", initScriptsConfigMapName))
 			}
 
 			_, err = executeCommand("helm", helmArgs...)
@@ -1739,6 +1859,72 @@ stringData:
 		// Deploy custom components
 		if len(config.CustomComponents) > 0 {
 			fmt.Println(yellow("Deploying custom components..."))
+
+			// Create MySQL secret in namespaces where custom components need it
+			if config.Secrets.MySQL.Enabled {
+				// Collect unique namespaces from custom components that reference MySQL secret
+				mysqlSecretNamespaces := make(map[string]bool)
+				mysqlSecretNamespaces[config.Components.MySQL.Namespace] = true // Always include MySQL namespace
+				
+				for _, component := range config.CustomComponents {
+					if component.Enabled == nil || *component.Enabled {
+						// Check if component references MySQL secret
+						for _, envVar := range component.Env {
+							if envVar.ValueFrom != nil && envVar.ValueFrom.SecretKeyRef != nil {
+								if envVar.ValueFrom.SecretKeyRef.Name == config.Secrets.MySQL.Name {
+									namespace := component.Namespace
+									if namespace == "" {
+										namespace = "default"
+									}
+									mysqlSecretNamespaces[namespace] = true
+									break
+								}
+							}
+						}
+					}
+				}
+
+				// Create MySQL secret in each namespace that needs it
+				for namespace := range mysqlSecretNamespaces {
+					// Skip if secret already exists in MySQL namespace (created earlier)
+					if namespace == config.Components.MySQL.Namespace {
+						continue
+					}
+
+					// Create namespace if it doesn't exist
+					namespaceYaml, err := executeCommand("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
+					if err == nil {
+						cmd := exec.Command("kubectl", "apply", "-f", "-")
+						cmd.Stdin = strings.NewReader(namespaceYaml)
+						cmd.Run() // Ignore error if namespace already exists
+					}
+
+					// Create MySQL secret in this namespace
+					mysqlSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: "%s"
+  password: "%s"
+  mysql-root-password: "%s"
+  mysql-password: "%s"
+`, config.Secrets.MySQL.Name, namespace,
+						config.Secrets.MySQL.Username, config.Secrets.MySQL.Password,
+						config.Secrets.MySQL.Password, config.Secrets.MySQL.Password)
+
+					cmd := exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = strings.NewReader(mysqlSecretYaml)
+					if err := cmd.Run(); err != nil {
+						fmt.Printf("%s Warning: Failed to create MySQL secret '%s' in namespace '%s': %v\n", yellow("⚠️"), config.Secrets.MySQL.Name, namespace, err)
+					} else if verbose {
+						fmt.Printf("%s MySQL secret '%s' created in namespace '%s'\n", green("✅"), config.Secrets.MySQL.Name, namespace)
+					}
+				}
+			}
 
 			deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
 			if err != nil {

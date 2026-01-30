@@ -218,6 +218,15 @@ components:
     persistence:
       enabled: false                 # Enable persistent storage
       size: "8Gi"                    # Storage size when persistence enabled
+    initScripts:                     # Optional: SQL initialization scripts
+      init.sql: |                    # Scripts are executed in alphabetical order
+        CREATE DATABASE IF NOT EXISTS myapp;
+        USE myapp;
+        CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          username VARCHAR(255) NOT NULL,
+          email VARCHAR(255) NOT NULL
+        );
 ```
 
 #### MySQL Credentials
@@ -249,6 +258,55 @@ components:
 ```
 
 **Note**: When persistence is enabled, data will survive cluster restarts. When disabled, data is lost when the cluster is stopped.
+
+#### MySQL Initialization Scripts
+
+You can provide SQL initialization scripts that will be executed when MySQL first starts. Scripts can be provided either inline or as file paths:
+
+**Inline Scripts:**
+```yaml
+components:
+  mysql:
+    initScripts:
+      init.sql: |
+        CREATE DATABASE IF NOT EXISTS myapp;
+        USE myapp;
+        CREATE TABLE IF NOT EXISTS users (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          username VARCHAR(255) NOT NULL,
+          email VARCHAR(255) NOT NULL
+        );
+```
+
+**File Paths (relative to kindenv.yaml location):**
+```yaml
+components:
+  mysql:
+    initScripts:
+      init.sql: ./scripts/init.sql
+      seed-data.sql: ./scripts/seed-data.sql
+```
+
+**Mixed (inline and file paths):**
+```yaml
+components:
+  mysql:
+    initScripts:
+      init.sql: ./scripts/init.sql          # Load from file
+      seed-data.sql: |                      # Inline content
+        INSERT INTO myapp.users (username, email) VALUES
+          ('admin', 'admin@example.com'),
+          ('user1', 'user1@example.com');
+```
+
+**Important Notes**:
+- Scripts are executed in alphabetical order by filename
+- Scripts only run on the **first initialization** of MySQL (when the data directory is empty)
+- If persistence is enabled and data already exists, scripts will **not** run again
+- Use `.sql` extension for SQL scripts (`.sh` scripts are also supported but only run on primary nodes)
+- Scripts are mounted to `/docker-entrypoint-initdb.d/` in the MySQL container
+- File paths are resolved relative to the `kindenv.yaml` file location
+- If a file path doesn't exist, it will be treated as inline content (with a warning)
 
 #### Connecting to MySQL
 

@@ -132,6 +132,7 @@ type KindEnvConfig struct {
 				Enabled bool   `yaml:"enabled"`
 				Size    string `yaml:"size"`
 			} `yaml:"persistence"`
+			InitScripts map[string]string `yaml:"initScripts,omitempty"` // Map of filename -> SQL script content
 		} `yaml:"mysql"`
 	} `yaml:"components"`
 	Images struct {

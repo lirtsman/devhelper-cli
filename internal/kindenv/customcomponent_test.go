@@ -20,7 +20,7 @@ func TestGenerateDeploymentYAML_MinimalComponent(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, yamlStr)
 
@@ -80,7 +80,7 @@ func TestGenerateDeploymentYAML_WithEnvironmentVariables(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -220,7 +220,7 @@ func TestGenerateDeploymentYAML_NamespaceSpecification(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.component.SetDefaults()
 
-			yamlStr, err := generateDeploymentYAML(tt.component)
+			yamlStr, err := generateDeploymentYAML(tt.component, nil)
 			require.NoError(t, err)
 
 			var deployment map[string]interface{}
@@ -273,7 +273,7 @@ func TestGenerateDeploymentYAML_Replicas(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -297,7 +297,7 @@ func TestGenerateDeploymentYAML_CustomLabels(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -328,7 +328,7 @@ func TestGenerateDeploymentYAML_CommandOverride(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -356,7 +356,7 @@ func TestGenerateDeploymentYAML_ArgsWithoutCommand(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -385,7 +385,7 @@ func TestGenerateDeploymentYAML_CommandAndArgs(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -418,7 +418,7 @@ func TestGenerateDeploymentYAML_SinglePortMapping(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -460,7 +460,7 @@ func TestGenerateDeploymentYAML_MultiplePortMappings(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -563,7 +563,7 @@ func TestGenerateDeploymentYAML_WithSecretKeyRef(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -631,7 +631,7 @@ func TestGenerateDeploymentYAML_MixedEnvVars(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -697,7 +697,7 @@ func TestGenerateDeploymentYAML_WithCustomResources(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -729,7 +729,7 @@ func TestGenerateDeploymentYAML_WithDefaultResources(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -772,7 +772,7 @@ func TestGenerateDeploymentYAML_WithConfigFiles(t *testing.T) {
 	}
 	component.SetDefaults()
 
-	yamlStr, err := generateDeploymentYAML(component)
+	yamlStr, err := generateDeploymentYAML(component, nil)
 	require.NoError(t, err)
 
 	var deployment map[string]interface{}
@@ -819,4 +819,100 @@ func TestGenerateDeploymentYAML_WithConfigFiles(t *testing.T) {
 	assert.Equal(t, "config-test-config-volume", logbackMount["name"])
 	assert.Equal(t, "logback.xml", logbackMount["subPath"])
 	assert.True(t, logbackMount["readOnly"].(bool))
+}
+
+// Test for imagePullSecrets when ECR is enabled
+func TestGenerateDeploymentYAML_WithECRImagePullSecrets(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "ecr-app",
+		Image:     "992979781608.dkr.ecr.eu-west-1.amazonaws.com/my-app:v1.0",
+		Namespace: "default",
+	}
+	component.SetDefaults()
+
+	// Create config with ECR enabled
+	config := &KindEnvConfig{
+		Images: struct {
+			SkipPull  bool `yaml:"skipPull"`
+			DockerHub struct {
+				Username string `yaml:"username"`
+				Password string `yaml:"password"`
+			} `yaml:"dockerHub"`
+			UseAwsEcr bool `yaml:"useAwsEcr"`
+			AWS       struct {
+				Region      string `yaml:"region"`
+				EcrRegistry string `yaml:"ecrRegistry"`
+				Profile     string `yaml:"profile"`
+			} `yaml:"aws"`
+			UseHarbor      bool   `yaml:"useHarbor"`
+			HarborRegistry string `yaml:"harborRegistry"`
+		}{
+			UseAwsEcr: true,
+		},
+	}
+
+	yamlStr, err := generateDeploymentYAML(component, config)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	spec := template["spec"].(map[string]interface{})
+
+	// Verify imagePullSecrets are present
+	imagePullSecrets, exists := spec["imagePullSecrets"]
+	require.True(t, exists, "imagePullSecrets should be present when ECR is enabled")
+	
+	secrets := imagePullSecrets.([]interface{})
+	require.Len(t, secrets, 1)
+	
+	secret := secrets[0].(map[string]interface{})
+	assert.Equal(t, "ecr-credentials", secret["name"])
+}
+
+// Test for no imagePullSecrets when ECR is disabled
+func TestGenerateDeploymentYAML_WithoutECRImagePullSecrets(t *testing.T) {
+	component := &CustomComponent{
+		Name:      "public-app",
+		Image:     "nginx:latest",
+		Namespace: "default",
+	}
+	component.SetDefaults()
+
+	// Create config with ECR disabled
+	config := &KindEnvConfig{
+		Images: struct {
+			SkipPull  bool `yaml:"skipPull"`
+			DockerHub struct {
+				Username string `yaml:"username"`
+				Password string `yaml:"password"`
+			} `yaml:"dockerHub"`
+			UseAwsEcr bool `yaml:"useAwsEcr"`
+			AWS       struct {
+				Region      string `yaml:"region"`
+				EcrRegistry string `yaml:"ecrRegistry"`
+				Profile     string `yaml:"profile"`
+			} `yaml:"aws"`
+			UseHarbor      bool   `yaml:"useHarbor"`
+			HarborRegistry string `yaml:"harborRegistry"`
+		}{
+			UseAwsEcr: false,
+		},
+	}
+
+	yamlStr, err := generateDeploymentYAML(component, config)
+	require.NoError(t, err)
+
+	var deployment map[string]interface{}
+	err = yaml.Unmarshal([]byte(yamlStr), &deployment)
+	require.NoError(t, err)
+
+	template := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	spec := template["spec"].(map[string]interface{})
+
+	// Verify imagePullSecrets are NOT present
+	_, exists := spec["imagePullSecrets"]
+	assert.False(t, exists, "imagePullSecrets should not be present when ECR is disabled")
 }

@@ -83,7 +83,7 @@ func DeployCustomComponents(ctx context.Context, config *KindEnvConfig) ([]Deplo
 		}
 
 		// Generate deployment YAML
-		deploymentYAML, err := generateDeploymentYAML(component)
+		deploymentYAML, err := generateDeploymentYAML(component, config)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate deployment YAML for component '%s': %w", component.Name, err)
 		}
@@ -159,8 +159,14 @@ type PodMetadata struct {
 
 // PodSpec represents pod specification
 type PodSpec struct {
-	Containers []Container `yaml:"containers"`
-	Volumes    []Volume    `yaml:"volumes,omitempty"`
+	Containers     []Container        `yaml:"containers"`
+	Volumes        []Volume           `yaml:"volumes,omitempty"`
+	ImagePullSecrets []ImagePullSecret `yaml:"imagePullSecrets,omitempty"`
+}
+
+// ImagePullSecret represents an image pull secret reference
+type ImagePullSecret struct {
+	Name string `yaml:"name"`
 }
 
 // Container represents a container specification
@@ -216,7 +222,7 @@ type VolumeMount struct {
 }
 
 // generateDeploymentYAML generates Kubernetes Deployment YAML for a custom component
-func generateDeploymentYAML(component *CustomComponent) (string, error) {
+func generateDeploymentYAML(component *CustomComponent, config *KindEnvConfig) (string, error) {
 	// Ensure defaults are set
 	component.SetDefaults()
 
@@ -359,6 +365,13 @@ func generateDeploymentYAML(component *CustomComponent) (string, error) {
 	podSpec := PodSpec{
 		Containers: []Container{container},
 		Volumes:    volumes,
+	}
+
+	// Add imagePullSecrets if ECR is enabled
+	if config != nil && config.Images.UseAwsEcr {
+		podSpec.ImagePullSecrets = []ImagePullSecret{
+			{Name: "ecr-credentials"},
+		}
 	}
 
 	// Build deployment
