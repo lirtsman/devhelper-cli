@@ -101,7 +101,7 @@ func waitForDeployment(namespace, deployment string, timeout int) error {
 	_, err := executeCommand("kubectl", "wait", "--for=condition=Available",
 		fmt.Sprintf("--timeout=%dm", timeout),
 		fmt.Sprintf("deployment/%s", deployment),
-		fmt.Sprintf("-n=%s", namespace))
+		"-n", namespace)
 	return err
 }
 
