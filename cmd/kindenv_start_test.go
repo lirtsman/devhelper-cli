@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -459,4 +460,109 @@ func TestMySQLPersistenceConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCustomComponentBasicDeployment tests that basic custom component deployment generates correct YAML
+func TestCustomComponentBasicDeployment(t *testing.T) {
+	tests := []struct {
+		name        string
+		component   kindenv.CustomComponent
+		expectError bool
+		checkYAML    func(*testing.T, string)
+	}{
+		{
+			name: "minimal custom component with image and env vars",
+			component: kindenv.CustomComponent{
+				Name:  "test-app",
+				Image: "nginx:latest",
+				Env: []kindenv.EnvVar{
+					{
+						Name:  "APP_ENV",
+						Value: "development",
+					},
+					{
+						Name:  "DEBUG",
+						Value: "true",
+					},
+				},
+			},
+			expectError: false,
+			checkYAML: func(t *testing.T, yaml string) {
+				assert.Contains(t, yaml, "name: test-app", "YAML should contain component name")
+				assert.Contains(t, yaml, "image: nginx:latest", "YAML should contain image")
+				assert.Contains(t, yaml, "APP_ENV", "YAML should contain environment variable name")
+				assert.Contains(t, yaml, "development", "YAML should contain environment variable value")
+				assert.Contains(t, yaml, "apiVersion: apps/v1", "YAML should be a Deployment")
+				assert.Contains(t, yaml, "kind: Deployment", "YAML should be a Deployment")
+			},
+		},
+		{
+			name: "custom component with namespace",
+			component: kindenv.CustomComponent{
+				Name:      "my-app",
+				Image:     "alpine:latest",
+				Namespace: "custom-ns",
+			},
+			expectError: false,
+			checkYAML: func(t *testing.T, yaml string) {
+				assert.Contains(t, yaml, "namespace: custom-ns", "YAML should contain namespace")
+				assert.Contains(t, yaml, "name: my-app", "YAML should contain component name")
+			},
+		},
+		{
+			name: "custom component with replicas",
+			component: kindenv.CustomComponent{
+				Name:     "scaled-app",
+				Image:    "nginx:latest",
+				Replicas: intPtr(3),
+			},
+			expectError: false,
+			checkYAML: func(t *testing.T, yaml string) {
+				assert.Contains(t, yaml, "replicas: 3", "YAML should contain replicas")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set defaults
+			tt.component.SetDefaults()
+
+			// Validate component
+			err := tt.component.Validate()
+			if tt.expectError {
+				assert.Error(t, err, "Expected validation error")
+				return
+			}
+			assert.NoError(t, err, "Component should be valid")
+
+			// Generate deployment YAML
+			config := &kindenv.KindEnvConfig{
+				CustomComponents: []kindenv.CustomComponent{tt.component},
+			}
+
+			deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+			if tt.expectError {
+				assert.Error(t, err, "Expected deployment error")
+				return
+			}
+
+			assert.NoError(t, err, "Deployment should succeed")
+			assert.Len(t, deploymentInfos, 1, "Should have one deployment info")
+
+			deploymentInfo := deploymentInfos[0]
+			assert.Equal(t, tt.component.Name, deploymentInfo.Name, "Deployment name should match")
+			assert.NotEmpty(t, deploymentInfo.DeploymentYAML, "Deployment YAML should not be empty")
+
+			// Check YAML content
+			if tt.checkYAML != nil {
+				tt.checkYAML(t, deploymentInfo.DeploymentYAML)
+			}
+		})
+	}
+}
+
+// Helper function for creating int pointers
+func intPtr(i int) *int {
+	return &i
 }

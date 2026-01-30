@@ -103,6 +103,77 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			return
 		}
 
+		// Clean up custom components if any
+		if len(config.CustomComponents) > 0 {
+			if verbose {
+				fmt.Println(yellow("Cleaning up custom components..."))
+			}
+
+			for _, component := range config.CustomComponents {
+				// Skip disabled components
+				if component.Enabled != nil && !*component.Enabled {
+					if verbose {
+						fmt.Printf("  Skipping disabled component: %s\n", component.Name)
+					}
+					continue
+				}
+
+				namespace := component.Namespace
+				if namespace == "" {
+					namespace = "default"
+				}
+
+				// Delete deployment
+				if verbose {
+					fmt.Printf("  Deleting deployment '%s' in namespace '%s'...\n", component.Name, namespace)
+				}
+				_, err = executeCommand("kubectl", "delete", "deployment", component.Name, "-n", namespace, "--ignore-not-found")
+				if err != nil {
+					if verbose {
+						fmt.Printf("%s Warning: Failed to delete deployment '%s': %v\n", yellow("⚠️"), component.Name, err)
+					}
+				} else if verbose {
+					fmt.Printf("%s Deployment '%s' deleted\n", green("✅"), component.Name)
+				}
+
+				// Delete service if ports are configured
+				if len(component.Ports) > 0 {
+					serviceName := component.Name
+					if verbose {
+						fmt.Printf("  Deleting service '%s' in namespace '%s'...\n", serviceName, namespace)
+					}
+					_, err = executeCommand("kubectl", "delete", "service", serviceName, "-n", namespace, "--ignore-not-found")
+					if err != nil {
+						if verbose {
+							fmt.Printf("%s Warning: Failed to delete service '%s': %v\n", yellow("⚠️"), serviceName, err)
+						}
+					} else if verbose {
+						fmt.Printf("%s Service '%s' deleted\n", green("✅"), serviceName)
+					}
+				}
+
+				// Delete ConfigMap if config files are configured
+				if len(component.ConfigFiles) > 0 {
+					configMapName := component.Name + "-config"
+					if verbose {
+						fmt.Printf("  Deleting ConfigMap '%s' in namespace '%s'...\n", configMapName, namespace)
+					}
+					_, err = executeCommand("kubectl", "delete", "configmap", configMapName, "-n", namespace, "--ignore-not-found")
+					if err != nil {
+						if verbose {
+							fmt.Printf("%s Warning: Failed to delete ConfigMap '%s': %v\n", yellow("⚠️"), configMapName, err)
+						}
+					} else if verbose {
+						fmt.Printf("%s ConfigMap '%s' deleted\n", green("✅"), configMapName)
+					}
+				}
+			}
+
+			if !verbose {
+				fmt.Printf("%s Custom components cleaned up\n", green("✅"))
+			}
+		}
+
 		// Clean up MySQL if enabled
 		if config.Components.MySQL.Enabled {
 			if verbose {

@@ -76,7 +76,7 @@
 - [x] T023 [P] [US1] Write test for component with environment variables in internal/kindenv/customcomponent_test.go
 - [x] T024 [P] [US1] Write test for enabled/disabled flag behavior in internal/kindenv/customcomponent_test.go
 - [x] T025 [P] [US1] Write test for namespace specification in internal/kindenv/customcomponent_test.go
-- [ ] T026 [P] [US1] Write integration test for basic deployment in cmd/kindenv_start_test.go
+- [x] T026 [P] [US1] Write integration test for basic deployment in cmd/kindenv_start_test.go
 
 **Verify tests FAIL before proceeding to implementation**
 
@@ -86,8 +86,8 @@
 - [x] T028 [US1] Implement generateDeploymentYAML() for basic deployment in internal/kindenv/customcomponent.go
 - [x] T029 [US1] Implement environment variable transformation (direct values) in internal/kindenv/customcomponent.go
 - [x] T030 [US1] Extend kindenv start command to call deployCustomComponents() in cmd/kindenv_start.go
-- [ ] T031 [US1] Add custom component status to kindenv status command in cmd/kindenv_status.go
-- [ ] T032 [US1] Add custom component cleanup to kindenv stop command in cmd/kindenv_stop.go
+- [x] T031 [US1] Add custom component status to kindenv status command in cmd/kindenv_status.go
+- [x] T032 [US1] Add custom component cleanup to kindenv stop command in cmd/kindenv_stop.go
 - [x] T033 [US1] Add progress indicators for custom component deployment in cmd/kindenv_start.go
 - [x] T034 [US1] Add error handling and user feedback for deployment failures in cmd/kindenv_start.go
 

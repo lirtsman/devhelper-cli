@@ -485,6 +485,59 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				}
 			}
 
+			// Check custom components status
+			if len(config.CustomComponents) > 0 {
+				fmt.Println(yellow("\nCustom Components:"))
+				for _, component := range config.CustomComponents {
+					// Skip disabled components
+					if component.Enabled != nil && !*component.Enabled {
+						if verbose {
+							fmt.Printf("  - %s: %s (disabled)\n", component.Name, yellow("⏸️"))
+						}
+						continue
+					}
+
+					// Check if deployment exists
+					deploymentCmd := exec.Command("kubectl", "get", "deployment", component.Name, "-n", component.Namespace, "--ignore-not-found")
+					deploymentOutput, err := deploymentCmd.CombinedOutput()
+					if err != nil || len(strings.TrimSpace(string(deploymentOutput))) == 0 {
+						fmt.Printf("  - %s: %s (not deployed)\n", component.Name, yellow("⚠️"))
+						continue
+					}
+
+					// Check deployment status
+					statusCmd := exec.Command("kubectl", "get", "deployment", component.Name, "-n", component.Namespace, "-o", "jsonpath={.status.conditions[?(@.type=='Available')].status}")
+					statusOutput, err := statusCmd.CombinedOutput()
+					status := strings.TrimSpace(string(statusOutput))
+
+					// Get replica information
+					replicasCmd := exec.Command("kubectl", "get", "deployment", component.Name, "-n", component.Namespace, "-o", "jsonpath={.status.replicas}/{.spec.replicas}")
+					replicasOutput, _ := replicasCmd.CombinedOutput()
+					replicas := strings.TrimSpace(string(replicasOutput))
+
+					if status == "True" {
+						fmt.Printf("  - %s: %s (running", component.Name, green("✅"))
+						if replicas != "" {
+							fmt.Printf(", replicas: %s", replicas)
+						}
+						fmt.Printf(")\n")
+					} else {
+						fmt.Printf("  - %s: %s (deploying", component.Name, yellow("⏳"))
+						if replicas != "" {
+							fmt.Printf(", replicas: %s", replicas)
+						}
+						fmt.Printf(")\n")
+					}
+
+					// Show port information if available
+					if len(component.Ports) > 0 && verbose {
+						for _, port := range component.Ports {
+							fmt.Printf("    Port: %d/%s\n", port.ContainerPort, port.Protocol)
+						}
+					}
+				}
+			}
+
 			// Additional component status checks for verbose mode
 			if verbose {
 				// List all namespaces
