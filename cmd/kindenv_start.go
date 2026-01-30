@@ -226,7 +226,12 @@ Use --force-context to automatically switch without prompting.`,
 		}
 		fmt.Printf("- Indices Operator: %v\n", config.Components.IndicesOperator.Enabled)
 		fmt.Printf("- Metrics Server: %v\n", config.Components.MetricsServer.Enabled)
-		fmt.Printf("- AWS ECR: %v\n", config.Images.UseAwsEcr)
+		if config.Images.UseHarbor {
+			fmt.Printf("- Harbor Registry: %v (%s) - for third-party components\n", config.Images.UseHarbor, config.Images.HarborRegistry)
+		}
+		if config.Images.UseAwsEcr {
+			fmt.Printf("- AWS ECR: %v - for custom services\n", config.Images.UseAwsEcr)
+		}
 
 		if verbose {
 			fmt.Println(yellow("Verbose mode enabled"))
@@ -352,6 +357,15 @@ Use --force-context to automatically switch without prompting.`,
 				}
 			}
 
+			// Ensure MySQL port is mapped if enabled
+			if config.Components.MySQL.Enabled {
+				mysqlPortKey := fmt.Sprintf("%d/TCP", config.Components.MySQL.NodePorts.MySQL)
+				if !mappedPorts[mysqlPortKey] {
+					fmt.Printf("%s Adding missing MySQL port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.MySQL.NodePorts.MySQL, 3306, "TCP")
+				}
+			}
+
 			if verbose {
 				fmt.Println(yellow("Port mapping configuration complete"))
 			}
@@ -463,11 +477,11 @@ Use --force-context to automatically switch without prompting.`,
 		}
 		fmt.Printf("%s Using kubectl context: %s\n", green("✅"), expectedContext)
 
-		// Setup AWS ECR if needed
+		// Setup AWS ECR if needed (for custom services, Harbor is used for third-party components)
 		var ecrPassword string
 		var ecrRegistry string
 		if config.Images.UseAwsEcr {
-			fmt.Println(yellow("Setting up AWS ECR credentials"))
+			fmt.Println(yellow("Setting up AWS ECR credentials (for custom services)"))
 
 			if !commandExists("aws") {
 				fmt.Printf("%s Error: AWS CLI is not installed. Please install it first.\n", red("❌"))
@@ -517,21 +531,52 @@ Use --force-context to automatically switch without prompting.`,
 				fmt.Printf("%s Error getting AWS account ID: %v\n", red("❌"), err)
 				fmt.Println(yellow("Authentication failed with AWS CLI."))
 
+				// Check if this is an SSO profile
+				isSSOProfile := false
 				if awsProfileToUse != "" {
-					fmt.Printf(yellow("The profile '%s' may not be correctly configured or has expired tokens.\n"), awsProfileToUse)
+					// Try to check if profile uses SSO (don't fail if command errors)
+					profileCheckArgs := []string{"configure", "get", "sso_start_url", "--profile", awsProfileToUse}
+					checkCmd := exec.Command("aws", profileCheckArgs...)
+					var stdout bytes.Buffer
+					checkCmd.Stdout = &stdout
+					checkCmd.Stderr = &bytes.Buffer{} // Ignore stderr
+					if checkCmd.Run() == nil {
+						ssoCheckOutput := strings.TrimSpace(stdout.String())
+						if ssoCheckOutput != "" {
+							isSSOProfile = true
+						}
+					}
+				}
+
+				if awsProfileToUse != "" {
+					if isSSOProfile {
+						fmt.Printf(yellow("The AWS SSO profile '%s' has expired tokens.\n"), awsProfileToUse)
+						fmt.Printf(yellow("Please run: aws sso login --profile %s\n\n"), awsProfileToUse)
+					} else {
+						fmt.Printf(yellow("The profile '%s' may not be correctly configured or has expired tokens.\n"), awsProfileToUse)
+					}
 				} else {
 					fmt.Println(yellow("No AWS profile was specified, and default credentials failed."))
 				}
 
 				fmt.Println(yellow("You can resolve this by:"))
-				fmt.Println("  1. Run 'aws configure' to set up your credentials")
-				fmt.Println("  2. Run 'aws sso login' if using AWS SSO")
-				fmt.Println("  3. Set up environment variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
-				fmt.Println("  4. Use --aws-profile flag to specify a valid profile")
-				fmt.Println("  5. Add a valid profile in your kindenv.yaml configuration:")
-				fmt.Println("     images:")
-				fmt.Println("       aws:")
-				fmt.Println("         profile: \"your-profile-name\"")
+				if isSSOProfile && awsProfileToUse != "" {
+					fmt.Printf("  1. Run 'aws sso login --profile %s' to refresh your SSO session\n", awsProfileToUse)
+					fmt.Println("  2. Then retry this command")
+				} else {
+					fmt.Println("  1. Run 'aws configure' to set up your credentials")
+					if awsProfileToUse != "" {
+						fmt.Printf("  2. Run 'aws sso login --profile %s' if using AWS SSO\n", awsProfileToUse)
+					} else {
+						fmt.Println("  2. Run 'aws sso login' if using AWS SSO")
+					}
+					fmt.Println("  3. Set up environment variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+					fmt.Println("  4. Use --aws-profile flag to specify a valid profile")
+					fmt.Println("  5. Add a valid profile in your kindenv.yaml configuration:")
+					fmt.Println("     images:")
+					fmt.Println("       aws:")
+					fmt.Println("         profile: \"your-profile-name\"")
+				}
 
 				// List available profiles to help the user
 				fmt.Println("")
@@ -637,33 +682,7 @@ Use --force-context to automatically switch without prompting.`,
 			}
 		}
 
-		// Create MySQL secret if MySQL secrets are enabled
-		if config.Secrets.MySQL.Enabled {
-			fmt.Println(yellow("Creating MySQL credentials secret"))
-
-			mysqlSecretYaml := fmt.Sprintf(`
-apiVersion: v1
-kind: Secret
-metadata:
-  name: %s
-  namespace: %s
-type: Opaque
-stringData:
-  username: "%s"
-  password: "%s"
-`, config.Secrets.MySQL.Name, config.Secrets.MySQL.Namespace,
-				config.Secrets.MySQL.Username, config.Secrets.MySQL.Password)
-
-			cmd := exec.Command("kubectl", "apply", "-f", "-")
-			cmd.Stdin = strings.NewReader(mysqlSecretYaml)
-			err = cmd.Run()
-			if err != nil {
-				fmt.Printf("%s Error creating MySQL secret: %v\n", red("❌"), err)
-				os.Exit(1)
-			}
-
-			fmt.Printf("%s MySQL credentials secret created\n", green("✅"))
-		}
+		// Note: MySQL secret is created later when MySQL namespace is created
 
 		// Install Redis
 		if config.Components.Redis.Enabled {
@@ -683,17 +702,19 @@ stringData:
 				os.Exit(1)
 			}
 
-			// Set up ECR credentials if needed
-			if config.Images.UseAwsEcr {
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			// ECR credentials are still set up if needed for custom services in this namespace
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
 				err = setupECRCreds("redis", ecrRegistry, ecrPassword)
 				if err != nil {
-					fmt.Printf("%s Error setting up ECR credentials for Redis: %v\n", red("❌"), err)
+					fmt.Printf("%s Error setting up ECR credentials for Redis namespace: %v\n", red("❌"), err)
 					os.Exit(1)
 				}
 			}
 
-			// Install Redis with Helm
-			_, err = executeCommand("helm", "upgrade", "--install",
+			// Build Redis Helm arguments
+			redisHelmArgs := []string{
+				"upgrade", "--install",
 				"redis", "bitnami/redis",
 				"--namespace", "redis",
 				"--version", config.Components.Redis.ChartVersion,
@@ -701,7 +722,21 @@ stringData:
 				"--set", fmt.Sprintf("master.service.nodePorts.redis=%d", config.Components.Redis.NodePorts.Redis),
 				"--set", fmt.Sprintf("auth.enabled=%t", config.Components.Redis.Auth.Enabled),
 				"--set", "replica.replicaCount=0",
-				"--set", "image.repository=bitnamilegacy/redis")
+			}
+
+			// Image registry configuration for third-party components (use Harbor by default)
+			if config.Images.UseHarbor {
+				// Use global.imageRegistry for Harbor to avoid docker.io prefix being added
+				redisHelmArgs = append(redisHelmArgs,
+					"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+					"--set", "image.repository=docker.io/bitnamilegacy/redis")
+			} else if config.Images.UseAwsEcr {
+				// Fallback to ECR if Harbor is not enabled
+				redisHelmArgs = append(redisHelmArgs, "--set", "image.repository=bitnamilegacy/redis")
+			}
+
+			// Install Redis with Helm
+			_, err = executeCommand("helm", redisHelmArgs...)
 			if err != nil {
 				fmt.Printf("%s Error installing Redis: %v\n", red("❌"), err)
 				os.Exit(1)
@@ -800,6 +835,164 @@ stringData:
 			}
 		}
 
+		// Install MySQL
+		if config.Components.MySQL.Enabled {
+			fmt.Println(yellow("Installing MySQL"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.MySQL.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating MySQL namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying MySQL namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			// ECR credentials are still set up if needed for custom services in this namespace
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
+				err = setupECRCreds(config.Components.MySQL.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for MySQL namespace: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Create MySQL secret in the component namespace if MySQL secrets are enabled
+			// Note: The secret must be in the same namespace as the MySQL deployment for Helm to find it
+			if config.Secrets.MySQL.Enabled {
+				// Warn if secret namespace differs from component namespace (Helm won't find it)
+				if config.Secrets.MySQL.Namespace != config.Components.MySQL.Namespace {
+					fmt.Printf("%s Warning: MySQL secret namespace (%s) differs from component namespace (%s). Helm will look for the secret in the component namespace.\n",
+						yellow("⚠️"), config.Secrets.MySQL.Namespace, config.Components.MySQL.Namespace)
+				}
+
+				fmt.Println(yellow("Creating MySQL credentials secret"))
+
+				// Create secret in component namespace (where Helm release will be deployed)
+				mysqlSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  mysql-root-password: "%s"
+  mysql-password: "%s"
+`, config.Secrets.MySQL.Name, config.Components.MySQL.Namespace,
+					config.Secrets.MySQL.Password, config.Secrets.MySQL.Password)
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(mysqlSecretYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating MySQL secret: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+
+				fmt.Printf("%s MySQL credentials secret created\n", green("✅"))
+			}
+
+			// Build Helm arguments for MySQL installation
+			helmArgs := []string{
+				"upgrade", "--install",
+				"mysql", "bitnami/mysql",
+				"--namespace", config.Components.MySQL.Namespace,
+				"--version", config.Components.MySQL.ChartVersion,
+				"--set", "primary.service.type=NodePort",
+				"--set", fmt.Sprintf("primary.service.nodePorts.mysql=%d", config.Components.MySQL.NodePorts.MySQL),
+				"--set", fmt.Sprintf("auth.database=%s", config.Components.MySQL.Database),
+				"--set", fmt.Sprintf("primary.persistence.enabled=%t", config.Components.MySQL.Persistence.Enabled),
+				"--set", fmt.Sprintf("primary.resources.requests.cpu=%s", config.Components.MySQL.Resources.CPU),
+				"--set", fmt.Sprintf("primary.resources.requests.memory=%s", config.Components.MySQL.Resources.Memory),
+				"--set", "replica.replicaCount=0",
+				"--set", "networkPolicy.enabled=false",
+			}
+
+			// Add secret configuration if MySQL secrets are enabled
+			if config.Secrets.MySQL.Enabled {
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name),
+					"--set", fmt.Sprintf("auth.username=%s", config.Secrets.MySQL.Username))
+			} else {
+				// Use default credentials
+				helmArgs = append(helmArgs,
+					"--set", "auth.rootPassword=password",
+					"--set", "auth.username=mysql",
+					"--set", "auth.password=password")
+			}
+
+			// Image registry configuration for third-party components (use Harbor by default)
+			if config.Images.UseHarbor {
+				// Use global.imageRegistry for Harbor to avoid docker.io prefix being added
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+					"--set", "image.repository=docker.io/bitnamilegacy/mysql")
+			} else if config.Images.UseAwsEcr {
+				// Fallback to ECR if Harbor is not enabled
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("global.imageRegistry=%s", ecrRegistry),
+					"--set", "image.repository=bitnamilegacy/mysql")
+			}
+
+			// Add persistence size if enabled
+			if config.Components.MySQL.Persistence.Enabled {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("primary.persistence.size=%s", config.Components.MySQL.Persistence.Size))
+			}
+
+			_, err = executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing MySQL: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for MySQL to be ready
+			fmt.Println(yellow("Waiting for MySQL to be ready..."))
+			time.Sleep(10 * time.Second)
+
+			// Wait for MySQL pod
+			// Bitnami MySQL Helm chart creates a StatefulSet named "mysql" (same as release name)
+			// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "mysql-0"
+			fmt.Println(yellow("Waiting for mysql-0 pod to be created..."))
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "mysql-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
+
+			var podExists bool
+			for i := 0; i < 10; i++ { // Try for up to 5 minutes (10 * 30s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 9 {
+					fmt.Printf("Waiting for mysql-0 pod to appear (attempt %d/10)...\n", i+1)
+					time.Sleep(30 * time.Second)
+				}
+			}
+
+			if podExists {
+				fmt.Println(yellow("Found mysql-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/mysql-0", "-n", config.Components.MySQL.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: MySQL pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite MySQL not being fully ready..."))
+				} else {
+					fmt.Printf("%s MySQL installed successfully\n", green("✅"))
+				}
+			} else {
+				fmt.Printf("%s MySQL pod (mysql-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite MySQL pod not being detected..."))
+			}
+		}
+
 		// Install Dapr
 		if config.Components.Dapr.Enabled {
 			fmt.Println(yellow("Installing Dapr"))
@@ -881,13 +1074,20 @@ stringData:
 				os.Exit(1)
 			}
 
-			// Set up ECR credentials if needed
-			if config.Images.UseAwsEcr {
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			// ECR credentials are still set up if needed for custom services in this namespace
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
 				err = setupECRCreds(config.Components.OpenSearch.Namespace, ecrRegistry, ecrPassword)
 				if err != nil {
-					fmt.Printf("%s Error setting up ECR credentials for OpenSearch: %v\n", red("❌"), err)
+					fmt.Printf("%s Error setting up ECR credentials for OpenSearch namespace: %v\n", red("❌"), err)
 					os.Exit(1)
 				}
+			}
+
+			// Determine OpenSearch image (use Harbor for third-party components)
+			opensearchImage := fmt.Sprintf("opensearchproject/opensearch:%s", config.Components.OpenSearch.Version)
+			if config.Images.UseHarbor {
+				opensearchImage = fmt.Sprintf("%s/docker.io/opensearchproject/opensearch:%s", config.Images.HarborRegistry, config.Components.OpenSearch.Version)
 			}
 
 			// Deploy OpenSearch using direct Kubernetes manifests
@@ -929,7 +1129,7 @@ spec:
     spec:
       containers:
       - name: opensearch
-        image: opensearchproject/opensearch:%s
+        image: %s
         command:
         - bash
         - -c
@@ -983,7 +1183,7 @@ spec:
           failureThreshold: 15
           timeoutSeconds: 10
 `, config.Components.OpenSearch.Namespace, config.Components.OpenSearch.NodePorts.Rest,
-				config.Components.OpenSearch.Namespace, config.Components.OpenSearch.Version,
+				config.Components.OpenSearch.Namespace, opensearchImage,
 				config.Components.OpenSearch.Security.Disabled,
 				config.Components.OpenSearch.Security.Disabled,
 				config.Components.OpenSearch.IndexManagement.Enabled)
@@ -1060,6 +1260,12 @@ spec:
 		if config.Components.OpenSearchDashboards.Enabled && config.Components.OpenSearch.Enabled {
 			fmt.Println(yellow("Installing OpenSearch Dashboards"))
 
+			// Determine OpenSearch Dashboards image (use Harbor for third-party components)
+			dashboardsImage := fmt.Sprintf("opensearchproject/opensearch-dashboards:%s", config.Components.OpenSearchDashboards.Version)
+			if config.Images.UseHarbor {
+				dashboardsImage = fmt.Sprintf("%s/docker.io/opensearchproject/opensearch-dashboards:%s", config.Images.HarborRegistry, config.Components.OpenSearchDashboards.Version)
+			}
+
 			// OpenSearch Dashboards uses the same namespace as OpenSearch
 			// Deploy OpenSearch Dashboards using direct Kubernetes manifests
 			dashboardsYaml := fmt.Sprintf(`
@@ -1097,7 +1303,7 @@ spec:
     spec:
       containers:
       - name: opensearch-dashboards
-        image: opensearchproject/opensearch-dashboards:%s
+        image: %s
         env:
         - name: OPENSEARCH_HOSTS
           value: '["http://opensearch:9200"]'
@@ -1122,7 +1328,7 @@ spec:
           failureThreshold: 10
           timeoutSeconds: 10
 `, config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.NodePorts.Http,
-				config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.Version,
+				config.Components.OpenSearchDashboards.Namespace, dashboardsImage,
 				config.Components.OpenSearch.Security.Disabled)
 
 			cmd := exec.Command("kubectl", "apply", "-f", "-")
@@ -1532,7 +1738,7 @@ stringData:
 		fmt.Println(green("Kind-based development environment setup complete!"))
 
 		// Find host ports from the port mappings and component configuration
-		var temporalWebPort, temporalFrontendPort, redisPort int
+		var temporalWebPort, temporalFrontendPort, redisPort, mysqlPort int
 
 		if verbose {
 			fmt.Println(yellow("Port mapping details for accessing services:"))
@@ -1570,6 +1776,9 @@ stringData:
 						return portMap.HostPort
 					}
 					if strings.Contains(cp, "redis.nodePorts.redis") && containerPort == config.Components.Redis.NodePorts.Redis {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "mysql.nodePorts.mysql") && containerPort == config.Components.MySQL.NodePorts.MySQL {
 						return portMap.HostPort
 					}
 				}
@@ -1647,6 +1856,24 @@ stringData:
 		}
 		if config.Components.Redis.Enabled && redisPort > 0 {
 			fmt.Printf("- Redis: localhost:%d\n", redisPort)
+		}
+		if config.Components.MySQL.Enabled {
+			mysqlPort = findHostPort(config.Components.MySQL.NodePorts.MySQL)
+			if mysqlPort == 0 {
+				mysqlPort = 3306 // Default host port for MySQL
+				if verbose {
+					fmt.Printf("%s Using default host port for MySQL: %d\n", yellow("ℹ️"), mysqlPort)
+				}
+			}
+			if mysqlPort > 0 {
+				fmt.Printf("- MySQL: localhost:%d\n", mysqlPort)
+				fmt.Printf("  Database: %s\n", config.Components.MySQL.Database)
+				if config.Secrets.MySQL.Enabled {
+					fmt.Printf("  Username: %s\n", config.Secrets.MySQL.Username)
+				} else {
+					fmt.Printf("  Username: root\n")
+				}
+			}
 		}
 		if config.Components.OpenSearch.Enabled && openSearchPort > 0 {
 			fmt.Printf("- OpenSearch: http://localhost:%d\n", openSearchPort)

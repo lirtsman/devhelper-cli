@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+
 // stopCluster completely stops and deletes a Kind cluster, removing all deployed components
 func stopCluster(clusterName string, verbose bool) error {
 	if verbose {
@@ -100,6 +101,48 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 		if !exists {
 			fmt.Printf("%s Kind cluster '%s' does not exist or has already been deleted\n", yellow("⚠️"), config.Cluster.Name)
 			return
+		}
+
+		// Clean up MySQL if enabled
+		if config.Components.MySQL.Enabled {
+			if verbose {
+				fmt.Println(yellow("Cleaning up MySQL resources..."))
+			}
+
+			// Uninstall MySQL Helm release
+			_, err = executeCommand("helm", "uninstall", "mysql", "--namespace", config.Components.MySQL.Namespace, "--ignore-not-found")
+			if err != nil {
+				if verbose {
+					fmt.Printf("%s Warning: Failed to uninstall MySQL Helm release: %v\n", yellow("⚠️"), err)
+				}
+			} else if verbose {
+				fmt.Printf("%s MySQL Helm release uninstalled\n", green("✅"))
+			}
+
+			// Clean up PersistentVolumeClaims if persistence was enabled
+			if config.Components.MySQL.Persistence.Enabled {
+				if verbose {
+					fmt.Println(yellow("Cleaning up MySQL PersistentVolumeClaims..."))
+				}
+				_, err = executeCommand("kubectl", "delete", "pvc", "-n", config.Components.MySQL.Namespace, "--all", "--ignore-not-found")
+				if err != nil {
+					if verbose {
+						fmt.Printf("%s Warning: Failed to delete MySQL PVCs: %v\n", yellow("⚠️"), err)
+					}
+				} else if verbose {
+					fmt.Printf("%s MySQL PersistentVolumeClaims cleaned up\n", green("✅"))
+				}
+			}
+
+			// Delete MySQL namespace
+			_, err = executeCommand("kubectl", "delete", "namespace", config.Components.MySQL.Namespace, "--ignore-not-found")
+			if err != nil {
+				if verbose {
+					fmt.Printf("%s Warning: Failed to delete MySQL namespace: %v\n", yellow("⚠️"), err)
+				}
+			} else if verbose {
+				fmt.Printf("%s MySQL namespace deleted\n", green("✅"))
+			}
 		}
 
 		// Stop the cluster

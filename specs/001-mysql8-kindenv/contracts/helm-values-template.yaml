@@ -1,0 +1,149 @@
+# Bitnami MySQL Helm Chart Values Template
+# This template shows the Helm values structure for MySQL deployment in kindenv
+
+# Global configuration
+global:
+  imageRegistry: ""  # Set to ECR registry when useAwsEcr is enabled
+  imagePullSecrets: []  # Set to [ecr-credentials] when useAwsEcr is enabled
+
+# Image configuration
+image:
+  repository: "bitnami/mysql"  # Changed to "bitnamilegacy/mysql" when useAwsEcr is enabled
+  tag: "8.0.35-debian-11-r0"
+  pullPolicy: "IfNotPresent"
+
+# Authentication configuration
+auth:
+  rootPassword: ""  # Set from secrets.mysql.password
+  database: "mysql"  # Set from components.mysql.database
+  username: ""  # Set from secrets.mysql.username (if not root)
+  password: ""  # Set from secrets.mysql.password
+  existingSecret: ""  # Set to secrets.mysql.name when using Kubernetes secrets
+  usePasswordFiles: false
+
+# Primary MySQL configuration
+primary:
+  # Service configuration
+  service:
+    type: "NodePort"  # Always NodePort for kindenv
+    nodePorts:
+      mysql: 30306  # Set from components.mysql.nodePorts.mysql
+    
+  # Resource configuration
+  resources:
+    requests:
+      cpu: "500m"     # Set from components.mysql.resources.cpu
+      memory: "1Gi"   # Set from components.mysql.resources.memory
+    limits:
+      cpu: "1000m"    # Set to 2x requests for development
+      memory: "2Gi"   # Set to 2x requests for development
+  
+  # Persistence configuration
+  persistence:
+    enabled: false    # Set from components.mysql.persistence.enabled
+    size: "8Gi"      # Set from components.mysql.persistence.size
+    storageClass: ""  # Use default storage class
+    
+  # Pod configuration
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1001
+  
+  containerSecurityContext:
+    enabled: true
+    runAsUser: 1001
+    runAsNonRoot: true
+  
+  # Probes configuration (optimized for development)
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 10
+    successThreshold: 1
+  
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 3
+    successThreshold: 1
+  
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 3
+    successThreshold: 1
+
+# Secondary MySQL configuration (disabled for kindenv)
+secondary:
+  replicaCount: 0  # Always 0 for development environments
+
+# MySQL configuration
+configuration: |-
+  [mysqld]
+  default_authentication_plugin=mysql_native_password
+  skip-name-resolve
+  explicit_defaults_for_timestamp
+  basedir=/opt/bitnami/mysql
+  plugin_dir=/opt/bitnami/mysql/lib/plugin
+  port=3306
+  socket=/opt/bitnami/mysql/tmp/mysql.sock
+  datadir=/bitnami/mysql/data
+  tmpdir=/opt/bitnami/mysql/tmp
+  max_allowed_packet=16M
+  bind-address=0.0.0.0
+  pid-file=/opt/bitnami/mysql/tmp/mysqld.pid
+  log-error=/opt/bitnami/mysql/logs/mysqld.log
+  character-set-server=UTF8
+  collation-server=utf8_general_ci
+  slow_query_log=0
+  slow_query_log_file=/opt/bitnami/mysql/logs/mysqld.log
+  long_query_time=10.0
+
+# Metrics configuration (disabled for development)
+metrics:
+  enabled: false
+
+# Network policy (disabled for development)
+networkPolicy:
+  enabled: false
+
+# Pod disruption budget (disabled for single replica)
+pdb:
+  create: false
+
+# Volume permissions (enabled for security)
+volumePermissions:
+  enabled: true
+
+# Example complete values for kindenv with ECR:
+# global:
+#   imageRegistry: "992979781608.dkr.ecr.eu-west-1.amazonaws.com"
+#   imagePullSecrets:
+#     - name: "ecr-credentials"
+# image:
+#   repository: "bitnamilegacy/mysql"
+# auth:
+#   existingSecret: "mysql-credentials"
+#   database: "mysql"
+# primary:
+#   service:
+#     type: "NodePort"
+#     nodePorts:
+#       mysql: 30306
+#   resources:
+#     requests:
+#       cpu: "500m"
+#       memory: "1Gi"
+#     limits:
+#       cpu: "1000m"
+#       memory: "2Gi"
+#   persistence:
+#     enabled: false
+# secondary:
+#   replicaCount: 0
