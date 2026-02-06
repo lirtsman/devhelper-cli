@@ -90,22 +90,22 @@ Following existing devhelper-cli structure:
 
 #### Kubernetes Secret Creation
 
-- [ ] T024 [US1] Implement generateErlangCookie() helper function in cmd/kindenv_start.go
-- [ ] T025 [US1] Implement createRabbitMQSecret() function in cmd/kindenv_start.go
+- [x] T024 [US1] Implement generateErlangCookie() helper function in cmd/kindenv_start.go
+- [x] T025 [US1] Implement createRabbitMQSecret() function in cmd/kindenv_start.go
 
 #### Helm Chart Installation
 
-- [ ] T026 [US1] Implement buildRabbitMQHelmValues() function in cmd/kindenv_start.go
-- [ ] T027 [US1] Implement installRabbitMQHelmChart() function in cmd/kindenv_start.go
+- [x] T026 [US1] Implement buildRabbitMQHelmValues() function in cmd/kindenv_start.go
+- [x] T027 [US1] Implement installRabbitMQHelmChart() function in cmd/kindenv_start.go
 
 #### Main Installation Flow
 
-- [ ] T028 [US1] Add RabbitMQ installation logic to kindenv start command in cmd/kindenv_start.go
-- [ ] T029 [US1] Add RabbitMQ health check and readiness wait logic in cmd/kindenv_start.go
+- [x] T028 [US1] Add RabbitMQ installation logic to kindenv start command in cmd/kindenv_start.go
+- [x] T029 [US1] Add RabbitMQ health check and readiness wait logic in cmd/kindenv_start.go
 
 #### Cleanup Logic
 
-- [ ] T030 [US1] Add RabbitMQ uninstall logic to kindenv stop command in cmd/kindenv_stop.go
+- [x] T030 [US1] Add RabbitMQ uninstall logic to kindenv stop command in cmd/kindenv_stop.go
 
 ### Verification for User Story 1
 
@@ -134,9 +134,9 @@ Following existing devhelper-cli structure:
 
 #### Configuration Enhancement
 
-- [ ] T038 [P] [US2] Update buildRabbitMQHelmValues() to use custom virtual host in cmd/kindenv_start.go
-- [ ] T039 [P] [US2] Update buildRabbitMQHelmValues() to use custom credentials in cmd/kindenv_start.go
-- [ ] T040 [P] [US2] Update buildRabbitMQHelmValues() to use custom resource limits in cmd/kindenv_start.go
+- [x] T038 [P] [US2] Update buildRabbitMQHelmValues() to use custom virtual host in cmd/kindenv_start.go
+- [x] T039 [P] [US2] Update buildRabbitMQHelmValues() to use custom credentials in cmd/kindenv_start.go
+- [x] T040 [P] [US2] Update buildRabbitMQHelmValues() to use custom resource limits in cmd/kindenv_start.go
 - [ ] T041 [US2] Add configuration validation for custom settings in cmd/kindenv_start.go
 
 #### Testing Custom Configuration
@@ -194,16 +194,16 @@ Following existing devhelper-cli structure:
 
 #### Status Reporting Functions
 
-- [ ] T056 [P] [US4] Implement checkPodReady() helper function in cmd/kindenv_status.go
-- [ ] T057 [P] [US4] Implement checkServiceReady() helper function in cmd/kindenv_status.go
-- [ ] T058 [P] [US4] Implement testAMQPConnection() function in cmd/kindenv_status.go
-- [ ] T059 [P] [US4] Implement testManagementAPI() function in cmd/kindenv_status.go
-- [ ] T060 [US4] Implement getRabbitMQStatus() orchestrator function in cmd/kindenv_status.go
+- [x] T056 [P] [US4] Implement checkPodReady() helper function in cmd/kindenv_status.go
+- [x] T057 [P] [US4] Implement checkServiceReady() helper function in cmd/kindenv_status.go
+- [x] T058 [P] [US4] Implement testAMQPConnection() function in cmd/kindenv_status.go
+- [x] T059 [P] [US4] Implement testManagementAPI() function in cmd/kindenv_status.go
+- [x] T060 [US4] Implement getRabbitMQStatus() orchestrator function in cmd/kindenv_status.go
 
 #### Status Display
 
-- [ ] T061 [US4] Add RabbitMQ status display to kindenv status command in cmd/kindenv_status.go
-- [ ] T062 [US4] Format connection information display (AMQP URL + Management URL) in cmd/kindenv_status.go
+- [x] T061 [US4] Add RabbitMQ status display to kindenv status command in cmd/kindenv_status.go
+- [x] T062 [US4] Format connection information display (AMQP URL + Management URL) in cmd/kindenv_status.go
 
 #### Testing Status Reporting
 

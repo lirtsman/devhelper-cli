@@ -1258,8 +1258,9 @@ stringData:
 				"--set", "service.type=NodePort",
 				"--set", fmt.Sprintf("service.nodePorts.amqp=%d", config.Components.RabbitMQ.NodePorts.AMQP),
 				"--set", fmt.Sprintf("service.nodePorts.manager=%d", config.Components.RabbitMQ.NodePorts.Management),
-				"--set", fmt.Sprintf("auth.username=%s", config.Secrets.RabbitMQ.Username),
-				"--set", fmt.Sprintf("persistence.enabled=%t", config.Components.RabbitMQ.Persistence.Enabled),
+			"--set", fmt.Sprintf("auth.username=%s", config.Secrets.RabbitMQ.Username),
+			"--set", fmt.Sprintf("auth.vhost=%s", config.Components.RabbitMQ.VirtualHost),
+			"--set", fmt.Sprintf("persistence.enabled=%t", config.Components.RabbitMQ.Persistence.Enabled),
 				"--set", fmt.Sprintf("resources.requests.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
 				"--set", fmt.Sprintf("resources.requests.memory=%s", config.Components.RabbitMQ.Resources.Memory),
 				"--set", fmt.Sprintf("resources.limits.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
@@ -1373,11 +1374,59 @@ stringData:
 					fmt.Printf("%s Warning: RabbitMQ pod is not ready: %v\n", yellow("⚠️"), err)
 					fmt.Println(yellow("Continuing despite RabbitMQ not being fully ready..."))
 				} else {
-					fmt.Printf("%s RabbitMQ installed successfully\n", green("✅"))
-					fmt.Printf("%s AMQP is accessible at amqp://%s:***@localhost:%d%s\n",
-						green("✅"), config.Secrets.RabbitMQ.Username, 5672, config.Components.RabbitMQ.VirtualHost)
-					fmt.Printf("%s Management UI is accessible at http://localhost:%d\n",
-						green("✅"), 15672)
+					// Verify AMQP connectivity (SC-002)
+					fmt.Println(yellow("Verifying AMQP connectivity..."))
+					amqpVerified := false
+					for i := 0; i < 6; i++ { // Try for 30 seconds (6 * 5s)
+						amqpCmd := exec.Command("nc", "-z", "-v", "localhost", "5672")
+						if amqpOutput, err := amqpCmd.CombinedOutput(); err == nil || bytes.Contains(amqpOutput, []byte("succeeded")) {
+							amqpVerified = true
+							if verbose {
+								fmt.Printf("AMQP connectivity check: %s\n", string(amqpOutput))
+							}
+							break
+						}
+						if i < 5 {
+							time.Sleep(5 * time.Second)
+						}
+					}
+					
+					// Verify Management UI connectivity (SC-003)
+					fmt.Println(yellow("Verifying Management UI connectivity..."))
+					managementVerified := false
+					for i := 0; i < 6; i++ { // Try for 30 seconds (6 * 5s)
+						mgmtCmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", 
+							fmt.Sprintf("http://localhost:15672/api/overview"),
+							"-u", fmt.Sprintf("%s:%s", config.Secrets.RabbitMQ.Username, config.Secrets.RabbitMQ.Password))
+						if output, err := mgmtCmd.Output(); err == nil && string(output) == "200" {
+							managementVerified = true
+							if verbose {
+								fmt.Printf("Management UI HTTP status: %s\n", string(output))
+							}
+							break
+						}
+						if i < 5 {
+							time.Sleep(5 * time.Second)
+						}
+					}
+					
+					// Report results
+					if amqpVerified && managementVerified {
+						fmt.Printf("%s RabbitMQ installed successfully\n", green("✅"))
+						fmt.Printf("%s AMQP is accessible at amqp://%s:***@localhost:%d%s\n",
+							green("✅"), config.Secrets.RabbitMQ.Username, 5672, config.Components.RabbitMQ.VirtualHost)
+						fmt.Printf("%s Management UI is accessible at http://localhost:%d\n",
+							green("✅"), 15672)
+					} else {
+						fmt.Printf("%s RabbitMQ pod is ready but connectivity checks failed\n", yellow("⚠️"))
+						if !amqpVerified {
+							fmt.Printf("%s AMQP port (5672) not responding\n", yellow("⚠️"))
+						}
+						if !managementVerified {
+							fmt.Printf("%s Management UI (15672) not responding\n", yellow("⚠️"))
+						}
+						fmt.Println(yellow("Check port mappings and try: kubectl port-forward -n rabbitmq svc/rabbitmq 5672:5672 15672:15672"))
+					}
 				}
 			} else {
 				fmt.Printf("%s RabbitMQ pod (rabbitmq-0) not found\n", yellow("⚠️"))
