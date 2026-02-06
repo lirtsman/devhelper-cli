@@ -1258,7 +1258,6 @@ stringData:
 				"--set", "service.type=NodePort",
 				"--set", fmt.Sprintf("service.nodePorts.amqp=%d", config.Components.RabbitMQ.NodePorts.AMQP),
 				"--set", fmt.Sprintf("service.nodePorts.manager=%d", config.Components.RabbitMQ.NodePorts.Management),
-			"--set", fmt.Sprintf("auth.username=%s", config.Secrets.RabbitMQ.Username),
 			"--set", fmt.Sprintf("auth.vhost=%s", config.Components.RabbitMQ.VirtualHost),
 			"--set", fmt.Sprintf("persistence.enabled=%t", config.Components.RabbitMQ.Persistence.Enabled),
 				"--set", fmt.Sprintf("resources.requests.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
@@ -1278,17 +1277,24 @@ stringData:
 			}
 
 			// Add secret configuration if RabbitMQ secrets are enabled
-			if config.Secrets.RabbitMQ.Enabled {
-				// Use existing secret for password and erlang cookie
-				helmArgs = append(helmArgs,
-					"--set", fmt.Sprintf("auth.existingPasswordSecret=%s", config.Secrets.RabbitMQ.Name),
-					"--set", fmt.Sprintf("auth.existingErlangSecret=%s", config.Secrets.RabbitMQ.Name))
-			} else {
-				// Use default credentials if secrets are disabled
-				helmArgs = append(helmArgs,
-					"--set", "auth.password=password",
-					"--set", "auth.erlangCookie=secretcookie")
+			// Note: When using official RabbitMQ image, auth.username/auth.existingPasswordSecret
+			// don't work - we use RABBITMQ_DEFAULT_USER/RABBITMQ_DEFAULT_PASS env vars instead
+			if config.Components.RabbitMQ.ImageTag == "" {
+				// Only set Bitnami auth settings when using Bitnami image
+				if config.Secrets.RabbitMQ.Enabled {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("auth.username=%s", config.Secrets.RabbitMQ.Username),
+						"--set", fmt.Sprintf("auth.existingPasswordSecret=%s", config.Secrets.RabbitMQ.Name),
+						"--set", fmt.Sprintf("auth.existingErlangSecret=%s", config.Secrets.RabbitMQ.Name))
+				} else {
+					// Use default credentials if secrets are disabled
+					helmArgs = append(helmArgs,
+						"--set", "auth.username=user",
+						"--set", "auth.password=password",
+						"--set", "auth.erlangCookie=secretcookie")
+				}
 			}
+			// When using official RabbitMQ image (imageTag is set), auth settings are handled via env vars
 
 			// Add persistence size if enabled
 			if config.Components.RabbitMQ.Persistence.Enabled {
@@ -1317,11 +1323,16 @@ stringData:
 						"--set", "image.repository=rabbitmq",
 						"--set", fmt.Sprintf("image.tag=%s", config.Components.RabbitMQ.ImageTag))
 				}
-				// When using official RabbitMQ image, we need to adjust some Bitnami-specific settings
-				// The official image uses different environment variable names
+				// When using official RabbitMQ image, we need to use official image environment variables
+				// The official image uses RABBITMQ_DEFAULT_USER and RABBITMQ_DEFAULT_PASS
+				// instead of Bitnami's RABBITMQ_USERNAME and RABBITMQ_PASSWORD
+				// Clear any existing extraEnvVars first, then add the official image env vars
 				helmArgs = append(helmArgs,
 					"--set", "containerSecurityContext.privileged=false", // Not needed for official image
-					"--set", "extraEnvVars=null") // Clear Bitnami-specific env vars
+					"--set", "extraEnvVars[0].name=RABBITMQ_DEFAULT_USER",
+					"--set", fmt.Sprintf("extraEnvVars[0].value=%s", config.Secrets.RabbitMQ.Username),
+					"--set", "extraEnvVars[1].name=RABBITMQ_DEFAULT_PASS",
+					"--set", fmt.Sprintf("extraEnvVars[1].value=%s", config.Secrets.RabbitMQ.Password))
 			} else {
 				// Default to Bitnami image (for x86_64 compatibility)
 				if config.Images.UseHarbor {
@@ -2376,7 +2387,7 @@ stringData:
 		fmt.Println(green("Kind-based development environment setup complete!"))
 
 		// Find host ports from the port mappings and component configuration
-		var temporalWebPort, temporalFrontendPort, redisPort, mysqlPort int
+		var temporalWebPort, temporalFrontendPort, redisPort, mysqlPort, rabbitmqAMQPPort, rabbitmqManagementPort int
 
 		if verbose {
 			fmt.Println(yellow("Port mapping details for accessing services:"))
@@ -2518,6 +2529,31 @@ stringData:
 		}
 		if config.Components.OpenSearchDashboards.Enabled && openSearchDashboardsPort > 0 {
 			fmt.Printf("- OpenSearch Dashboards: http://localhost:%d\n", openSearchDashboardsPort)
+		}
+		if config.Components.RabbitMQ.Enabled {
+			rabbitmqAMQPPort = findHostPort(config.Components.RabbitMQ.NodePorts.AMQP)
+			rabbitmqManagementPort = findHostPort(config.Components.RabbitMQ.NodePorts.Management)
+			if rabbitmqAMQPPort == 0 {
+				rabbitmqAMQPPort = 5672 // Default host port for AMQP
+				if verbose {
+					fmt.Printf("%s Using default host port for RabbitMQ AMQP: %d\n", yellow("ℹ️"), rabbitmqAMQPPort)
+				}
+			}
+			if rabbitmqManagementPort == 0 {
+				rabbitmqManagementPort = 15672 // Default host port for Management UI
+				if verbose {
+					fmt.Printf("%s Using default host port for RabbitMQ Management UI: %d\n", yellow("ℹ️"), rabbitmqManagementPort)
+				}
+			}
+			if rabbitmqAMQPPort > 0 && rabbitmqManagementPort > 0 {
+				fmt.Printf("- RabbitMQ AMQP: amqp://localhost:%d%s\n", rabbitmqAMQPPort, config.Components.RabbitMQ.VirtualHost)
+				fmt.Printf("- RabbitMQ Management UI: http://localhost:%d\n", rabbitmqManagementPort)
+				if config.Secrets.RabbitMQ.Enabled {
+					fmt.Printf("  Username: %s, Virtual Host: %s\n", config.Secrets.RabbitMQ.Username, config.Components.RabbitMQ.VirtualHost)
+				} else {
+					fmt.Printf("  Username: user, Virtual Host: %s\n", config.Components.RabbitMQ.VirtualHost)
+				}
+			}
 		}
 	},
 }
