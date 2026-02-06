@@ -267,6 +267,44 @@ Use --force-context to automatically switch without prompting.`,
 		if err == nil && strings.Contains(clusterOutput, config.Cluster.Name) {
 			clusterExists = true
 			fmt.Printf("%s Kind cluster %s already exists, reusing it\n", yellow("🔄"), config.Cluster.Name)
+			
+			// Warn about port mappings: Kind port mappings cannot be changed after cluster creation
+			if len(config.Cluster.MapPorts) > 0 {
+				fmt.Printf("%s Note: Port mappings are only applied during cluster creation.\n", yellow("ℹ️"))
+				fmt.Printf("%s If you've added or changed port mappings, you may need to recreate the cluster:\n", yellow("ℹ️"))
+				fmt.Printf("   %s\n", yellow("devhelper-cli kindenv stop && devhelper-cli kindenv start"))
+				
+				// Check if there are custom components with ports that might be affected
+				hasCustomComponentPorts := false
+				for _, component := range config.CustomComponents {
+					if len(component.Ports) > 0 {
+						hasCustomComponentPorts = true
+						break
+					}
+				}
+				if hasCustomComponentPorts {
+					fmt.Printf("%s Custom component NodePorts will work, but Kind port mappings (for accessing via localhost) require cluster recreation.\n", yellow("ℹ️"))
+				}
+				
+				if verbose {
+					fmt.Println(yellow("Configured port mappings:"))
+					for _, portMap := range config.Cluster.MapPorts {
+						var containerPortStr string
+						switch cp := portMap.ContainerPort.(type) {
+						case int:
+							containerPortStr = strconv.Itoa(cp)
+						case float64:
+							containerPortStr = strconv.Itoa(int(cp))
+						case string:
+							containerPortStr = cp
+						default:
+							containerPortStr = fmt.Sprintf("%v", cp)
+						}
+						fmt.Printf("  - Container: %s → Host: %d (%s)\n",
+							containerPortStr, portMap.HostPort, portMap.Protocol)
+					}
+				}
+			}
 		}
 
 		if !clusterExists && config.Cluster.CreateIfNotExists {

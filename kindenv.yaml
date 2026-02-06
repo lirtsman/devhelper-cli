@@ -18,7 +18,7 @@ tools:
         path: /opt/homebrew/bin/aws
         version: aws-cli/2.27.55 Python/3.13.9 Darwin/24.6.0 source/arm64
 cluster:
-    name: devhelper-cli
+    name: dss-operator
     createIfNotExists: true
     mapPorts:
         - containerPort: ${{ components.openSearch.nodePorts.rest }}
@@ -29,6 +29,9 @@ cluster:
           protocol: TCP
         - containerPort: ${{ components.mysql.nodePorts.mysql }}
           hostPort: 3306
+          protocol: TCP
+        - containerPort: 30081
+          hostPort: 8081
           protocol: TCP
 components:
     temporal:
@@ -150,3 +153,9 @@ customComponents:
         value: "admin"
       - name: SEARCH_ENGINE_OPENSEARCH_CLUSTER_PASSWORD
         value: "admin"
+      - name: SERVER_PORT
+        value: "8081"
+    ports:
+      - containerPort: 8081
+        protocol: TCP
+        nodePort: 30081
