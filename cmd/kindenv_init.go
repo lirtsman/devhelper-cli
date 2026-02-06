@@ -252,8 +252,8 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Println("✅ Dapr Helm repository added successfully")
 			}
 
-			// Add Bitnami Helm repository (for Redis)
-			fmt.Println("Adding Bitnami (Redis) Helm repository...")
+			// Add Bitnami Helm repository (for Redis and RabbitMQ)
+			fmt.Println("Adding Bitnami (Redis, RabbitMQ) Helm repository...")
 			bitnamiOutput, err := executeCommandWithOutput("helm", "repo", "add", "bitnami", "https://charts.bitnami.com/bitnami")
 			if err != nil {
 				if strings.Contains(bitnamiOutput, "already exists") {
