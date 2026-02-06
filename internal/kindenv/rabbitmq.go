@@ -10,8 +10,10 @@ import (
 // RabbitMQConfig represents RabbitMQ component configuration
 type RabbitMQConfig struct {
 	Enabled      bool                 `yaml:"enabled"`
+	Namespace    string               `yaml:"namespace"`
 	ChartVersion string               `yaml:"chartVersion"`
 	VirtualHost  string               `yaml:"virtualHost"`
+	ImageTag     string               `yaml:"imageTag,omitempty"` // Optional: override default image tag (e.g., "3.12-management" for ARM64 compatibility)
 	NodePorts    RabbitMQNodePorts    `yaml:"nodePorts"`
 	Resources    RabbitMQResources    `yaml:"resources"`
 	Persistence  RabbitMQPersistence  `yaml:"persistence"`
