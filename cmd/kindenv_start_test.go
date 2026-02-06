@@ -107,6 +107,25 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 						} `yaml:"persistence"`
 						InitScripts map[string]string `yaml:"initScripts,omitempty"`
 					} `yaml:"mysql"`
+					RabbitMQ struct {
+						Enabled      bool   `yaml:"enabled"`
+						Namespace    string `yaml:"namespace"`
+						ChartVersion string `yaml:"chartVersion"`
+						VirtualHost  string `yaml:"virtualHost"`
+						ImageTag     string `yaml:"imageTag,omitempty"`
+						NodePorts    struct {
+							AMQP       int `yaml:"amqp"`
+							Management int `yaml:"management"`
+						} `yaml:"nodePorts"`
+						Resources struct {
+							CPU    string `yaml:"cpu"`
+							Memory string `yaml:"memory"`
+						} `yaml:"resources"`
+						Persistence struct {
+							Enabled bool   `yaml:"enabled"`
+							Size    string `yaml:"size"`
+						} `yaml:"persistence"`
+					} `yaml:"rabbitmq"`
 				}{
 					MySQL: struct {
 						Enabled      bool   `yaml:"enabled"`
@@ -238,6 +257,25 @@ func TestMySQLResourceConfiguration(t *testing.T) {
 						} `yaml:"persistence"`
 						InitScripts map[string]string `yaml:"initScripts,omitempty"`
 					} `yaml:"mysql"`
+					RabbitMQ struct {
+						Enabled      bool   `yaml:"enabled"`
+						Namespace    string `yaml:"namespace"`
+						ChartVersion string `yaml:"chartVersion"`
+						VirtualHost  string `yaml:"virtualHost"`
+						ImageTag     string `yaml:"imageTag,omitempty"`
+						NodePorts    struct {
+							AMQP       int `yaml:"amqp"`
+							Management int `yaml:"management"`
+						} `yaml:"nodePorts"`
+						Resources struct {
+							CPU    string `yaml:"cpu"`
+							Memory string `yaml:"memory"`
+						} `yaml:"resources"`
+						Persistence struct {
+							Enabled bool   `yaml:"enabled"`
+							Size    string `yaml:"size"`
+						} `yaml:"persistence"`
+					} `yaml:"rabbitmq"`
 				}{
 					MySQL: struct {
 						Enabled      bool   `yaml:"enabled"`
