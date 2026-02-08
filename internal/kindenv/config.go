@@ -134,6 +134,25 @@ type KindEnvConfig struct {
 			} `yaml:"persistence"`
 			InitScripts map[string]string `yaml:"initScripts,omitempty"` // Map of filename -> SQL script content
 		} `yaml:"mysql"`
+		RabbitMQ struct {
+			Enabled      bool   `yaml:"enabled"`
+			Namespace    string `yaml:"namespace"`
+			ChartVersion string `yaml:"chartVersion"`
+			VirtualHost  string `yaml:"virtualHost"`
+			ImageTag     string `yaml:"imageTag,omitempty"` // Optional: override default image tag (e.g., "3.12-arm64" for ARM64 compatibility)
+			NodePorts    struct {
+				AMQP       int `yaml:"amqp"`
+				Management int `yaml:"management"`
+			} `yaml:"nodePorts"`
+			Resources struct {
+				CPU    string `yaml:"cpu"`
+				Memory string `yaml:"memory"`
+			} `yaml:"resources"`
+			Persistence struct {
+				Enabled bool   `yaml:"enabled"`
+				Size    string `yaml:"size"`
+			} `yaml:"persistence"`
+		} `yaml:"rabbitmq"`
 	} `yaml:"components"`
 	Images struct {
 		SkipPull  bool `yaml:"skipPull"`
@@ -158,6 +177,14 @@ type KindEnvConfig struct {
 			Username  string `yaml:"username"`
 			Password  string `yaml:"password"`
 		} `yaml:"mysql"`
+		RabbitMQ struct {
+			Enabled      bool   `yaml:"enabled"`
+			Name         string `yaml:"name"`
+			Namespace    string `yaml:"namespace"`
+			Username     string `yaml:"username"`
+			Password     string `yaml:"password"`
+			ErlangCookie string `yaml:"erlangCookie"`
+		} `yaml:"rabbitmq"`
 	} `yaml:"secrets"`
 	// CustomComponents defines user-configured services to deploy
 	CustomComponents []CustomComponent `yaml:"customComponents,omitempty"`
@@ -398,6 +425,25 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Secrets.MySQL.Username = "root"
 	config.Secrets.MySQL.Password = "password"
 
+	config.Components.RabbitMQ.Enabled = false
+	config.Components.RabbitMQ.Namespace = "rabbitmq"
+	config.Components.RabbitMQ.ChartVersion = "11.0.0"
+	config.Components.RabbitMQ.VirtualHost = "/"
+	config.Components.RabbitMQ.NodePorts.AMQP = 30672
+	config.Components.RabbitMQ.NodePorts.Management = 31672
+	config.Components.RabbitMQ.Resources.CPU = "500m"
+	config.Components.RabbitMQ.Resources.Memory = "1Gi"
+	config.Components.RabbitMQ.Persistence.Enabled = false
+	config.Components.RabbitMQ.Persistence.Size = "8Gi"
+
+	// Set RabbitMQ secret defaults
+	config.Secrets.RabbitMQ.Enabled = true
+	config.Secrets.RabbitMQ.Name = "rabbitmq-credentials"
+	config.Secrets.RabbitMQ.Namespace = "rabbitmq"
+	config.Secrets.RabbitMQ.Username = "user"
+	config.Secrets.RabbitMQ.Password = "password"
+	config.Secrets.RabbitMQ.ErlangCookie = "" // Auto-generated if empty
+
 	// If configPath is empty, check if kindenv.yaml exists in the current directory
 	if configPath == "" {
 		if _, err := os.Stat("kindenv.yaml"); err == nil {
@@ -546,6 +592,26 @@ func generateDefaultPortMappings(config *KindEnvConfig) []struct {
 		Protocol:      "TCP",
 	})
 
+	// Add RabbitMQ port mappings (always include, even if disabled, so users can see what will be mapped)
+	mappings = append(mappings, struct {
+		ContainerPort interface{} `yaml:"containerPort"`
+		HostPort      int         `yaml:"hostPort"`
+		Protocol      string      `yaml:"protocol"`
+	}{
+		ContainerPort: "${{ components.rabbitmq.nodePorts.amqp }}",
+		HostPort:      5672,
+		Protocol:      "TCP",
+	})
+	mappings = append(mappings, struct {
+		ContainerPort interface{} `yaml:"containerPort"`
+		HostPort      int         `yaml:"hostPort"`
+		Protocol      string      `yaml:"protocol"`
+	}{
+		ContainerPort: "${{ components.rabbitmq.nodePorts.management }}",
+		HostPort:      15672,
+		Protocol:      "TCP",
+	})
+
 	return mappings
 }
 
@@ -609,6 +675,15 @@ func processVariableSubstitutions(config *KindEnvConfig) error {
 						value = config.Components.MySQL.NodePorts.MySQL
 					default:
 						return fmt.Errorf("unknown mysql port: %s", portName)
+					}
+				case "rabbitmq":
+					switch portName {
+					case "amqp":
+						value = config.Components.RabbitMQ.NodePorts.AMQP
+					case "management":
+						value = config.Components.RabbitMQ.NodePorts.Management
+					default:
+						return fmt.Errorf("unknown rabbitmq port: %s", portName)
 					}
 				default:
 					return fmt.Errorf("unknown component: %s", componentName)
@@ -746,6 +821,76 @@ func (c *KindEnvConfig) Validate() error {
 		}
 	}
 
+	// Validate RabbitMQ secret configuration
+	if c.Secrets.RabbitMQ.Enabled {
+		if c.Secrets.RabbitMQ.Name == "" {
+			return errors.New("rabbitmq secret name must be specified when enabled")
+		}
+		if c.Secrets.RabbitMQ.Namespace == "" {
+			return errors.New("rabbitmq secret namespace must be specified when enabled")
+		}
+		if c.Secrets.RabbitMQ.Username == "" {
+			return errors.New("rabbitmq username must be specified when enabled")
+		}
+		if c.Secrets.RabbitMQ.Password == "" {
+			return errors.New("rabbitmq password must be specified when enabled")
+		}
+		if c.Secrets.RabbitMQ.ErlangCookie != "" && len(c.Secrets.RabbitMQ.ErlangCookie) < 20 {
+			return errors.New("rabbitmq erlang cookie must be at least 20 characters if provided")
+		}
+	}
+
+	// Validate RabbitMQ component configuration
+	if c.Components.RabbitMQ.Enabled {
+		if c.Components.RabbitMQ.Namespace == "" {
+			c.Components.RabbitMQ.Namespace = "rabbitmq"
+		}
+		if c.Components.RabbitMQ.ChartVersion == "" {
+			return errors.New("rabbitmq chart version must be specified when enabled")
+		}
+		// Validate virtual host format (must start with "/" or be alphanumeric)
+		if c.Components.RabbitMQ.VirtualHost != "" {
+			vhostRegex := regexp.MustCompile(`^(/[a-zA-Z0-9_]*|[a-zA-Z0-9_]+)$`)
+			if !vhostRegex.MatchString(c.Components.RabbitMQ.VirtualHost) {
+				return errors.New("rabbitmq virtual host must start with / or be alphanumeric")
+			}
+		}
+		// Validate NodePorts
+		if c.Components.RabbitMQ.NodePorts.AMQP < 30000 || c.Components.RabbitMQ.NodePorts.AMQP > 32767 {
+			return errors.New("rabbitmq amqp nodeport must be in range 30000-32767")
+		}
+		if c.Components.RabbitMQ.NodePorts.Management < 30000 || c.Components.RabbitMQ.NodePorts.Management > 32767 {
+			return errors.New("rabbitmq management nodeport must be in range 30000-32767")
+		}
+		if c.Components.RabbitMQ.NodePorts.AMQP == c.Components.RabbitMQ.NodePorts.Management {
+			return errors.New("rabbitmq amqp and management nodeports must be different")
+		}
+		// Validate CPU format (e.g., "500m", "1")
+		if c.Components.RabbitMQ.Resources.CPU != "" {
+			cpuRegex := regexp.MustCompile(`^[0-9]+m?$`)
+			if !cpuRegex.MatchString(c.Components.RabbitMQ.Resources.CPU) {
+				return errors.New("rabbitmq cpu resource must be in valid format (e.g., 500m, 1)")
+			}
+		}
+		// Validate memory format (e.g., "1Gi", "512Mi")
+		if c.Components.RabbitMQ.Resources.Memory != "" {
+			memoryRegex := regexp.MustCompile(`^[0-9]+[KMGT]i$`)
+			if !memoryRegex.MatchString(c.Components.RabbitMQ.Resources.Memory) {
+				return errors.New("rabbitmq memory resource must be in valid format (e.g., 1Gi, 512Mi)")
+			}
+		}
+		// Validate persistence size if enabled
+		if c.Components.RabbitMQ.Persistence.Enabled {
+			if c.Components.RabbitMQ.Persistence.Size == "" {
+				return errors.New("rabbitmq persistence size must be specified when persistence is enabled")
+			}
+			persistenceSizeRegex := regexp.MustCompile(`^[0-9]+[KMGT]i$`)
+			if !persistenceSizeRegex.MatchString(c.Components.RabbitMQ.Persistence.Size) {
+				return errors.New("rabbitmq persistence size must be in valid format (e.g., 8Gi, 10Gi)")
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -798,6 +943,17 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.MySQL.Persistence.Enabled = false
 	config.Components.MySQL.Persistence.Size = "8Gi"
 
+	config.Components.RabbitMQ.Enabled = false
+	config.Components.RabbitMQ.Namespace = "rabbitmq"
+	config.Components.RabbitMQ.ChartVersion = "11.0.0"
+	config.Components.RabbitMQ.VirtualHost = "/"
+	config.Components.RabbitMQ.NodePorts.AMQP = 30672
+	config.Components.RabbitMQ.NodePorts.Management = 31672
+	config.Components.RabbitMQ.Resources.CPU = "500m"
+	config.Components.RabbitMQ.Resources.Memory = "1Gi"
+	config.Components.RabbitMQ.Persistence.Enabled = false
+	config.Components.RabbitMQ.Persistence.Size = "8Gi"
+
 	config.Components.TemporalWorkerOperator.Enabled = false
 	config.Components.TemporalWorkerOperator.ChartVersion = "0.1.46-dev"
 	config.Components.TemporalWorkerOperator.TemporalNamespace = "default"
@@ -825,6 +981,13 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Secrets.MySQL.Namespace = "default"
 	config.Secrets.MySQL.Username = "root"
 	config.Secrets.MySQL.Password = "password"
+
+	config.Secrets.RabbitMQ.Enabled = true
+	config.Secrets.RabbitMQ.Name = "rabbitmq-credentials"
+	config.Secrets.RabbitMQ.Namespace = "rabbitmq"
+	config.Secrets.RabbitMQ.Username = "user"
+	config.Secrets.RabbitMQ.Password = "password"
+	config.Secrets.RabbitMQ.ErlangCookie = "" // Auto-generated if empty
 
 	// Generate default port mappings based on enabled components
 	config.Cluster.MapPorts = generateDefaultPortMappings(config)

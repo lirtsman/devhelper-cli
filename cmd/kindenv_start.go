@@ -18,6 +18,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -228,6 +230,8 @@ Use --force-context to automatically switch without prompting.`,
 		}
 		fmt.Printf("- Indices Operator: %v\n", config.Components.IndicesOperator.Enabled)
 		fmt.Printf("- Metrics Server: %v\n", config.Components.MetricsServer.Enabled)
+		fmt.Printf("- MySQL: %v\n", config.Components.MySQL.Enabled)
+		fmt.Printf("- RabbitMQ: %v\n", config.Components.RabbitMQ.Enabled)
 		if config.Images.UseHarbor {
 			fmt.Printf("- Harbor Registry: %v (%s) - for third-party components\n", config.Images.UseHarbor, config.Images.HarborRegistry)
 		}
@@ -267,6 +271,44 @@ Use --force-context to automatically switch without prompting.`,
 		if err == nil && strings.Contains(clusterOutput, config.Cluster.Name) {
 			clusterExists = true
 			fmt.Printf("%s Kind cluster %s already exists, reusing it\n", yellow("🔄"), config.Cluster.Name)
+			
+			// Warn about port mappings: Kind port mappings cannot be changed after cluster creation
+			if len(config.Cluster.MapPorts) > 0 {
+				fmt.Printf("%s Note: Port mappings are only applied during cluster creation.\n", yellow("ℹ️"))
+				fmt.Printf("%s If you've added or changed port mappings, you may need to recreate the cluster:\n", yellow("ℹ️"))
+				fmt.Printf("   %s\n", yellow("devhelper-cli kindenv stop && devhelper-cli kindenv start"))
+				
+				// Check if there are custom components with ports that might be affected
+				hasCustomComponentPorts := false
+				for _, component := range config.CustomComponents {
+					if len(component.Ports) > 0 {
+						hasCustomComponentPorts = true
+						break
+					}
+				}
+				if hasCustomComponentPorts {
+					fmt.Printf("%s Custom component NodePorts will work, but Kind port mappings (for accessing via localhost) require cluster recreation.\n", yellow("ℹ️"))
+				}
+				
+				if verbose {
+					fmt.Println(yellow("Configured port mappings:"))
+					for _, portMap := range config.Cluster.MapPorts {
+						var containerPortStr string
+						switch cp := portMap.ContainerPort.(type) {
+						case int:
+							containerPortStr = strconv.Itoa(cp)
+						case float64:
+							containerPortStr = strconv.Itoa(int(cp))
+						case string:
+							containerPortStr = cp
+						default:
+							containerPortStr = fmt.Sprintf("%v", cp)
+						}
+						fmt.Printf("  - Container: %s → Host: %d (%s)\n",
+							containerPortStr, portMap.HostPort, portMap.Protocol)
+					}
+				}
+			}
 		}
 
 		if !clusterExists && config.Cluster.CreateIfNotExists {
@@ -365,6 +407,20 @@ Use --force-context to automatically switch without prompting.`,
 				if !mappedPorts[mysqlPortKey] {
 					fmt.Printf("%s Adding missing MySQL port mapping\n", yellow("➕"))
 					addPortMapping(config.Components.MySQL.NodePorts.MySQL, 3306, "TCP")
+				}
+			}
+
+			// Ensure RabbitMQ ports are mapped if enabled
+			if config.Components.RabbitMQ.Enabled {
+				amqpPortKey := fmt.Sprintf("%d/TCP", config.Components.RabbitMQ.NodePorts.AMQP)
+				if !mappedPorts[amqpPortKey] {
+					fmt.Printf("%s Adding missing RabbitMQ AMQP port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.RabbitMQ.NodePorts.AMQP, 5672, "TCP")
+				}
+				mgmtPortKey := fmt.Sprintf("%d/TCP", config.Components.RabbitMQ.NodePorts.Management)
+				if !mappedPorts[mgmtPortKey] {
+					fmt.Printf("%s Adding missing RabbitMQ Management port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.RabbitMQ.NodePorts.Management, 15672, "TCP")
 				}
 			}
 
@@ -1114,6 +1170,281 @@ data:
 			}
 		}
 
+		// Install RabbitMQ
+		if config.Components.RabbitMQ.Enabled {
+			fmt.Println(yellow("Installing RabbitMQ"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.RabbitMQ.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating RabbitMQ namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying RabbitMQ namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
+				err = setupECRCreds(config.Components.RabbitMQ.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for RabbitMQ namespace: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Generate erlang cookie if not provided
+			erlangCookie := config.Secrets.RabbitMQ.ErlangCookie
+			if erlangCookie == "" {
+				// Generate a secure random erlang cookie (20+ characters)
+				cookieBytes := make([]byte, 24)
+				if _, err := rand.Read(cookieBytes); err != nil {
+					fmt.Printf("%s Error generating erlang cookie: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+				erlangCookie = base64.URLEncoding.EncodeToString(cookieBytes)
+				if verbose {
+					fmt.Printf("Generated erlang cookie: %s\n", erlangCookie)
+				}
+			}
+
+			// Create RabbitMQ secret in the component namespace if RabbitMQ secrets are enabled
+			if config.Secrets.RabbitMQ.Enabled {
+				// Warn if secret namespace differs from component namespace
+				if config.Secrets.RabbitMQ.Namespace != config.Components.RabbitMQ.Namespace {
+					fmt.Printf("%s Warning: RabbitMQ secret namespace (%s) differs from component namespace (%s). Helm will look for the secret in the component namespace.\n",
+						yellow("⚠️"), config.Secrets.RabbitMQ.Namespace, config.Components.RabbitMQ.Namespace)
+				}
+
+				fmt.Println(yellow("Creating RabbitMQ credentials secret"))
+
+				// Create secret in component namespace (where Helm release will be deployed)
+				// Bitnami chart expects: rabbitmq-password and rabbitmq-erlang-cookie keys
+				rabbitmqSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: "%s"
+  rabbitmq-password: "%s"
+  rabbitmq-erlang-cookie: "%s"
+`, config.Secrets.RabbitMQ.Name, config.Components.RabbitMQ.Namespace,
+					config.Secrets.RabbitMQ.Username, config.Secrets.RabbitMQ.Password, erlangCookie)
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(rabbitmqSecretYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating RabbitMQ secret: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+
+				fmt.Printf("%s RabbitMQ credentials secret created\n", green("✅"))
+			}
+
+			// Build Helm arguments for RabbitMQ installation
+			helmArgs := []string{
+				"upgrade", "--install",
+				"rabbitmq", "bitnami/rabbitmq",
+				"--namespace", config.Components.RabbitMQ.Namespace,
+				"--version", config.Components.RabbitMQ.ChartVersion,
+				"--set", "service.type=NodePort",
+				"--set", fmt.Sprintf("service.nodePorts.amqp=%d", config.Components.RabbitMQ.NodePorts.AMQP),
+				"--set", fmt.Sprintf("service.nodePorts.manager=%d", config.Components.RabbitMQ.NodePorts.Management),
+			"--set", fmt.Sprintf("auth.vhost=%s", config.Components.RabbitMQ.VirtualHost),
+			"--set", fmt.Sprintf("persistence.enabled=%t", config.Components.RabbitMQ.Persistence.Enabled),
+				"--set", fmt.Sprintf("resources.requests.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
+				"--set", fmt.Sprintf("resources.requests.memory=%s", config.Components.RabbitMQ.Resources.Memory),
+				"--set", fmt.Sprintf("resources.limits.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
+				"--set", fmt.Sprintf("resources.limits.memory=%s", config.Components.RabbitMQ.Resources.Memory),
+				"--set", "replicaCount=1",
+				"--set", "networkPolicy.enabled=false",
+				"--set", "plugins=rabbitmq_management",
+				"--set", "memoryHighWatermark.enabled=false", // Disable to avoid memory parsing issues that can cause segfaults
+				// Add Erlang-specific environment variables to prevent segfaults
+				// These disable watchdog timers that can cause segfaults in containerized environments
+				"--set", "extraEnvVars[0].name=RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS",
+				"--set", "extraEnvVars[0].value=+sbwt none +sbwtdcpu none +sbwtdio none",
+				// Enable privileged mode for ARM64 compatibility (workaround for Bitnami RabbitMQ segfaults on ARM64)
+				"--set", "containerSecurityContext.privileged=true",
+			}
+
+			// Add secret configuration if RabbitMQ secrets are enabled
+			// Note: When using official RabbitMQ image, auth.username/auth.existingPasswordSecret
+			// don't work - we use RABBITMQ_DEFAULT_USER/RABBITMQ_DEFAULT_PASS env vars instead
+			if config.Components.RabbitMQ.ImageTag == "" {
+				// Only set Bitnami auth settings when using Bitnami image
+				if config.Secrets.RabbitMQ.Enabled {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("auth.username=%s", config.Secrets.RabbitMQ.Username),
+						"--set", fmt.Sprintf("auth.existingPasswordSecret=%s", config.Secrets.RabbitMQ.Name),
+						"--set", fmt.Sprintf("auth.existingErlangSecret=%s", config.Secrets.RabbitMQ.Name))
+				} else {
+					// Use default credentials if secrets are disabled
+					helmArgs = append(helmArgs,
+						"--set", "auth.username=user",
+						"--set", "auth.password=password",
+						"--set", "auth.erlangCookie=secretcookie")
+				}
+			}
+			// When using official RabbitMQ image (imageTag is set), auth settings are handled via env vars
+
+			// Add persistence size if enabled
+			if config.Components.RabbitMQ.Persistence.Enabled {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("persistence.size=%s", config.Components.RabbitMQ.Persistence.Size))
+			}
+
+			// Image registry configuration for third-party components (use Harbor by default)
+			// For ARM64 compatibility, use official RabbitMQ image instead of Bitnami
+			// Official RabbitMQ images have much better ARM64 support
+			if config.Components.RabbitMQ.ImageTag != "" {
+				// Custom image tag specified - use official RabbitMQ image for ARM64 compatibility
+				// The official RabbitMQ image works much better on ARM64 than Bitnami images
+				if config.Images.UseHarbor {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+						"--set", "image.repository=docker.io/library/rabbitmq",
+						"--set", fmt.Sprintf("image.tag=%s", config.Components.RabbitMQ.ImageTag))
+				} else if config.Images.UseAwsEcr {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", ecrRegistry),
+						"--set", "image.repository=rabbitmq",
+						"--set", fmt.Sprintf("image.tag=%s", config.Components.RabbitMQ.ImageTag))
+				} else {
+					// Default to official RabbitMQ image from Docker Hub
+					helmArgs = append(helmArgs,
+						"--set", "image.repository=rabbitmq",
+						"--set", fmt.Sprintf("image.tag=%s", config.Components.RabbitMQ.ImageTag))
+				}
+				// When using official RabbitMQ image, we need to use official image environment variables
+				// The official image uses RABBITMQ_DEFAULT_USER and RABBITMQ_DEFAULT_PASS
+				// instead of Bitnami's RABBITMQ_USERNAME and RABBITMQ_PASSWORD
+				// Clear any existing extraEnvVars first, then add the official image env vars
+				helmArgs = append(helmArgs,
+					"--set", "containerSecurityContext.privileged=false", // Not needed for official image
+					"--set", "extraEnvVars[0].name=RABBITMQ_DEFAULT_USER",
+					"--set", fmt.Sprintf("extraEnvVars[0].value=%s", config.Secrets.RabbitMQ.Username),
+					"--set", "extraEnvVars[1].name=RABBITMQ_DEFAULT_PASS",
+					"--set", fmt.Sprintf("extraEnvVars[1].value=%s", config.Secrets.RabbitMQ.Password))
+			} else {
+				// Default to Bitnami image (for x86_64 compatibility)
+				if config.Images.UseHarbor {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+						"--set", "image.repository=docker.io/bitnamilegacy/rabbitmq")
+				} else if config.Images.UseAwsEcr {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", ecrRegistry),
+						"--set", "image.repository=bitnamilegacy/rabbitmq")
+				}
+			}
+
+			_, err = executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing RabbitMQ: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for RabbitMQ to be ready
+			fmt.Println(yellow("Waiting for RabbitMQ to be ready..."))
+			time.Sleep(10 * time.Second)
+
+			// Wait for RabbitMQ pod
+			// Bitnami RabbitMQ Helm chart creates a StatefulSet named "rabbitmq" (same as release name)
+			// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "rabbitmq-0"
+			fmt.Println(yellow("Waiting for rabbitmq-0 pod to be created..."))
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--no-headers")
+
+			var podExists bool
+			for i := 0; i < 10; i++ { // Try for up to 5 minutes (10 * 30s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 9 {
+					fmt.Printf("Waiting for rabbitmq-0 pod to appear (attempt %d/10)...\n", i+1)
+					time.Sleep(30 * time.Second)
+				}
+			}
+
+			if podExists {
+				fmt.Println(yellow("Found rabbitmq-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: RabbitMQ pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite RabbitMQ not being fully ready..."))
+				} else {
+					// Verify AMQP connectivity (SC-002)
+					fmt.Println(yellow("Verifying AMQP connectivity..."))
+					amqpVerified := false
+					for i := 0; i < 6; i++ { // Try for 30 seconds (6 * 5s)
+						amqpCmd := exec.Command("nc", "-z", "-v", "localhost", "5672")
+						if amqpOutput, err := amqpCmd.CombinedOutput(); err == nil || bytes.Contains(amqpOutput, []byte("succeeded")) {
+							amqpVerified = true
+							if verbose {
+								fmt.Printf("AMQP connectivity check: %s\n", string(amqpOutput))
+							}
+							break
+						}
+						if i < 5 {
+							time.Sleep(5 * time.Second)
+						}
+					}
+					
+					// Verify Management UI connectivity (SC-003)
+					fmt.Println(yellow("Verifying Management UI connectivity..."))
+					managementVerified := false
+					for i := 0; i < 6; i++ { // Try for 30 seconds (6 * 5s)
+						mgmtCmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", 
+							fmt.Sprintf("http://localhost:15672/api/overview"),
+							"-u", fmt.Sprintf("%s:%s", config.Secrets.RabbitMQ.Username, config.Secrets.RabbitMQ.Password))
+						if output, err := mgmtCmd.Output(); err == nil && string(output) == "200" {
+							managementVerified = true
+							if verbose {
+								fmt.Printf("Management UI HTTP status: %s\n", string(output))
+							}
+							break
+						}
+						if i < 5 {
+							time.Sleep(5 * time.Second)
+						}
+					}
+					
+					// Report results
+					if amqpVerified && managementVerified {
+						fmt.Printf("%s RabbitMQ installed successfully\n", green("✅"))
+						fmt.Printf("%s AMQP is accessible at amqp://%s:***@localhost:%d%s\n",
+							green("✅"), config.Secrets.RabbitMQ.Username, 5672, config.Components.RabbitMQ.VirtualHost)
+						fmt.Printf("%s Management UI is accessible at http://localhost:%d\n",
+							green("✅"), 15672)
+					} else {
+						fmt.Printf("%s RabbitMQ pod is ready but connectivity checks failed\n", yellow("⚠️"))
+						if !amqpVerified {
+							fmt.Printf("%s AMQP port (5672) not responding\n", yellow("⚠️"))
+						}
+						if !managementVerified {
+							fmt.Printf("%s Management UI (15672) not responding\n", yellow("⚠️"))
+						}
+						fmt.Println(yellow("Check port mappings and try: kubectl port-forward -n rabbitmq svc/rabbitmq 5672:5672 15672:15672"))
+					}
+				}
+			} else {
+				fmt.Printf("%s RabbitMQ pod (rabbitmq-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite RabbitMQ pod not being detected..."))
+			}
+		}
+
 		// Install Dapr
 		if config.Components.Dapr.Enabled {
 			fmt.Println(yellow("Installing Dapr"))
@@ -1270,6 +1601,12 @@ spec:
           # Enable index management plugin (includes snapshot management functionality)
           echo "plugins.index_state_management.enabled: %t" >> /usr/share/opensearch/config/opensearch.yml
 
+          # Configure disk watermarks to prevent automatic read-only mode in development
+          # These high thresholds prevent OpenSearch from blocking index creation due to disk space
+          echo "cluster.routing.allocation.disk.watermark.low: 95%%" >> /usr/share/opensearch/config/opensearch.yml
+          echo "cluster.routing.allocation.disk.watermark.high: 98%%" >> /usr/share/opensearch/config/opensearch.yml
+          echo "cluster.routing.allocation.disk.watermark.flood_stage: 99%%" >> /usr/share/opensearch/config/opensearch.yml
+
           # Start OpenSearch in foreground
           /usr/share/opensearch/opensearch-docker-entrypoint.sh
         env:
@@ -1373,6 +1710,37 @@ spec:
 
 					fmt.Printf("%s OpenSearch is accessible at http://localhost:%d\n",
 						green("✅"), openSearchHostPort)
+
+					// Ensure index creation is not blocked (idempotent operation)
+					fmt.Println(yellow("Ensuring index creation is not blocked..."))
+					podNameCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch",
+						"-n", config.Components.OpenSearch.Namespace, "-o", "jsonpath={.items[0].metadata.name}")
+					podNameOutput, err := podNameCmd.Output()
+					if err == nil && len(podNameOutput) > 0 {
+						podName := strings.TrimSpace(string(podNameOutput))
+						
+						// Unblock index creation by setting cluster.blocks.create to null
+						// This is idempotent - if not blocked, it does nothing
+						unblockCmd := exec.Command("kubectl", "exec", "-n", config.Components.OpenSearch.Namespace, podName,
+							"--", "curl", "-s", "-X", "PUT", "http://localhost:9200/_cluster/settings",
+							"-H", "Content-Type: application/json",
+							"-d", `{"persistent":{"cluster.blocks.create":null}}`)
+						unblockOutput, err := unblockCmd.CombinedOutput()
+						if err == nil {
+							fmt.Printf("%s Index creation is unblocked\n", green("✅"))
+							if verbose && len(unblockOutput) > 0 {
+								fmt.Printf("Response: %s\n", string(unblockOutput))
+							}
+						} else {
+							fmt.Printf("%s Warning: Could not verify/unblock index creation: %v\n", yellow("⚠️"), err)
+							if len(unblockOutput) > 0 {
+								fmt.Printf("Output: %s\n", string(unblockOutput))
+							}
+							fmt.Println(yellow("You may need to manually unblock index creation:"))
+							fmt.Printf("  kubectl exec -n %s %s -- curl -X PUT http://localhost:9200/_cluster/settings -H 'Content-Type: application/json' -d '{\"persistent\":{\"cluster.blocks.create\":null}}'\n",
+								config.Components.OpenSearch.Namespace, podName)
+						}
+					}
 				}
 			}
 		}
@@ -2019,7 +2387,7 @@ stringData:
 		fmt.Println(green("Kind-based development environment setup complete!"))
 
 		// Find host ports from the port mappings and component configuration
-		var temporalWebPort, temporalFrontendPort, redisPort, mysqlPort int
+		var temporalWebPort, temporalFrontendPort, redisPort, mysqlPort, rabbitmqAMQPPort, rabbitmqManagementPort int
 
 		if verbose {
 			fmt.Println(yellow("Port mapping details for accessing services:"))
@@ -2161,6 +2529,31 @@ stringData:
 		}
 		if config.Components.OpenSearchDashboards.Enabled && openSearchDashboardsPort > 0 {
 			fmt.Printf("- OpenSearch Dashboards: http://localhost:%d\n", openSearchDashboardsPort)
+		}
+		if config.Components.RabbitMQ.Enabled {
+			rabbitmqAMQPPort = findHostPort(config.Components.RabbitMQ.NodePorts.AMQP)
+			rabbitmqManagementPort = findHostPort(config.Components.RabbitMQ.NodePorts.Management)
+			if rabbitmqAMQPPort == 0 {
+				rabbitmqAMQPPort = 5672 // Default host port for AMQP
+				if verbose {
+					fmt.Printf("%s Using default host port for RabbitMQ AMQP: %d\n", yellow("ℹ️"), rabbitmqAMQPPort)
+				}
+			}
+			if rabbitmqManagementPort == 0 {
+				rabbitmqManagementPort = 15672 // Default host port for Management UI
+				if verbose {
+					fmt.Printf("%s Using default host port for RabbitMQ Management UI: %d\n", yellow("ℹ️"), rabbitmqManagementPort)
+				}
+			}
+			if rabbitmqAMQPPort > 0 && rabbitmqManagementPort > 0 {
+				fmt.Printf("- RabbitMQ AMQP: amqp://localhost:%d%s\n", rabbitmqAMQPPort, config.Components.RabbitMQ.VirtualHost)
+				fmt.Printf("- RabbitMQ Management UI: http://localhost:%d\n", rabbitmqManagementPort)
+				if config.Secrets.RabbitMQ.Enabled {
+					fmt.Printf("  Username: %s, Virtual Host: %s\n", config.Secrets.RabbitMQ.Username, config.Components.RabbitMQ.VirtualHost)
+				} else {
+					fmt.Printf("  Username: user, Virtual Host: %s\n", config.Components.RabbitMQ.VirtualHost)
+				}
+			}
 		}
 	},
 }

@@ -210,6 +210,324 @@ func TestValidateMySQLConfig(t *testing.T) {
 	}
 }
 
+func TestValidateRabbitMQConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      RabbitMQConfig
+		expectError bool
+		errorField  string
+	}{
+		{
+			name: "valid config with all fields",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+				Resources: RabbitMQResources{
+					CPU:    "500m",
+					Memory: "1Gi",
+				},
+				Persistence: RabbitMQPersistence{
+					Enabled: false,
+					Size:    "8Gi",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "disabled RabbitMQ should skip validation",
+			config: RabbitMQConfig{
+				Enabled: false,
+			},
+			expectError: false,
+		},
+		{
+			name: "missing chart version",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+			},
+			expectError: true,
+			errorField:  "chartVersion",
+		},
+		{
+			name: "invalid virtual host format",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "invalid-vhost",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+			},
+			expectError: true,
+			errorField:  "virtualHost",
+		},
+		{
+			name: "valid virtual host starting with slash",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/dev",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid amqp nodeport too low",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       25000,
+					Management: 31672,
+				},
+			},
+			expectError: true,
+			errorField:  "nodePorts.amqp",
+		},
+		{
+			name: "invalid amqp nodeport too high",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       40000,
+					Management: 31672,
+				},
+			},
+			expectError: true,
+			errorField:  "nodePorts.amqp",
+		},
+		{
+			name: "invalid management nodeport too low",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 25000,
+				},
+			},
+			expectError: true,
+			errorField:  "nodePorts.management",
+		},
+		{
+			name: "duplicate nodeports",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 30672,
+				},
+			},
+			expectError: true,
+			errorField:  "nodePorts",
+		},
+		{
+			name: "invalid CPU format",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+				Resources: RabbitMQResources{
+					CPU:    "invalid",
+					Memory: "1Gi",
+				},
+			},
+			expectError: true,
+			errorField:  "resources.cpu",
+		},
+		{
+			name: "invalid memory format",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+				Resources: RabbitMQResources{
+					CPU:    "500m",
+					Memory: "invalid",
+				},
+			},
+			expectError: true,
+			errorField:  "resources.memory",
+		},
+		{
+			name: "persistence enabled but size missing",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+				Persistence: RabbitMQPersistence{
+					Enabled: true,
+					Size:    "",
+				},
+			},
+			expectError: true,
+			errorField:  "persistence.size",
+		},
+		{
+			name: "persistence enabled with invalid size format",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+				Persistence: RabbitMQPersistence{
+					Enabled: true,
+					Size:    "invalid",
+				},
+			},
+			expectError: true,
+			errorField:  "persistence.size",
+		},
+		{
+			name: "valid config with persistence enabled",
+			config: RabbitMQConfig{
+				Enabled:      true,
+				ChartVersion: "11.0.0",
+				VirtualHost:  "/",
+				NodePorts: RabbitMQNodePorts{
+					AMQP:       30672,
+					Management: 31672,
+				},
+				Resources: RabbitMQResources{
+					CPU:    "500m",
+					Memory: "1Gi",
+				},
+				Persistence: RabbitMQPersistence{
+					Enabled: true,
+					Size:    "10Gi",
+				},
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRabbitMQConfig(tt.config)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+					return
+				}
+				if tt.errorField != "" {
+					validationErr, ok := err.(*ValidationError)
+					if !ok {
+						t.Errorf("expected ValidationError but got %T", err)
+						return
+					}
+					if validationErr.Field != tt.errorField {
+						t.Errorf("expected error field %s but got %s", tt.errorField, validationErr.Field)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateVirtualHost(t *testing.T) {
+	tests := []struct {
+		name        string
+		vhost       string
+		expectError bool
+	}{
+		{
+			name:        "valid virtual host root",
+			vhost:       "/",
+			expectError: false,
+		},
+		{
+			name:        "valid virtual host with path",
+			vhost:       "/dev",
+			expectError: false,
+		},
+		{
+			name:        "valid virtual host with underscore",
+			vhost:       "/dev_env",
+			expectError: false,
+		},
+		{
+			name:        "valid virtual host alphanumeric",
+			vhost:       "dev",
+			expectError: false,
+		},
+		{
+			name:        "empty virtual host (defaults to /)",
+			vhost:       "",
+			expectError: false,
+		},
+		{
+			name:        "invalid virtual host with dash",
+			vhost:       "dev-env",
+			expectError: true,
+		},
+		{
+			name:        "invalid virtual host starting with number",
+			vhost:       "123dev",
+			expectError: true,
+		},
+		{
+			name:        "invalid virtual host with special characters",
+			vhost:       "/dev@env",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateVirtualHost(tt.vhost)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateDatabase(t *testing.T) {
 	tests := []struct {
 		name        string

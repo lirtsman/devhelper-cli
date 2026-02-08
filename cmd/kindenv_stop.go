@@ -215,6 +215,48 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			}
 		}
 
+		// Clean up RabbitMQ if enabled
+		if config.Components.RabbitMQ.Enabled {
+			if verbose {
+				fmt.Println(yellow("Cleaning up RabbitMQ resources..."))
+			}
+
+			// Uninstall RabbitMQ Helm release
+			_, err = executeCommand("helm", "uninstall", "rabbitmq", "--namespace", config.Components.RabbitMQ.Namespace, "--ignore-not-found")
+			if err != nil {
+				if verbose {
+					fmt.Printf("%s Warning: Failed to uninstall RabbitMQ Helm release: %v\n", yellow("⚠️"), err)
+				}
+			} else if verbose {
+				fmt.Printf("%s RabbitMQ Helm release uninstalled\n", green("✅"))
+			}
+
+			// Clean up PersistentVolumeClaims if persistence was enabled
+			if config.Components.RabbitMQ.Persistence.Enabled {
+				if verbose {
+					fmt.Println(yellow("Cleaning up RabbitMQ PersistentVolumeClaims..."))
+				}
+				_, err = executeCommand("kubectl", "delete", "pvc", "-n", config.Components.RabbitMQ.Namespace, "--all", "--ignore-not-found")
+				if err != nil {
+					if verbose {
+						fmt.Printf("%s Warning: Failed to delete RabbitMQ PVCs: %v\n", yellow("⚠️"), err)
+					}
+				} else if verbose {
+					fmt.Printf("%s RabbitMQ PersistentVolumeClaims cleaned up\n", green("✅"))
+				}
+			}
+
+			// Delete RabbitMQ namespace
+			_, err = executeCommand("kubectl", "delete", "namespace", config.Components.RabbitMQ.Namespace, "--ignore-not-found")
+			if err != nil {
+				if verbose {
+					fmt.Printf("%s Warning: Failed to delete RabbitMQ namespace: %v\n", yellow("⚠️"), err)
+				}
+			} else if verbose {
+				fmt.Printf("%s RabbitMQ namespace deleted\n", green("✅"))
+			}
+		}
+
 		// Stop the cluster
 		err = stopCluster(config.Cluster.Name, verbose)
 		if err != nil {
