@@ -139,6 +139,12 @@ secrets:
         namespace: default
         username: root
         password: password
+    rabbitmq:
+        enabled: true
+        name: kvv2-rabbitmq
+        namespace: default
+        username: user
+        password: password
 customComponents:
   - name: dss
     image: 992979781608.dkr.ecr.eu-west-1.amazonaws.com/dss:dev-3846
