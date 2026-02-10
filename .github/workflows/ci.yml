@@ -32,24 +32,15 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Prepare coverage directory (Windows)
-        if: runner.os == 'Windows'
-        run: if not exist coverage mkdir coverage
-        shell: cmd
-
-      - name: Prepare coverage directory (Unix)
-        if: runner.os != 'Windows'
-        run: mkdir -p ./coverage
-
       - name: Test with coverage
-        run: go test -short -coverprofile=./coverage/coverage.out ./...
+        run: go test -short -coverprofile=coverage.out ./...
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-latest'
         with:
           name: coverage-report
-          path: coverage/
+          path: coverage.out
           retention-days: 7
 
   lint:

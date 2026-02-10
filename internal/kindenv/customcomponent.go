@@ -159,8 +159,8 @@ type PodMetadata struct {
 
 // PodSpec represents pod specification
 type PodSpec struct {
-	Containers     []Container        `yaml:"containers"`
-	Volumes        []Volume           `yaml:"volumes,omitempty"`
+	Containers       []Container       `yaml:"containers"`
+	Volumes          []Volume          `yaml:"volumes,omitempty"`
 	ImagePullSecrets []ImagePullSecret `yaml:"imagePullSecrets,omitempty"`
 }
 

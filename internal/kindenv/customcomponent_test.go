@@ -864,10 +864,10 @@ func TestGenerateDeploymentYAML_WithECRImagePullSecrets(t *testing.T) {
 	// Verify imagePullSecrets are present
 	imagePullSecrets, exists := spec["imagePullSecrets"]
 	require.True(t, exists, "imagePullSecrets should be present when ECR is enabled")
-	
+
 	secrets := imagePullSecrets.([]interface{})
 	require.Len(t, secrets, 1)
-	
+
 	secret := secrets[0].(map[string]interface{})
 	assert.Equal(t, "ecr-credentials", secret["name"])
 }

@@ -1,0 +1,254 @@
+# KEDA Configuration Contract
+# This file demonstrates the KEDA configuration options available in kindenv.yaml
+
+# Example 1: Default KEDA Configuration (Disabled)
+# KEDA is disabled by default and must be explicitly enabled
+components:
+  keda:
+    enabled: false        # Boolean: Enable/disable KEDA installation
+    namespace: keda       # String: Kubernetes namespace for KEDA components
+    chartVersion: 2.16.0  # String: KEDA Helm chart version
+
+---
+# Example 2: KEDA Enabled with Default Settings
+# Minimal configuration to enable KEDA
+components:
+  keda:
+    enabled: true
+    namespace: keda
+    chartVersion: 2.16.0
+
+---
+# Example 3: KEDA with Custom Chart Version
+# Use a specific version for environment parity with production
+components:
+  keda:
+    enabled: true
+    namespace: keda
+    chartVersion: 2.19.0  # Latest stable version
+
+---
+# Example 4: KEDA with Custom Namespace
+# Install KEDA in a custom namespace for organizational purposes
+components:
+  keda:
+    enabled: true
+    namespace: autoscaling  # Custom namespace name
+    chartVersion: 2.16.0
+
+---
+# Example 5: Complete kindenv.yaml with KEDA
+# Full configuration example showing KEDA alongside other components
+cluster:
+  name: dev-cluster
+  createIfNotExists: true
+
+components:
+  # Other components
+  mysql:
+    enabled: true
+    namespace: mysql
+    chartVersion: 9.4.6
+    database: mydb
+    nodePorts:
+      mysql: 30306
+    resources:
+      cpu: 500m
+      memory: 1Gi
+
+  rabbitmq:
+    enabled: true
+    namespace: rabbitmq
+    chartVersion: 11.0.0
+    virtualHost: /
+    nodePorts:
+      amqp: 30672
+      management: 31672
+    resources:
+      cpu: 500m
+      memory: 1Gi
+
+  metricsServer:
+    enabled: true
+    chartVersion: 3.10.0
+
+  # KEDA Configuration
+  keda:
+    enabled: true          # Enable event-driven autoscaling
+    namespace: keda        # Dedicated namespace for KEDA
+    chartVersion: 2.16.0   # Stable, tested version
+
+---
+# Configuration Field Reference
+
+# enabled (boolean, required)
+# - Description: Controls whether KEDA is installed in the cluster
+# - Default: false
+# - Valid values: true, false
+# - Example: enabled: true
+
+# namespace (string, required when enabled=true)
+# - Description: Kubernetes namespace where KEDA components will be deployed
+# - Default: keda
+# - Validation: Must be a valid Kubernetes namespace name (lowercase alphanumeric with hyphens)
+# - Cannot be empty when KEDA is enabled
+# - Example: namespace: keda
+
+# chartVersion (string, required when enabled=true)
+# - Description: KEDA Helm chart version to install
+# - Default: 2.16.0
+# - Validation: Must not be empty when KEDA is enabled
+# - Format: Semantic version (e.g., 2.16.0, 2.19.0)
+# - Cannot be empty when KEDA is enabled
+# - Available versions: Check with `helm search repo kedacore/keda --versions`
+# - Example: chartVersion: 2.16.0
+
+---
+# Command-Line Flag Overrides
+
+# The --skip-keda flag overrides the configuration file setting
+# Usage examples:
+
+# Start with KEDA disabled, regardless of config
+# devhelper-cli kindenv start --skip-keda
+
+# Effect: config.components.keda.enabled is set to false
+# Use case: Quick environment startup without autoscaling for testing
+
+---
+# Validation Rules
+
+# When keda.enabled = true:
+# 1. namespace must not be empty
+#    Error: "keda namespace cannot be empty when KEDA is enabled"
+#
+# 2. chartVersion must not be empty
+#    Error: "keda chartVersion cannot be empty when KEDA is enabled"
+
+# When keda.enabled = false:
+# - No validation performed
+# - KEDA components are not installed
+# - No resources created in the cluster
+
+---
+# Installation Behavior
+
+# When KEDA is enabled:
+# 1. Namespace is created: kubectl create namespace <namespace>
+# 2. Helm repository is added: kedacore/keda
+# 3. KEDA is installed via Helm:
+#    helm upgrade --install keda kedacore/keda \
+#      --namespace <namespace> \
+#      --version <chartVersion>
+# 4. Wait for keda-operator deployment to be ready (2 minute timeout)
+# 5. Success message displayed with usage instructions
+
+# Resources Created:
+# - Namespace: <namespace>
+# - Deployment: keda-operator
+# - Deployment: keda-metrics-apiserver
+# - CRDs: scaledobjects.keda.sh, scaledjobs.keda.sh, triggerauthentications.keda.sh
+
+---
+# Cleanup Behavior
+
+# When stopping the environment (devhelper-cli kindenv stop):
+# If keda.enabled = true:
+# 1. Uninstall Helm release: helm uninstall keda -n <namespace>
+# 2. Delete namespace: kubectl delete namespace <namespace>
+# 3. CRDs are removed automatically by Helm
+
+---
+# Error Handling
+
+# Chart version not found:
+# - Error message displays with troubleshooting tips
+# - Suggests: helm search repo kedacore/keda --versions
+# - Provides link to GitHub releases
+# - Installation continues with other components (non-blocking)
+
+# Namespace creation fails:
+# - Warning displayed
+# - Installation continues with other components (non-blocking)
+
+# Helm install fails:
+# - Error output displayed
+# - Troubleshooting tips provided
+# - Installation continues with other components (non-blocking)
+
+# Deployment not ready:
+# - Warning displayed after 2 minute timeout
+# - Status check shows KEDA as "not ready"
+# - Environment startup continues (non-blocking)
+
+---
+# Integration Examples
+
+# KEDA with RabbitMQ (both in kindenv.yaml):
+components:
+  rabbitmq:
+    enabled: true
+    namespace: rabbitmq
+    chartVersion: 11.0.0
+    nodePorts:
+      amqp: 30672
+      management: 31672
+
+  keda:
+    enabled: true
+    namespace: keda
+    chartVersion: 2.16.0
+
+# After startup, create ScaledObject to autoscale based on RabbitMQ queue:
+# See specs/001-keda-controller/quickstart.md for ScaledObject examples
+
+---
+# Status Output
+
+# When checking status (devhelper-cli kindenv status):
+# - KEDA is installed and running
+#   ✅ KEDA is installed and running
+#   ✓ KEDA metrics server is running
+#
+# - KEDA operator not ready
+#   ⚠️ KEDA operator is not ready
+#
+# - KEDA not installed
+#   ⚠️ KEDA is not running or not installed
+#
+# - KEDA disabled in config
+#   ℹ️ KEDA is disabled in config
+
+---
+# Best Practices
+
+# 1. Use stable chart versions in production-like environments
+components:
+  keda:
+    enabled: true
+    namespace: keda
+    chartVersion: 2.16.0  # Tested, stable version
+
+# 2. Match production KEDA version for environment parity
+components:
+  keda:
+    enabled: true
+    namespace: keda
+    chartVersion: 2.18.0  # Same as production
+
+# 3. Use custom namespace for organizational clarity
+components:
+  keda:
+    enabled: true
+    namespace: autoscaling  # Clear purpose
+    chartVersion: 2.16.0
+
+# 4. Keep KEDA disabled by default for minimal resource usage
+components:
+  keda:
+    enabled: false  # Enable only when needed
+    namespace: keda
+    chartVersion: 2.16.0
+
+# 5. Use --skip-keda flag for temporary disabling
+# devhelper-cli kindenv start --skip-keda

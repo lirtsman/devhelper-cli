@@ -116,6 +116,11 @@ type KindEnvConfig struct {
 			Enabled      bool   `yaml:"enabled"`
 			ChartVersion string `yaml:"chartVersion"`
 		} `yaml:"metricsServer"`
+		Keda struct {
+			Enabled      bool   `yaml:"enabled"`
+			Namespace    string `yaml:"namespace"`
+			ChartVersion string `yaml:"chartVersion"`
+		} `yaml:"keda"`
 		MySQL struct {
 			Enabled      bool   `yaml:"enabled"`
 			Namespace    string `yaml:"namespace"`
@@ -891,6 +896,16 @@ func (c *KindEnvConfig) Validate() error {
 		}
 	}
 
+	// Validate KEDA configuration
+	if c.Components.Keda.Enabled {
+		if c.Components.Keda.Namespace == "" {
+			return errors.New("keda namespace cannot be empty when KEDA is enabled")
+		}
+		if c.Components.Keda.ChartVersion == "" {
+			return errors.New("keda chartVersion cannot be empty when KEDA is enabled")
+		}
+	}
+
 	return nil
 }
 
@@ -963,6 +978,10 @@ func CreateDefaultConfig() *KindEnvConfig {
 
 	config.Components.MetricsServer.Enabled = true
 	config.Components.MetricsServer.ChartVersion = "3.10.0"
+
+	config.Components.Keda.Enabled = false
+	config.Components.Keda.Namespace = "keda"
+	config.Components.Keda.ChartVersion = "2.16.0"
 
 	// Images section
 	config.Images.SkipPull = false

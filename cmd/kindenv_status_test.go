@@ -218,4 +218,3 @@ func TestStatusReportingWithAllFeatures(t *testing.T) {
 	assert.Equal(t, "full-featured-app-config", configMapName, "ConfigMap name should be correct")
 	assert.Len(t, component.ConfigFiles, 2, "Should have 2 config files")
 }
-

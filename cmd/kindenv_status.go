@@ -270,6 +270,44 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				fmt.Printf("- %s Metrics Server is disabled in config\n", yellow("ℹ️"))
 			}
 
+			// Check KEDA status
+			if config.Components.Keda.Enabled {
+				kedaCmd := exec.Command("kubectl", "get", "deployment", "-n", config.Components.Keda.Namespace, "keda-operator", "--no-headers")
+				kedaOutput, err := kedaCmd.CombinedOutput()
+
+				if err == nil && string(kedaOutput) != "" {
+					outputStr := string(kedaOutput)
+					if strings.Contains(outputStr, "1/1") {
+						fmt.Printf("- %s KEDA is installed and running\n", green("✅"))
+
+						// Check if KEDA metrics server is also running
+						kedaMetricsCmd := exec.Command("kubectl", "get", "deployment", "-n", config.Components.Keda.Namespace, "keda-metrics-apiserver", "--no-headers")
+						kedaMetricsOutput, metricsErr := kedaMetricsCmd.CombinedOutput()
+						if metricsErr == nil && strings.Contains(string(kedaMetricsOutput), "1/1") {
+							fmt.Printf("  %s KEDA metrics server is running\n", green("✓"))
+						}
+
+						if verbose {
+							fmt.Printf("  Namespace: %s\n", config.Components.Keda.Namespace)
+							fmt.Printf("  Chart version: %s\n", config.Components.Keda.ChartVersion)
+							fmt.Printf("  Output: %s\n", strings.TrimSpace(outputStr))
+						}
+					} else {
+						fmt.Printf("- %s KEDA operator is not ready\n", yellow("⚠️"))
+						if verbose {
+							fmt.Printf("  Output: %s\n", strings.TrimSpace(outputStr))
+						}
+					}
+				} else {
+					fmt.Printf("- %s KEDA is not running or not installed\n", yellow("⚠️"))
+					if verbose && err != nil {
+						fmt.Printf("  Error: %v\n", err)
+					}
+				}
+			} else {
+				fmt.Printf("- %s KEDA is disabled in config\n", yellow("ℹ️"))
+			}
+
 			// Check MySQL status
 			if config.Components.MySQL.Enabled {
 				// Check MySQL pod status
@@ -377,118 +415,118 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 						fmt.Printf("  %s MySQL namespace does not exist - MySQL may not have been installed\n", yellow("ℹ️"))
 					}
 				}
-		} else {
-			fmt.Printf("- %s MySQL is disabled in config\n", yellow("ℹ️"))
-		}
+			} else {
+				fmt.Printf("- %s MySQL is disabled in config\n", yellow("ℹ️"))
+			}
 
-		// Check RabbitMQ status
-		if config.Components.RabbitMQ.Enabled {
-			// Check RabbitMQ pod status
-			// Bitnami RabbitMQ Helm chart creates a StatefulSet named "rabbitmq"
-			// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "rabbitmq-0"
-			rabbitmqPodCmd := exec.Command("kubectl", "get", "pod", "rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--no-headers")
-			rabbitmqPodOutput, podErr := rabbitmqPodCmd.CombinedOutput()
+			// Check RabbitMQ status
+			if config.Components.RabbitMQ.Enabled {
+				// Check RabbitMQ pod status
+				// Bitnami RabbitMQ Helm chart creates a StatefulSet named "rabbitmq"
+				// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "rabbitmq-0"
+				rabbitmqPodCmd := exec.Command("kubectl", "get", "pod", "rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--no-headers")
+				rabbitmqPodOutput, podErr := rabbitmqPodCmd.CombinedOutput()
 
-			// Check RabbitMQ service status
-			rabbitmqSvcCmd := exec.Command("kubectl", "get", "service", "rabbitmq", "-n", config.Components.RabbitMQ.Namespace, "--no-headers")
-			rabbitmqSvcOutput, svcErr := rabbitmqSvcCmd.CombinedOutput()
+				// Check RabbitMQ service status
+				rabbitmqSvcCmd := exec.Command("kubectl", "get", "service", "rabbitmq", "-n", config.Components.RabbitMQ.Namespace, "--no-headers")
+				rabbitmqSvcOutput, svcErr := rabbitmqSvcCmd.CombinedOutput()
 
-			podReady := false
-			serviceReady := false
-			podStatus := ""
+				podReady := false
+				serviceReady := false
+				podStatus := ""
 
-			if podErr == nil && string(rabbitmqPodOutput) != "" {
-				// Parse pod status (format: NAME READY STATUS RESTARTS AGE)
-				podFields := strings.Fields(string(rabbitmqPodOutput))
-				if len(podFields) >= 3 {
-					readyStatus := podFields[1] // e.g., "1/1"
-					podStatus = podFields[2]    // e.g., "Running"
-					if readyStatus == "1/1" && podStatus == "Running" {
-						podReady = true
+				if podErr == nil && string(rabbitmqPodOutput) != "" {
+					// Parse pod status (format: NAME READY STATUS RESTARTS AGE)
+					podFields := strings.Fields(string(rabbitmqPodOutput))
+					if len(podFields) >= 3 {
+						readyStatus := podFields[1] // e.g., "1/1"
+						podStatus = podFields[2]    // e.g., "Running"
+						if readyStatus == "1/1" && podStatus == "Running" {
+							podReady = true
+						}
 					}
 				}
-			}
 
-			if svcErr == nil && string(rabbitmqSvcOutput) != "" {
-				serviceReady = true
-			}
+				if svcErr == nil && string(rabbitmqSvcOutput) != "" {
+					serviceReady = true
+				}
 
-			if podReady && serviceReady {
-				fmt.Printf("- %s RabbitMQ is installed and running\n", green("✅"))
-				fmt.Printf("  Pod: Ready, Services: Available (AMQP + Management UI)\n")
-				if config.Secrets.RabbitMQ.Enabled {
-					fmt.Printf("  Virtual Host: %s, Username: %s\n", config.Components.RabbitMQ.VirtualHost, config.Secrets.RabbitMQ.Username)
+				if podReady && serviceReady {
+					fmt.Printf("- %s RabbitMQ is installed and running\n", green("✅"))
+					fmt.Printf("  Pod: Ready, Services: Available (AMQP + Management UI)\n")
+					if config.Secrets.RabbitMQ.Enabled {
+						fmt.Printf("  Virtual Host: %s, Username: %s\n", config.Components.RabbitMQ.VirtualHost, config.Secrets.RabbitMQ.Username)
+					} else {
+						fmt.Printf("  Virtual Host: %s, Username: user\n", config.Components.RabbitMQ.VirtualHost)
+					}
+				} else if podReady && !serviceReady {
+					fmt.Printf("- %s RabbitMQ pod is ready but services are not available\n", yellow("⚠️"))
+					if podStatus != "" {
+						fmt.Printf("  Pod Status: %s\n", podStatus)
+					}
+				} else if !podReady && serviceReady {
+					fmt.Printf("- %s RabbitMQ services exist but pod is not ready\n", yellow("⚠️"))
+					if podStatus != "" {
+						fmt.Printf("  Pod Status: %s\n", podStatus)
+					} else {
+						fmt.Printf("  Pod Status: Not found\n")
+					}
 				} else {
-					fmt.Printf("  Virtual Host: %s, Username: user\n", config.Components.RabbitMQ.VirtualHost)
-				}
-			} else if podReady && !serviceReady {
-				fmt.Printf("- %s RabbitMQ pod is ready but services are not available\n", yellow("⚠️"))
-				if podStatus != "" {
-					fmt.Printf("  Pod Status: %s\n", podStatus)
-				}
-			} else if !podReady && serviceReady {
-				fmt.Printf("- %s RabbitMQ services exist but pod is not ready\n", yellow("⚠️"))
-				if podStatus != "" {
-					fmt.Printf("  Pod Status: %s\n", podStatus)
-				} else {
-					fmt.Printf("  Pod Status: Not found\n")
+					fmt.Printf("- %s RabbitMQ is not running or not installed\n", yellow("⚠️"))
+
+					// Enhanced error reporting
+					if podErr != nil {
+						// Try to get pod events for more details
+						eventsCmd := exec.Command("kubectl", "get", "events", "-n", config.Components.RabbitMQ.Namespace, "--field-selector", "involvedObject.name=rabbitmq-0", "--sort-by", ".lastTimestamp", "--no-headers")
+						eventsOutput, eventsErr := eventsCmd.CombinedOutput()
+						if eventsErr == nil && string(eventsOutput) != "" {
+							// Get the most recent event
+							eventLines := strings.Split(strings.TrimSpace(string(eventsOutput)), "\n")
+							if len(eventLines) > 0 {
+								lastEvent := eventLines[len(eventLines)-1]
+								// Parse event to get the message (typically last field)
+								eventFields := strings.Fields(lastEvent)
+								if len(eventFields) > 5 {
+									eventMessage := strings.Join(eventFields[4:], " ")
+									fmt.Printf("  Latest Event: %s\n", eventMessage)
+								}
+							}
+						}
+
+						// Try to get pod logs for errors
+						if verbose {
+							logsCmd := exec.Command("kubectl", "logs", "rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--tail=5", "--no-headers")
+							logsOutput, logsErr := logsCmd.CombinedOutput()
+							if logsErr == nil && string(logsOutput) != "" {
+								fmt.Printf("  Recent Logs:\n")
+								logLines := strings.Split(strings.TrimSpace(string(logsOutput)), "\n")
+								for _, line := range logLines {
+									fmt.Printf("    %s\n", line)
+								}
+							}
+						}
+
+						// Suggest troubleshooting steps
+						fmt.Printf("  %s Try: kubectl get pod rabbitmq-0 -n %s\n", yellow("💡"), config.Components.RabbitMQ.Namespace)
+						fmt.Printf("  %s Logs: kubectl logs rabbitmq-0 -n %s\n", yellow("💡"), config.Components.RabbitMQ.Namespace)
+					}
+
+					// Check if namespace exists
+					nsCmd := exec.Command("kubectl", "get", "namespace", config.Components.RabbitMQ.Namespace, "--no-headers")
+					_, nsErr := nsCmd.CombinedOutput()
+					if nsErr != nil {
+						fmt.Printf("  %s RabbitMQ namespace does not exist - RabbitMQ may not have been installed\n", yellow("ℹ️"))
+					}
 				}
 			} else {
-				fmt.Printf("- %s RabbitMQ is not running or not installed\n", yellow("⚠️"))
-
-				// Enhanced error reporting
-				if podErr != nil {
-					// Try to get pod events for more details
-					eventsCmd := exec.Command("kubectl", "get", "events", "-n", config.Components.RabbitMQ.Namespace, "--field-selector", "involvedObject.name=rabbitmq-0", "--sort-by", ".lastTimestamp", "--no-headers")
-					eventsOutput, eventsErr := eventsCmd.CombinedOutput()
-					if eventsErr == nil && string(eventsOutput) != "" {
-						// Get the most recent event
-						eventLines := strings.Split(strings.TrimSpace(string(eventsOutput)), "\n")
-						if len(eventLines) > 0 {
-							lastEvent := eventLines[len(eventLines)-1]
-							// Parse event to get the message (typically last field)
-							eventFields := strings.Fields(lastEvent)
-							if len(eventFields) > 5 {
-								eventMessage := strings.Join(eventFields[4:], " ")
-								fmt.Printf("  Latest Event: %s\n", eventMessage)
-							}
-						}
-					}
-
-					// Try to get pod logs for errors
-					if verbose {
-						logsCmd := exec.Command("kubectl", "logs", "rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--tail=5", "--no-headers")
-						logsOutput, logsErr := logsCmd.CombinedOutput()
-						if logsErr == nil && string(logsOutput) != "" {
-							fmt.Printf("  Recent Logs:\n")
-							logLines := strings.Split(strings.TrimSpace(string(logsOutput)), "\n")
-							for _, line := range logLines {
-								fmt.Printf("    %s\n", line)
-							}
-						}
-					}
-
-					// Suggest troubleshooting steps
-					fmt.Printf("  %s Try: kubectl get pod rabbitmq-0 -n %s\n", yellow("💡"), config.Components.RabbitMQ.Namespace)
-					fmt.Printf("  %s Logs: kubectl logs rabbitmq-0 -n %s\n", yellow("💡"), config.Components.RabbitMQ.Namespace)
-				}
-
-				// Check if namespace exists
-				nsCmd := exec.Command("kubectl", "get", "namespace", config.Components.RabbitMQ.Namespace, "--no-headers")
-				_, nsErr := nsCmd.CombinedOutput()
-				if nsErr != nil {
-					fmt.Printf("  %s RabbitMQ namespace does not exist - RabbitMQ may not have been installed\n", yellow("ℹ️"))
-				}
+				fmt.Printf("- %s RabbitMQ is disabled in config\n", yellow("ℹ️"))
 			}
-		} else {
-			fmt.Printf("- %s RabbitMQ is disabled in config\n", yellow("ℹ️"))
-		}
 
-		// Print service access information
+			// Print service access information
 			fmt.Println(green("Access services:"))
 
-		// Find host ports from the port mappings
-		var temporalWebPort, temporalFrontendPort, redisPort, openSearchPort, openSearchDashboardsPort, mysqlPort, rabbitmqAMQPPort, rabbitmqManagementPort int
+			// Find host ports from the port mappings
+			var temporalWebPort, temporalFrontendPort, redisPort, openSearchPort, openSearchDashboardsPort, mysqlPort, rabbitmqAMQPPort, rabbitmqManagementPort int
 
 			for _, portMap := range config.Cluster.MapPorts {
 				// Check if containerPort matches any of our known nodePort values
@@ -514,20 +552,20 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					if cp == config.Components.OpenSearchDashboards.NodePorts.Http {
 						openSearchDashboardsPort = portMap.HostPort
 					}
-				// MySQL
-				if cp == config.Components.MySQL.NodePorts.MySQL {
-					mysqlPort = portMap.HostPort
-				}
-				// RabbitMQ AMQP
-				if cp == config.Components.RabbitMQ.NodePorts.AMQP {
-					rabbitmqAMQPPort = portMap.HostPort
-				}
-				// RabbitMQ Management
-				if cp == config.Components.RabbitMQ.NodePorts.Management {
-					rabbitmqManagementPort = portMap.HostPort
+					// MySQL
+					if cp == config.Components.MySQL.NodePorts.MySQL {
+						mysqlPort = portMap.HostPort
+					}
+					// RabbitMQ AMQP
+					if cp == config.Components.RabbitMQ.NodePorts.AMQP {
+						rabbitmqAMQPPort = portMap.HostPort
+					}
+					// RabbitMQ Management
+					if cp == config.Components.RabbitMQ.NodePorts.Management {
+						rabbitmqManagementPort = portMap.HostPort
+					}
 				}
 			}
-		}
 
 			if config.Components.Temporal.Enabled {
 				// Check if Temporal is actually deployed
@@ -591,30 +629,30 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 					} else {
 						fmt.Printf("  Username: root\n")
 					}
-			} else if verbose {
-				fmt.Printf("%s MySQL namespace not found or port mapping missing. MySQL may not be installed.\n", yellow("⚠️"))
-			}
-		}
-
-		if config.Components.RabbitMQ.Enabled {
-			// Check if RabbitMQ is actually deployed
-			rabbitmqCmd := exec.Command("kubectl", "get", "namespace", config.Components.RabbitMQ.Namespace)
-			_, err := rabbitmqCmd.CombinedOutput()
-
-			if err == nil && rabbitmqAMQPPort > 0 && rabbitmqManagementPort > 0 {
-				fmt.Printf("- RabbitMQ AMQP: amqp://localhost:%d%s\n", rabbitmqAMQPPort, config.Components.RabbitMQ.VirtualHost)
-				fmt.Printf("- RabbitMQ Management UI: http://localhost:%d\n", rabbitmqManagementPort)
-				if config.Secrets.RabbitMQ.Enabled {
-					fmt.Printf("  Username: %s, Virtual Host: %s\n", config.Secrets.RabbitMQ.Username, config.Components.RabbitMQ.VirtualHost)
-				} else {
-					fmt.Printf("  Username: user, Virtual Host: %s\n", config.Components.RabbitMQ.VirtualHost)
+				} else if verbose {
+					fmt.Printf("%s MySQL namespace not found or port mapping missing. MySQL may not be installed.\n", yellow("⚠️"))
 				}
-			} else if verbose {
-				fmt.Printf("%s RabbitMQ namespace not found or port mapping missing. RabbitMQ may not be installed.\n", yellow("⚠️"))
 			}
-		}
 
-		// Check custom components status
+			if config.Components.RabbitMQ.Enabled {
+				// Check if RabbitMQ is actually deployed
+				rabbitmqCmd := exec.Command("kubectl", "get", "namespace", config.Components.RabbitMQ.Namespace)
+				_, err := rabbitmqCmd.CombinedOutput()
+
+				if err == nil && rabbitmqAMQPPort > 0 && rabbitmqManagementPort > 0 {
+					fmt.Printf("- RabbitMQ AMQP: amqp://localhost:%d%s\n", rabbitmqAMQPPort, config.Components.RabbitMQ.VirtualHost)
+					fmt.Printf("- RabbitMQ Management UI: http://localhost:%d\n", rabbitmqManagementPort)
+					if config.Secrets.RabbitMQ.Enabled {
+						fmt.Printf("  Username: %s, Virtual Host: %s\n", config.Secrets.RabbitMQ.Username, config.Components.RabbitMQ.VirtualHost)
+					} else {
+						fmt.Printf("  Username: user, Virtual Host: %s\n", config.Components.RabbitMQ.VirtualHost)
+					}
+				} else if verbose {
+					fmt.Printf("%s RabbitMQ namespace not found or port mapping missing. RabbitMQ may not be installed.\n", yellow("⚠️"))
+				}
+			}
+
+			// Check custom components status
 			if len(config.CustomComponents) > 0 {
 				fmt.Println(yellow("\nCustom Components:"))
 				for _, component := range config.CustomComponents {
