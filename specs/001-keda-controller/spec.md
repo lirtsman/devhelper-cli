@@ -78,7 +78,7 @@ As a developer, I want to skip KEDA installation via command-line flag so that I
 - **FR-009**: System MUST add KEDA Helm repository during initialization if not already present
 - **FR-010**: System MUST provide clear error messages when KEDA installation fails
 - **FR-011**: System MUST display KEDA controller readiness information after successful installation
-- **FR-012**: System MUST clean up KEDA resources when stopping the environment
+- **FR-012**: System MUST clean up KEDA resources when stopping the environment via `kindenv stop` command (uninstall Helm release, delete namespace, following MySQL/RabbitMQ cleanup pattern)
 
 ### Key Entities
 
