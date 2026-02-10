@@ -232,6 +232,12 @@ DevHelper CLI supports several key components for local development:
 - Dashboard configuration
 - Security and access settings
 
+### KEDA
+- Event-driven autoscaling for Kubernetes workloads
+- Scale applications based on external event sources (RabbitMQ, Kafka, Prometheus, etc.)
+- Scale to zero when idle for efficient resource usage
+- Support for 50+ event sources
+
 ## Kind-based Environment Management
 
 DevHelper CLI includes the `kindenv` command for provisioning and managing a local Kind-based Kubernetes development environment. This environment comes with all necessary components for Shield application development.

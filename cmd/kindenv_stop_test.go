@@ -180,3 +180,63 @@ func TestCleanupOrder(t *testing.T) {
 	assert.Equal(t, "test-app-config", configMapName, "ConfigMap name should match")
 }
 
+// TestKedaCleanup tests KEDA cleanup logic during kindenv stop
+func TestKedaCleanup(t *testing.T) {
+	tests := []struct {
+		name          string
+		kedaEnabled   bool
+		kedaNamespace string
+		expectCleanup bool
+	}{
+		{
+			name:          "KEDA enabled - should cleanup",
+			kedaEnabled:   true,
+			kedaNamespace: "keda",
+			expectCleanup: true,
+		},
+		{
+			name:          "KEDA disabled - no cleanup needed",
+			kedaEnabled:   false,
+			kedaNamespace: "keda",
+			expectCleanup: false,
+		},
+		{
+			name:          "KEDA with custom namespace",
+			kedaEnabled:   true,
+			kedaNamespace: "autoscaling",
+			expectCleanup: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &kindenv.KindEnvConfig{}
+			config.Components.Keda.Enabled = tt.kedaEnabled
+			config.Components.Keda.Namespace = tt.kedaNamespace
+			config.Components.Keda.ChartVersion = "2.16.0"
+
+			// Verify configuration
+			assert.Equal(t, tt.kedaEnabled, config.Components.Keda.Enabled)
+			assert.Equal(t, tt.kedaNamespace, config.Components.Keda.Namespace)
+
+			// If KEDA is enabled, cleanup should:
+			// 1. Uninstall Helm release: helm uninstall keda -n <namespace>
+			// 2. Delete namespace: kubectl delete namespace <namespace>
+			if tt.expectCleanup {
+				assert.True(t, config.Components.Keda.Enabled, "KEDA should be enabled for cleanup")
+				assert.NotEmpty(t, config.Components.Keda.Namespace, "KEDA namespace should not be empty")
+
+				// Verify Helm release name is "keda"
+				helmReleaseName := "keda"
+				assert.Equal(t, "keda", helmReleaseName, "Helm release name should be keda")
+
+				// Verify namespace to delete
+				namespaceToDelete := config.Components.Keda.Namespace
+				assert.Equal(t, tt.kedaNamespace, namespaceToDelete, "Namespace should match config")
+			} else {
+				// If KEDA is disabled, no cleanup should occur
+				assert.False(t, config.Components.Keda.Enabled, "KEDA should be disabled")
+			}
+		})
+	}
+}

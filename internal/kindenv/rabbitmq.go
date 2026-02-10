@@ -9,14 +9,14 @@ import (
 
 // RabbitMQConfig represents RabbitMQ component configuration
 type RabbitMQConfig struct {
-	Enabled      bool                 `yaml:"enabled"`
-	Namespace    string               `yaml:"namespace"`
-	ChartVersion string               `yaml:"chartVersion"`
-	VirtualHost  string               `yaml:"virtualHost"`
-	ImageTag     string               `yaml:"imageTag,omitempty"` // Optional: override default image tag (e.g., "3.12-management" for ARM64 compatibility)
-	NodePorts    RabbitMQNodePorts    `yaml:"nodePorts"`
-	Resources    RabbitMQResources    `yaml:"resources"`
-	Persistence  RabbitMQPersistence  `yaml:"persistence"`
+	Enabled      bool                `yaml:"enabled"`
+	Namespace    string              `yaml:"namespace"`
+	ChartVersion string              `yaml:"chartVersion"`
+	VirtualHost  string              `yaml:"virtualHost"`
+	ImageTag     string              `yaml:"imageTag,omitempty"` // Optional: override default image tag (e.g., "3.12-management" for ARM64 compatibility)
+	NodePorts    RabbitMQNodePorts   `yaml:"nodePorts"`
+	Resources    RabbitMQResources   `yaml:"resources"`
+	Persistence  RabbitMQPersistence `yaml:"persistence"`
 }
 
 // RabbitMQNodePorts represents NodePort configuration
@@ -166,14 +166,14 @@ type RabbitMQStatusReporter interface {
 
 // RabbitMQStatus represents RabbitMQ deployment runtime status
 type RabbitMQStatus struct {
-	State          RabbitMQState           `json:"state"`
-	PodReady       bool                    `json:"podReady"`
-	ServiceReady   bool                    `json:"serviceReady"`
-	AMQPReady      bool                    `json:"amqpReady"`
-	ManagementReady bool                   `json:"managementReady"`
-	ConnectionInfo *RabbitMQConnectionInfo `json:"connectionInfo,omitempty"`
-	ErrorMessage   string                 `json:"errorMessage,omitempty"`
-	LastChecked    time.Time               `json:"lastChecked"`
+	State           RabbitMQState           `json:"state"`
+	PodReady        bool                    `json:"podReady"`
+	ServiceReady    bool                    `json:"serviceReady"`
+	AMQPReady       bool                    `json:"amqpReady"`
+	ManagementReady bool                    `json:"managementReady"`
+	ConnectionInfo  *RabbitMQConnectionInfo `json:"connectionInfo,omitempty"`
+	ErrorMessage    string                  `json:"errorMessage,omitempty"`
+	LastChecked     time.Time               `json:"lastChecked"`
 }
 
 // RabbitMQState represents RabbitMQ deployment state
@@ -201,13 +201,13 @@ type RabbitMQConnectionInfo struct {
 
 // RabbitMQHealthCheck represents comprehensive health check results
 type RabbitMQHealthCheck struct {
-	Timestamp       time.Time        `json:"timestamp"`
-	PodReady        bool             `json:"podReady"`
-	ServiceReady    bool             `json:"serviceReady"`
-	AMQPReady       bool             `json:"amqpReady"`
-	ManagementReady bool             `json:"managementReady"`
-	ErrorMessage    string           `json:"errorMessage,omitempty"`
-	Uptime          string           `json:"uptime,omitempty"`
+	Timestamp       time.Time         `json:"timestamp"`
+	PodReady        bool              `json:"podReady"`
+	ServiceReady    bool              `json:"serviceReady"`
+	AMQPReady       bool              `json:"amqpReady"`
+	ManagementReady bool              `json:"managementReady"`
+	ErrorMessage    string            `json:"errorMessage,omitempty"`
+	Uptime          string            `json:"uptime,omitempty"`
 	NodeInfo        *RabbitMQNodeInfo `json:"nodeInfo,omitempty"`
 }
 

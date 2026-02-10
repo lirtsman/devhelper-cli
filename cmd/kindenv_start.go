@@ -154,6 +154,7 @@ Use --force-context to automatically switch without prompting.`,
 		skipTemporalWorkerOperator, _ := cmd.Flags().GetBool("skip-temporal-worker-operator")
 		skipIndicesOperator, _ := cmd.Flags().GetBool("skip-indices-operator")
 		skipMetricsServer, _ := cmd.Flags().GetBool("skip-metrics-server")
+		skipKeda, _ := cmd.Flags().GetBool("skip-keda")
 		awsProfile, _ := cmd.Flags().GetString("aws-profile")
 		forceContext, _ := cmd.Flags().GetBool("force-context")
 
@@ -209,6 +210,9 @@ Use --force-context to automatically switch without prompting.`,
 		if skipMetricsServer {
 			config.Components.MetricsServer.Enabled = false
 		}
+		if skipKeda {
+			config.Components.Keda.Enabled = false
+		}
 
 		// Show warning if deprecated operator-namespace flag is used
 		if cmd.Flags().Changed("operator-namespace") {
@@ -230,6 +234,10 @@ Use --force-context to automatically switch without prompting.`,
 		}
 		fmt.Printf("- Indices Operator: %v\n", config.Components.IndicesOperator.Enabled)
 		fmt.Printf("- Metrics Server: %v\n", config.Components.MetricsServer.Enabled)
+		fmt.Printf("- KEDA: %v\n", config.Components.Keda.Enabled)
+		if skipKeda {
+			fmt.Printf("  (skipped via --skip-keda flag)\n")
+		}
 		fmt.Printf("- MySQL: %v\n", config.Components.MySQL.Enabled)
 		fmt.Printf("- RabbitMQ: %v\n", config.Components.RabbitMQ.Enabled)
 		if config.Images.UseHarbor {
@@ -271,13 +279,13 @@ Use --force-context to automatically switch without prompting.`,
 		if err == nil && strings.Contains(clusterOutput, config.Cluster.Name) {
 			clusterExists = true
 			fmt.Printf("%s Kind cluster %s already exists, reusing it\n", yellow("🔄"), config.Cluster.Name)
-			
+
 			// Warn about port mappings: Kind port mappings cannot be changed after cluster creation
 			if len(config.Cluster.MapPorts) > 0 {
 				fmt.Printf("%s Note: Port mappings are only applied during cluster creation.\n", yellow("ℹ️"))
 				fmt.Printf("%s If you've added or changed port mappings, you may need to recreate the cluster:\n", yellow("ℹ️"))
 				fmt.Printf("   %s\n", yellow("devhelper-cli kindenv stop && devhelper-cli kindenv start"))
-				
+
 				// Check if there are custom components with ports that might be affected
 				hasCustomComponentPorts := false
 				for _, component := range config.CustomComponents {
@@ -289,7 +297,7 @@ Use --force-context to automatically switch without prompting.`,
 				if hasCustomComponentPorts {
 					fmt.Printf("%s Custom component NodePorts will work, but Kind port mappings (for accessing via localhost) require cluster recreation.\n", yellow("ℹ️"))
 				}
-				
+
 				if verbose {
 					fmt.Println(yellow("Configured port mappings:"))
 					for _, portMap := range config.Cluster.MapPorts {
@@ -740,6 +748,82 @@ Use --force-context to automatically switch without prompting.`,
 			}
 		}
 
+		// Install KEDA
+		if config.Components.Keda.Enabled {
+			fmt.Println(yellow("Installing KEDA"))
+
+			// Create namespace
+			fmt.Printf("Creating namespace: %s\n", config.Components.Keda.Namespace)
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.Keda.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating KEDA namespace: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite KEDA namespace creation failure..."))
+			} else {
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(namespaceYaml)
+				if err := cmd.Run(); err != nil {
+					fmt.Printf("%s Error applying KEDA namespace: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite KEDA namespace apply failure..."))
+				} else {
+					fmt.Printf("%s Namespace %s created\n", green("✅"), config.Components.Keda.Namespace)
+				}
+			}
+
+			// Define Helm arguments
+			helmArgs := []string{
+				"upgrade",
+				"--install",
+				"keda", "kedacore/keda",
+				"--namespace", config.Components.Keda.Namespace,
+				"--version", config.Components.Keda.ChartVersion,
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+				fmt.Printf("Installing KEDA chart version: %s\n", config.Components.Keda.ChartVersion)
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing KEDA: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Output:")
+					fmt.Println(helmOutput)
+
+					// Check if error is related to chart version
+					if strings.Contains(helmOutput, "chart version") || strings.Contains(helmOutput, "not found") || strings.Contains(helmOutput, "version") {
+						fmt.Println(yellow("💡 Troubleshooting tips:"))
+						fmt.Printf("  - Verify chart version %s exists: helm search repo kedacore/keda --versions\n", config.Components.Keda.ChartVersion)
+						fmt.Println("  - Update Helm repositories: helm repo update")
+						fmt.Println("  - Check available versions: https://github.com/kedacore/charts/releases")
+						fmt.Println("  - Try a different version by updating chartVersion in kindenv.yaml")
+					}
+				}
+				fmt.Println(yellow("Continuing despite KEDA installation failure..."))
+			} else {
+				fmt.Printf("%s KEDA installed successfully\n", green("✅"))
+
+				// Wait for KEDA operator to be ready
+				fmt.Println(yellow("Waiting for KEDA operator to be ready..."))
+
+				// Wait a moment for resources to be created
+				time.Sleep(5 * time.Second)
+
+				err = waitForDeployment(config.Components.Keda.Namespace, "keda-operator", 2)
+				if err != nil {
+					fmt.Printf("%s Error waiting for KEDA operator: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite KEDA operator not being ready..."))
+				} else {
+					fmt.Printf("%s KEDA operator is ready\n", green("✅"))
+					fmt.Println(yellow("You can now create ScaledObject and ScaledJob resources for event-driven autoscaling:"))
+					fmt.Println("  kubectl apply -f <your-scaledobject.yaml>")
+					fmt.Println("  kubectl get scaledobjects -A    - Shows all ScaledObject resources")
+					fmt.Println(yellow("Note: KEDA supports 50+ event sources including RabbitMQ, Kafka, Prometheus, and more"))
+				}
+			}
+		}
+
 		// Note: MySQL secret is created later when MySQL namespace is created
 
 		// Install Redis
@@ -996,22 +1080,22 @@ data:
 				// Add each init script with proper YAML literal block scalar
 				for filename, contentOrPath := range config.Components.MySQL.InitScripts {
 					var content string
-					
+
 					// Check if contentOrPath looks like a file path
 					// File paths typically contain '/' or '\' or start with './' or '../' or are absolute paths
-					looksLikePath := strings.Contains(contentOrPath, "/") || 
-					                strings.Contains(contentOrPath, "\\") ||
-					                strings.HasPrefix(contentOrPath, "./") ||
-					                strings.HasPrefix(contentOrPath, "../") ||
-					                filepath.IsAbs(contentOrPath)
-					
+					looksLikePath := strings.Contains(contentOrPath, "/") ||
+						strings.Contains(contentOrPath, "\\") ||
+						strings.HasPrefix(contentOrPath, "./") ||
+						strings.HasPrefix(contentOrPath, "../") ||
+						filepath.IsAbs(contentOrPath)
+
 					if looksLikePath {
 						// Resolve file path relative to config file directory
 						filePath := contentOrPath
 						if !filepath.IsAbs(filePath) {
 							filePath = filepath.Join(configDir, filePath)
 						}
-						
+
 						// Check if file exists
 						if _, err := os.Stat(filePath); err == nil {
 							// File exists, read it
@@ -1021,7 +1105,7 @@ data:
 								os.Exit(1)
 							}
 							content = string(fileContent)
-							
+
 							if verbose {
 								fmt.Printf("  Loaded init script from file: %s\n", filePath)
 							}
@@ -1083,7 +1167,7 @@ data:
 			if config.Secrets.MySQL.Enabled {
 				helmArgs = append(helmArgs,
 					"--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name))
-				
+
 				// If username is "root", don't set auth.username (root already exists)
 				// Only set auth.username for non-root users (which creates a new user)
 				if config.Secrets.MySQL.Username != "root" {
@@ -1258,8 +1342,8 @@ stringData:
 				"--set", "service.type=NodePort",
 				"--set", fmt.Sprintf("service.nodePorts.amqp=%d", config.Components.RabbitMQ.NodePorts.AMQP),
 				"--set", fmt.Sprintf("service.nodePorts.manager=%d", config.Components.RabbitMQ.NodePorts.Management),
-			"--set", fmt.Sprintf("auth.vhost=%s", config.Components.RabbitMQ.VirtualHost),
-			"--set", fmt.Sprintf("persistence.enabled=%t", config.Components.RabbitMQ.Persistence.Enabled),
+				"--set", fmt.Sprintf("auth.vhost=%s", config.Components.RabbitMQ.VirtualHost),
+				"--set", fmt.Sprintf("persistence.enabled=%t", config.Components.RabbitMQ.Persistence.Enabled),
 				"--set", fmt.Sprintf("resources.requests.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
 				"--set", fmt.Sprintf("resources.requests.memory=%s", config.Components.RabbitMQ.Resources.Memory),
 				"--set", fmt.Sprintf("resources.limits.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
@@ -1401,12 +1485,12 @@ stringData:
 							time.Sleep(5 * time.Second)
 						}
 					}
-					
+
 					// Verify Management UI connectivity (SC-003)
 					fmt.Println(yellow("Verifying Management UI connectivity..."))
 					managementVerified := false
 					for i := 0; i < 6; i++ { // Try for 30 seconds (6 * 5s)
-						mgmtCmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", 
+						mgmtCmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
 							fmt.Sprintf("http://localhost:15672/api/overview"),
 							"-u", fmt.Sprintf("%s:%s", config.Secrets.RabbitMQ.Username, config.Secrets.RabbitMQ.Password))
 						if output, err := mgmtCmd.Output(); err == nil && string(output) == "200" {
@@ -1420,7 +1504,7 @@ stringData:
 							time.Sleep(5 * time.Second)
 						}
 					}
-					
+
 					// Report results
 					if amqpVerified && managementVerified {
 						fmt.Printf("%s RabbitMQ installed successfully\n", green("✅"))
@@ -1718,7 +1802,7 @@ spec:
 					podNameOutput, err := podNameCmd.Output()
 					if err == nil && len(podNameOutput) > 0 {
 						podName := strings.TrimSpace(string(podNameOutput))
-						
+
 						// Unblock index creation by setting cluster.blocks.create to null
 						// This is idempotent - if not blocked, it does nothing
 						unblockCmd := exec.Command("kubectl", "exec", "-n", config.Components.OpenSearch.Namespace, podName,
@@ -2233,7 +2317,7 @@ stringData:
 				// Collect unique namespaces from custom components that reference MySQL secret
 				mysqlSecretNamespaces := make(map[string]bool)
 				mysqlSecretNamespaces[config.Components.MySQL.Namespace] = true // Always include MySQL namespace
-				
+
 				for _, component := range config.CustomComponents {
 					if component.Enabled == nil || *component.Enabled {
 						// Check if component references MySQL secret
@@ -2571,6 +2655,7 @@ func init() {
 	kindenvStartCmd.Flags().Bool("skip-temporal-worker-operator", false, "Skip deploying Temporal Worker Operator")
 	kindenvStartCmd.Flags().Bool("skip-indices-operator", false, "Skip deploying Indices Operator")
 	kindenvStartCmd.Flags().Bool("skip-metrics-server", false, "Skip deploying Metrics Server")
+	kindenvStartCmd.Flags().Bool("skip-keda", false, "Skip deploying KEDA")
 	kindenvStartCmd.Flags().Bool("force-context", false, "Automatically switch to the correct Kubernetes context without prompting")
 
 	// Deprecated flag, kept for backward compatibility

@@ -257,6 +257,33 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 			}
 		}
 
+		// Clean up KEDA if enabled
+		if config.Components.Keda.Enabled {
+			if verbose {
+				fmt.Println(yellow("Cleaning up KEDA resources..."))
+			}
+
+			// Uninstall KEDA Helm release
+			_, err = executeCommand("helm", "uninstall", "keda", "--namespace", config.Components.Keda.Namespace, "--ignore-not-found")
+			if err != nil {
+				if verbose {
+					fmt.Printf("%s Warning: Failed to uninstall KEDA Helm release: %v\n", yellow("⚠️"), err)
+				}
+			} else if verbose {
+				fmt.Printf("%s KEDA Helm release uninstalled\n", green("✅"))
+			}
+
+			// Delete KEDA namespace
+			_, err = executeCommand("kubectl", "delete", "namespace", config.Components.Keda.Namespace, "--ignore-not-found")
+			if err != nil {
+				if verbose {
+					fmt.Printf("%s Warning: Failed to delete KEDA namespace: %v\n", yellow("⚠️"), err)
+				}
+			} else if verbose {
+				fmt.Printf("%s KEDA namespace deleted\n", green("✅"))
+			}
+		}
+
 		// Stop the cluster
 		err = stopCluster(config.Cluster.Name, verbose)
 		if err != nil {

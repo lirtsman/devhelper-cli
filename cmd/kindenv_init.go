@@ -300,6 +300,22 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Println("✅ Metrics Server Helm repository added successfully")
 			}
 
+			// Add KEDA Helm repository
+			fmt.Println("Adding KEDA Helm repository...")
+			kedaOutput, err := executeCommandWithOutput("helm", "repo", "add", "kedacore", "https://kedacore.github.io/charts")
+			if err != nil {
+				if strings.Contains(kedaOutput, "already exists") {
+					fmt.Println("✅ KEDA Helm repository already configured")
+				} else {
+					fmt.Printf("⚠️  Warning: Failed to add KEDA Helm repository: %v\n", err)
+					if kedaOutput != "" {
+						fmt.Printf("  Output: %s\n", kedaOutput)
+					}
+				}
+			} else {
+				fmt.Println("✅ KEDA Helm repository added successfully")
+			}
+
 			// Add Shield Helm repository
 			fmt.Println("Adding Shield Helm repository...")
 			shieldOutput, err := executeCommandWithOutput("helm", "repo", "add", "shield", "https://harbor.shieldfis.com/chartrepo/stable")
@@ -347,6 +363,14 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Printf("⚠️  Warning: Metrics Server chart not found\n")
 			} else {
 				fmt.Println("✅ Metrics Server chart is available")
+			}
+
+			// Verify KEDA chart availability
+			kedaChartOutput, err := executeCommandWithOutput("helm", "search", "repo", "kedacore/keda")
+			if err != nil || !strings.Contains(kedaChartOutput, "kedacore/keda") {
+				fmt.Printf("⚠️  Warning: KEDA chart not found\n")
+			} else {
+				fmt.Println("✅ KEDA chart is available")
 			}
 
 			// Update Helm repositories
