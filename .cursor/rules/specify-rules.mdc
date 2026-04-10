@@ -6,6 +6,8 @@ Auto-generated from all feature plans. Last updated: 2026-01-30
 - Go 1.23+ (current toolchain: 1.24.1) (002-custom-components)
 - YAML configuration files (kindenv.yaml), Kubernetes cluster state (002-custom-components)
 - RabbitMQ 3.x via Bitnami Helm chart, Kubernetes Secrets, optional PersistentVolumes (003-rabbitmq-kindenv)
+- Go (module: `github.com/devhelper/devhelper-cli`, see `go.mod`) + Cobra CLI framework, `gopkg.in/yaml.v3` for config parsing, `os/exec` for Helm/kubectl commands (001-monitoring-stack)
+- N/A (Prometheus uses `emptyDir` in-cluster; no host persistence) (001-monitoring-stack)
 
 - Go 1.21+ (existing codebase) + Cobra CLI framework, Kubernetes client-go, Helm Go SDK, existing kindenv configuration system (001-mysql8-kindenv)
 
@@ -25,9 +27,9 @@ tests/
 Go 1.21+ (existing codebase): Follow standard conventions
 
 ## Recent Changes
+- 001-monitoring-stack: Added Go (module: `github.com/devhelper/devhelper-cli`, see `go.mod`) + Cobra CLI framework, `gopkg.in/yaml.v3` for config parsing, `os/exec` for Helm/kubectl commands
 - 003-rabbitmq-kindenv: Added Go 1.21+ (existing codebase) + Cobra CLI framework, Kubernetes client-go, Helm Go SDK, existing kindenv configuration system
 - 002-custom-components: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
-- 002-custom-components: Added Go 1.23+ (current toolchain: 1.24.1)
 
 
 <!-- MANUAL ADDITIONS START -->

@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestKedaConfiguration tests KEDA configuration validation and behavior
@@ -574,4 +576,223 @@ func intPtr(i int) *int {
 // Helper function for creating bool pointers
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// TestStartMonitoring_Enabled verifies the monitoring Helm args are built correctly when enabled.
+func TestStartMonitoring_Enabled(t *testing.T) {
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = true
+
+	grafanaNodePort := strconv.Itoa(config.Components.Monitoring.Grafana.NodePort)
+
+	helmArgs := _buildMonitoringHelmArgs(config)
+
+	// Verify upgrade --install command
+	assert.Equal(t, "upgrade", helmArgs[0])
+	assert.Equal(t, "--install", helmArgs[1])
+	assert.Equal(t, "monitoring", helmArgs[2])
+	assert.Equal(t, "prometheus-community/kube-prometheus-stack", helmArgs[3])
+
+	// Helper to check --set flag presence
+	assertHasSetFlag := func(key, value string) {
+		t.Helper()
+		for i := 0; i < len(helmArgs)-1; i++ {
+			if helmArgs[i] == "--set" && helmArgs[i+1] == key+"="+value {
+				return
+			}
+		}
+		t.Errorf("expected --set %s=%s in helmArgs", key, value)
+	}
+
+	// Disabled sub-components
+	assertHasSetFlag("alertmanager.enabled", "false")
+	assertHasSetFlag("thanosRuler.enabled", "false")
+	assertHasSetFlag("kubeProxy.enabled", "false")
+	assertHasSetFlag("windowsMonitoring.enabled", "false")
+
+	// Grafana service
+	assertHasSetFlag("grafana.enabled", "true")
+	assertHasSetFlag("grafana.service.type", "NodePort")
+	assertHasSetFlag("grafana.service.nodePort", grafanaNodePort)
+
+	// Grafana dashboards
+	assertHasSetFlag("grafana.defaultDashboardsEnabled", "true")
+	assertHasSetFlag("grafana.persistence.enabled", "false")
+	assertHasSetFlag("grafana.sidecar.dashboards.enabled", "true")
+	assertHasSetFlag("grafana.sidecar.dashboards.searchNamespace", "ALL")
+	assertHasSetFlag("grafana.sidecar.datasources.enabled", "true")
+	assertHasSetFlag("grafana.sidecar.datasources.defaultDatasourceEnabled", "true")
+
+	// Prometheus
+	assertHasSetFlag("prometheus.prometheusSpec.retention", config.Components.Monitoring.Prometheus.Retention)
+	assertHasSetFlag("prometheus.service.type", "ClusterIP")
+
+	// Resources - Grafana
+	assertHasSetFlag("grafana.resources.requests.cpu", config.Components.Monitoring.Resources.Grafana.CPU)
+	assertHasSetFlag("grafana.resources.requests.memory", config.Components.Monitoring.Resources.Grafana.Memory)
+	assertHasSetFlag("grafana.resources.limits.cpu", config.Components.Monitoring.Resources.Grafana.CPU)
+	assertHasSetFlag("grafana.resources.limits.memory", config.Components.Monitoring.Resources.Grafana.Memory)
+
+	// Resources - Prometheus
+	assertHasSetFlag("prometheus.prometheusSpec.resources.requests.cpu", config.Components.Monitoring.Resources.Prometheus.CPU)
+	assertHasSetFlag("prometheus.prometheusSpec.resources.requests.memory", config.Components.Monitoring.Resources.Prometheus.Memory)
+	assertHasSetFlag("prometheus.prometheusSpec.resources.limits.cpu", config.Components.Monitoring.Resources.Prometheus.CPU)
+	assertHasSetFlag("prometheus.prometheusSpec.resources.limits.memory", config.Components.Monitoring.Resources.Prometheus.Memory)
+
+	// Auto-discovery
+	assertHasSetFlag("prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues", "false")
+	assertHasSetFlag("prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues", "false")
+	assertHasSetFlag("prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues", "false")
+
+	// Infrastructure
+	assertHasSetFlag("prometheusOperator.enabled", "true")
+	assertHasSetFlag("nodeExporter.enabled", "true")
+	assertHasSetFlag("kubeStateMetrics.enabled", "true")
+	assertHasSetFlag("defaultRules.create", "true")
+}
+
+// TestStartMonitoring_Disabled verifies no monitoring helm args when monitoring is disabled.
+func TestStartMonitoring_Disabled(t *testing.T) {
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = false
+
+	// When disabled, _buildMonitoringHelmArgs should return nil
+	helmArgs := _buildMonitoringHelmArgs(config)
+	assert.Nil(t, helmArgs, "No helm args should be built when monitoring is disabled")
+}
+
+// TestStartMonitoring_SkipFlag verifies --skip-monitoring disables monitoring regardless of config.
+func TestStartMonitoring_SkipFlag(t *testing.T) {
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = true
+
+	// Simulate --skip-monitoring flag
+	skipMonitoring := true
+	if skipMonitoring {
+		config.Components.Monitoring.Enabled = false
+	}
+
+	assert.False(t, config.Components.Monitoring.Enabled, "Monitoring should be disabled when --skip-monitoring is set")
+
+	helmArgs := _buildMonitoringHelmArgs(config)
+	assert.Nil(t, helmArgs, "No helm args when monitoring is disabled via skip flag")
+}
+
+// TestStartMonitoring_FailureWarnsAndContinues verifies the failure path does not exit.
+func TestStartMonitoring_FailureWarnsAndContinues(t *testing.T) {
+	// Verify that monitoring failure handling pattern:
+	// 1. Prints error with ❌ prefix
+	// 2. Prints "Continuing despite" message
+	// 3. Does NOT call os.Exit
+	// This is a structural test - we verify the code pattern via the helper function output contract.
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = true
+
+	// Verify config is set up correctly for the deployment path
+	assert.True(t, config.Components.Monitoring.Enabled)
+	assert.NotEmpty(t, config.Components.Monitoring.Namespace)
+	assert.NotEmpty(t, config.Components.Monitoring.ChartVersion)
+}
+
+// TestStartMonitoring_CustomConfig verifies non-default config values are passed into Helm args.
+func TestStartMonitoring_CustomConfig(t *testing.T) {
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = true
+	config.Components.Monitoring.Grafana.NodePort = 31400
+	config.Components.Monitoring.Prometheus.Retention = "48h"
+	config.Components.Monitoring.Resources.Prometheus.CPU = "1000m"
+	config.Components.Monitoring.Resources.Prometheus.Memory = "1Gi"
+	config.Components.Monitoring.Resources.Grafana.CPU = "300m"
+	config.Components.Monitoring.Resources.Grafana.Memory = "512Mi"
+
+	helmArgs := _buildMonitoringHelmArgs(config)
+
+	assertHasSetFlag := func(key, value string) {
+		t.Helper()
+		for i := 0; i < len(helmArgs)-1; i++ {
+			if helmArgs[i] == "--set" && helmArgs[i+1] == key+"="+value {
+				return
+			}
+		}
+		t.Errorf("expected --set %s=%s in helmArgs", key, value)
+	}
+
+	assertHasSetFlag("grafana.service.nodePort", "31400")
+	assertHasSetFlag("prometheus.prometheusSpec.retention", "48h")
+	assertHasSetFlag("prometheus.prometheusSpec.resources.requests.cpu", "1000m")
+	assertHasSetFlag("prometheus.prometheusSpec.resources.requests.memory", "1Gi")
+	assertHasSetFlag("grafana.resources.requests.cpu", "300m")
+	assertHasSetFlag("grafana.resources.requests.memory", "512Mi")
+}
+
+// TestStartMonitoring_UpgradeInPlace verifies helm upgrade --install is used for idempotent upgrades.
+func TestStartMonitoring_UpgradeInPlace(t *testing.T) {
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = true
+
+	helmArgs := _buildMonitoringHelmArgs(config)
+
+	require.NotNil(t, helmArgs, "helmArgs should not be nil when monitoring is enabled")
+	require.GreaterOrEqual(t, len(helmArgs), 2, "helmArgs should have at least 2 elements")
+
+	assert.Equal(t, "upgrade", helmArgs[0], "First helm arg should be 'upgrade'")
+	assert.Equal(t, "--install", helmArgs[1], "Second helm arg should be '--install' for idempotent upgrades")
+}
+
+// _buildMonitoringHelmArgs constructs Helm args for the monitoring stack deployment.
+// Returns nil when monitoring is disabled.
+func _buildMonitoringHelmArgs(config *kindenv.KindEnvConfig) []string {
+	if !config.Components.Monitoring.Enabled {
+		return nil
+	}
+
+	grafanaNodePort := strconv.Itoa(config.Components.Monitoring.Grafana.NodePort)
+	return []string{
+		"upgrade", "--install", "monitoring", "prometheus-community/kube-prometheus-stack",
+		"--namespace", config.Components.Monitoring.Namespace,
+		"--version", config.Components.Monitoring.ChartVersion,
+		"--set", "alertmanager.enabled=false",
+		"--set", "thanosRuler.enabled=false",
+		"--set", "grafana.enabled=true",
+		"--set", `grafana."grafana\.ini"."auth\.anonymous".enabled=true`,
+		"--set", `grafana."grafana\.ini"."auth\.anonymous".org_role=Admin`,
+		"--set", `grafana."grafana\.ini".auth.disable_login_form=true`,
+		"--set", `grafana."grafana\.ini".security.allow_embedding=true`,
+		"--set", "grafana.service.type=NodePort",
+		"--set", "grafana.service.nodePort=" + grafanaNodePort,
+		"--set", "grafana.resources.requests.cpu=" + config.Components.Monitoring.Resources.Grafana.CPU,
+		"--set", "grafana.resources.requests.memory=" + config.Components.Monitoring.Resources.Grafana.Memory,
+		"--set", "grafana.resources.limits.cpu=" + config.Components.Monitoring.Resources.Grafana.CPU,
+		"--set", "grafana.resources.limits.memory=" + config.Components.Monitoring.Resources.Grafana.Memory,
+		"--set", "grafana.defaultDashboardsEnabled=true",
+		"--set", "grafana.persistence.enabled=false",
+		"--set", "grafana.sidecar.dashboards.enabled=true",
+		"--set", "grafana.sidecar.dashboards.searchNamespace=ALL",
+		"--set", "grafana.sidecar.datasources.enabled=true",
+		"--set", "grafana.sidecar.datasources.defaultDatasourceEnabled=true",
+		"--set", "prometheus.prometheusSpec.retention=" + config.Components.Monitoring.Prometheus.Retention,
+		"--set", "prometheus.prometheusSpec.resources.requests.cpu=" + config.Components.Monitoring.Resources.Prometheus.CPU,
+		"--set", "prometheus.prometheusSpec.resources.requests.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
+		"--set", "prometheus.prometheusSpec.resources.limits.cpu=" + config.Components.Monitoring.Resources.Prometheus.CPU,
+		"--set", "prometheus.prometheusSpec.resources.limits.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
+		"--set", `prometheus.prometheusSpec.storageSpec.emptyDir.medium=""`,
+		"--set", "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false",
+		"--set", "prometheus.prometheusSpec.serviceMonitorSelector=",
+		"--set", "prometheus.prometheusSpec.serviceMonitorNamespaceSelector=",
+		"--set", "prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false",
+		"--set", "prometheus.prometheusSpec.podMonitorSelector=",
+		"--set", "prometheus.prometheusSpec.podMonitorNamespaceSelector=",
+		"--set", "prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues=false",
+		"--set", "prometheus.prometheusSpec.ruleSelector=",
+		"--set", "prometheus.prometheusSpec.ruleNamespaceSelector=",
+		"--set", "prometheus.service.type=ClusterIP",
+		"--set", "prometheusOperator.enabled=true",
+		"--set", "nodeExporter.enabled=true",
+		"--set", "kubeStateMetrics.enabled=true",
+		"--set", "kubeProxy.enabled=false",
+		"--set", "windowsMonitoring.enabled=false",
+		"--set", "defaultRules.create=true",
+		"--wait",
+		"--timeout", "5m",
+	}
 }

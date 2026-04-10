@@ -316,6 +316,19 @@ It also adds required Helm repositories for components like Dapr and Temporal.`,
 				fmt.Println("✅ KEDA Helm repository added successfully")
 			}
 
+			// Add Prometheus Community Helm repository
+			fmt.Println("Adding Prometheus Community Helm repository...")
+			prometheusOutput, err := executeCommandWithOutput("helm", "repo", "add", "prometheus-community", "https://prometheus-community.github.io/helm-charts")
+			if err != nil {
+				if strings.Contains(prometheusOutput, "already exists") {
+					fmt.Println("✅ Prometheus Community Helm repository already configured")
+				} else {
+					fmt.Printf("⚠️  Warning: Failed to add Prometheus Community Helm repository: %v\n", err)
+				}
+			} else {
+				fmt.Println("✅ Prometheus Community Helm repository configured")
+			}
+
 			// Add Shield Helm repository
 			fmt.Println("Adding Shield Helm repository...")
 			shieldOutput, err := executeCommandWithOutput("helm", "repo", "add", "shield", "https://harbor.shieldfis.com/chartrepo/stable")

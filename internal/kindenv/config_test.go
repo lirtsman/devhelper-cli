@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestValidateMySQLConfig(t *testing.T) {
@@ -1125,4 +1127,249 @@ func TestCustomComponentSetDefaults(t *testing.T) {
 	if cc.Resources == nil {
 		t.Fatal("expected resources to be set")
 	}
+}
+
+// TestLoadConfig_MonitoringDefaults verifies that monitoring component defaults are set correctly.
+func TestLoadConfig_MonitoringDefaults(t *testing.T) {
+	config := CreateDefaultConfig()
+
+	assert.False(t, config.Components.Monitoring.Enabled, "Monitoring should be disabled by default")
+	assert.Equal(t, "monitoring", config.Components.Monitoring.Namespace, "Default namespace should be 'monitoring'")
+	assert.Equal(t, "72.6.2", config.Components.Monitoring.ChartVersion, "Default chart version should be 72.6.2")
+	assert.Equal(t, 31300, config.Components.Monitoring.Grafana.NodePort, "Default Grafana NodePort should be 31300")
+	assert.Equal(t, "24h", config.Components.Monitoring.Prometheus.Retention, "Default Prometheus retention should be 24h")
+	assert.Equal(t, "500m", config.Components.Monitoring.Resources.Prometheus.CPU, "Default Prometheus CPU should be 500m")
+	assert.Equal(t, "512Mi", config.Components.Monitoring.Resources.Prometheus.Memory, "Default Prometheus memory should be 512Mi")
+	assert.Equal(t, "200m", config.Components.Monitoring.Resources.Grafana.CPU, "Default Grafana CPU should be 200m")
+	assert.Equal(t, "256Mi", config.Components.Monitoring.Resources.Grafana.Memory, "Default Grafana memory should be 256Mi")
+}
+
+// TestLoadConfig_MonitoringFromYAML verifies monitoring configuration is correctly parsed from YAML.
+func TestLoadConfig_MonitoringFromYAML(t *testing.T) {
+	tests := []struct {
+		name          string
+		yamlContent   string
+		expectEnabled bool
+		expectNS      string
+		expectPort    int
+	}{
+		{
+			name: "monitoring section enabled in YAML",
+			yamlContent: `
+cluster:
+  name: test-cluster
+components:
+  monitoring:
+    enabled: true
+    namespace: monitoring
+    chartVersion: "72.6.2"
+    grafana:
+      nodePort: 31300
+    prometheus:
+      retention: "24h"
+    resources:
+      prometheus:
+        cpu: "500m"
+        memory: "512Mi"
+      grafana:
+        cpu: "200m"
+        memory: "256Mi"
+`,
+			expectEnabled: true,
+			expectNS:      "monitoring",
+			expectPort:    31300,
+		},
+		{
+			name: "YAML without monitoring section defaults to disabled",
+			yamlContent: `
+cluster:
+  name: test-cluster
+`,
+			expectEnabled: false,
+			expectNS:      "monitoring",
+			expectPort:    31300,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := createTempYAMLFile(t, tt.yamlContent)
+			defer cleanupTempFile(t, path)
+
+			config, err := LoadConfig(path)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectEnabled, config.Components.Monitoring.Enabled)
+			assert.Equal(t, tt.expectNS, config.Components.Monitoring.Namespace)
+			assert.Equal(t, tt.expectPort, config.Components.Monitoring.Grafana.NodePort)
+		})
+	}
+}
+
+// TestValidate_MonitoringEnabled verifies monitoring validation rules when monitoring is enabled.
+func TestValidate_MonitoringEnabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		setupConfig func(c *KindEnvConfig)
+		expectError bool
+		errorSubstr string
+	}{
+		{
+			name: "valid config passes",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid NodePort below range",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+				c.Components.Monitoring.Grafana.NodePort = 1234
+			},
+			expectError: true,
+			errorSubstr: "nodePort must be in range",
+		},
+		{
+			name: "invalid NodePort above range",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+				c.Components.Monitoring.Grafana.NodePort = 40000
+			},
+			expectError: true,
+			errorSubstr: "nodePort must be in range",
+		},
+		{
+			name: "invalid CPU format",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+				c.Components.Monitoring.Resources.Prometheus.CPU = "lots"
+			},
+			expectError: true,
+			errorSubstr: "cpu resource must be in valid format",
+		},
+		{
+			name: "invalid memory format",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+				c.Components.Monitoring.Resources.Prometheus.Memory = "big"
+			},
+			expectError: true,
+			errorSubstr: "memory resource must be in valid format",
+		},
+		{
+			name: "empty namespace",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+				c.Components.Monitoring.Namespace = ""
+			},
+			expectError: true,
+			errorSubstr: "namespace cannot be empty",
+		},
+		{
+			name: "empty chartVersion",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+				c.Components.Monitoring.ChartVersion = ""
+			},
+			expectError: true,
+			errorSubstr: "chartVersion cannot be empty",
+		},
+		{
+			name: "invalid retention format",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = true
+				c.Components.Monitoring.Prometheus.Retention = "invalid"
+			},
+			expectError: true,
+			errorSubstr: "retention must be in valid format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := CreateDefaultConfig()
+			tt.setupConfig(config)
+
+			err := config.Validate()
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorSubstr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestValidate_MonitoringDisabled verifies that all monitoring validation is skipped when disabled.
+func TestValidate_MonitoringDisabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		setupConfig func(c *KindEnvConfig)
+	}{
+		{
+			name: "invalid nodePort is ignored when disabled",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = false
+				c.Components.Monitoring.Grafana.NodePort = 0
+			},
+		},
+		{
+			name: "invalid CPU is ignored when disabled",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = false
+				c.Components.Monitoring.Resources.Prometheus.CPU = "invalid"
+			},
+		},
+		{
+			name: "empty namespace is ignored when disabled",
+			setupConfig: func(c *KindEnvConfig) {
+				c.Components.Monitoring.Enabled = false
+				c.Components.Monitoring.Namespace = ""
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := CreateDefaultConfig()
+			tt.setupConfig(config)
+
+			err := config.Validate()
+			assert.NoError(t, err, "Validation should be skipped when monitoring is disabled")
+		})
+	}
+}
+
+// TestGenerateDefaultPortMappings_Monitoring verifies Grafana port mapping is added when monitoring is enabled.
+func TestGenerateDefaultPortMappings_Monitoring(t *testing.T) {
+	t.Run("includes Grafana NodePort when monitoring enabled", func(t *testing.T) {
+		config := CreateDefaultConfig()
+		config.Components.Monitoring.Enabled = true
+		config.Components.Monitoring.Grafana.NodePort = 31300
+
+		mappings := generateDefaultPortMappings(config)
+
+		found := false
+		for _, m := range mappings {
+			if m.HostPort == 3000 {
+				found = true
+				assert.Equal(t, "${{ components.monitoring.grafana.nodePort }}", m.ContainerPort)
+				assert.Equal(t, "TCP", m.Protocol)
+			}
+		}
+		assert.True(t, found, "Grafana port mapping (hostPort 3000) should be present when monitoring is enabled")
+	})
+
+	t.Run("excludes Grafana NodePort when monitoring disabled", func(t *testing.T) {
+		config := CreateDefaultConfig()
+		config.Components.Monitoring.Enabled = false
+
+		mappings := generateDefaultPortMappings(config)
+
+		for _, m := range mappings {
+			assert.NotEqual(t, 3000, m.HostPort, "Grafana port mapping (hostPort 3000) should not be present when monitoring is disabled")
+		}
+	})
 }

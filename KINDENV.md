@@ -324,6 +324,35 @@ mysql -h localhost -P 3306 -u <username> -p
 
 The default password is `password` unless configured otherwise in `secrets.mysql.password`.
 
+### Monitoring Stack (kube-prometheus-stack)
+
+Deploy Prometheus Operator and Grafana for cluster monitoring.
+
+**Configuration** (`kindenv.yaml`):
+
+```yaml
+components:
+  monitoring:
+    enabled: false                   # Enable monitoring stack (default: false)
+    namespace: monitoring            # Kubernetes namespace (default: monitoring)
+    chartVersion: "72.6.2"           # kube-prometheus-stack Helm chart version
+    grafana:
+      nodePort: 31300                # NodePort for Grafana (default: 31300, range: 30000-32767)
+    prometheus:
+      retention: "24h"               # Metrics retention period (default: 24h)
+    resources:
+      prometheus:
+        cpu: "500m"                  # Prometheus CPU limit
+        memory: "512Mi"              # Prometheus memory limit
+      grafana:
+        cpu: "200m"                  # Grafana CPU limit
+        memory: "256Mi"              # Grafana memory limit
+```
+
+**Access**: When enabled, Grafana is available at `http://localhost:3000` (no login required).
+
+**Skip flag**: `devhelper-cli kindenv start --skip-monitoring`
+
 ## Troubleshooting
 
 ### Cannot connect to services
