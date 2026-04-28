@@ -155,6 +155,7 @@ Use --force-context to automatically switch without prompting.`,
 		skipIndicesOperator, _ := cmd.Flags().GetBool("skip-indices-operator")
 		skipMetricsServer, _ := cmd.Flags().GetBool("skip-metrics-server")
 		skipKeda, _ := cmd.Flags().GetBool("skip-keda")
+		skipMonitoring, _ := cmd.Flags().GetBool("skip-monitoring")
 		awsProfile, _ := cmd.Flags().GetString("aws-profile")
 		forceContext, _ := cmd.Flags().GetBool("force-context")
 
@@ -213,6 +214,9 @@ Use --force-context to automatically switch without prompting.`,
 		if skipKeda {
 			config.Components.Keda.Enabled = false
 		}
+		if skipMonitoring {
+			config.Components.Monitoring.Enabled = false
+		}
 
 		// Show warning if deprecated operator-namespace flag is used
 		if cmd.Flags().Changed("operator-namespace") {
@@ -237,6 +241,10 @@ Use --force-context to automatically switch without prompting.`,
 		fmt.Printf("- KEDA: %v\n", config.Components.Keda.Enabled)
 		if skipKeda {
 			fmt.Printf("  (skipped via --skip-keda flag)\n")
+		}
+		fmt.Printf("- Monitoring: %v\n", config.Components.Monitoring.Enabled)
+		if skipMonitoring {
+			fmt.Printf("  (skipped via --skip-monitoring flag)\n")
 		}
 		fmt.Printf("- MySQL: %v\n", config.Components.MySQL.Enabled)
 		fmt.Printf("- RabbitMQ: %v\n", config.Components.RabbitMQ.Enabled)
@@ -821,6 +829,121 @@ Use --force-context to automatically switch without prompting.`,
 					fmt.Println("  kubectl get scaledobjects -A    - Shows all ScaledObject resources")
 					fmt.Println(yellow("Note: KEDA supports 50+ event sources including RabbitMQ, Kafka, Prometheus, and more"))
 				}
+			}
+		}
+
+		// Install Monitoring Stack (kube-prometheus-stack)
+		if config.Components.Monitoring.Enabled {
+			fmt.Println(yellow("Installing Monitoring Stack (kube-prometheus-stack)"))
+
+			// Create namespace idempotently
+			fmt.Printf("Creating namespace: %s\n", config.Components.Monitoring.Namespace)
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.Monitoring.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating monitoring namespace: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite monitoring namespace creation failure..."))
+			} else {
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(namespaceYaml)
+				if err := cmd.Run(); err != nil {
+					fmt.Printf("%s Error applying monitoring namespace: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite monitoring namespace apply failure..."))
+				} else {
+					fmt.Printf("%s Namespace %s created\n", green("✅"), config.Components.Monitoring.Namespace)
+				}
+			}
+
+			// Build Helm args
+			grafanaNodePort := strconv.Itoa(config.Components.Monitoring.Grafana.NodePort)
+			helmArgs := []string{
+				"upgrade", "--install", "monitoring", "prometheus-community/kube-prometheus-stack",
+				"--namespace", config.Components.Monitoring.Namespace,
+				"--version", config.Components.Monitoring.ChartVersion,
+				"--set", "alertmanager.enabled=false",
+				"--set", "thanosRuler.enabled=false",
+				"--set", "grafana.enabled=true",
+				"--set", `grafana.grafana\.ini.auth\.anonymous.enabled=true`,
+				"--set", `grafana.grafana\.ini.auth\.anonymous.org_role=Admin`,
+				"--set", `grafana.grafana\.ini.auth.disable_login_form=true`,
+				"--set", `grafana.grafana\.ini.security.allow_embedding=true`,
+				"--set", "grafana.service.type=NodePort",
+				"--set", "grafana.service.nodePort=" + grafanaNodePort,
+				"--set", "grafana.resources.requests.cpu=" + config.Components.Monitoring.Resources.Grafana.CPU,
+				"--set", "grafana.resources.requests.memory=" + config.Components.Monitoring.Resources.Grafana.Memory,
+				"--set", "grafana.resources.limits.cpu=" + config.Components.Monitoring.Resources.Grafana.CPU,
+				"--set", "grafana.resources.limits.memory=" + config.Components.Monitoring.Resources.Grafana.Memory,
+				"--set", "grafana.defaultDashboardsEnabled=true",
+				"--set", "grafana.persistence.enabled=false",
+				"--set", "grafana.sidecar.dashboards.enabled=true",
+				"--set", "grafana.sidecar.dashboards.searchNamespace=ALL",
+				"--set", "grafana.sidecar.datasources.enabled=true",
+				"--set", "grafana.sidecar.datasources.defaultDatasourceEnabled=true",
+				"--set", "prometheus.prometheusSpec.retention=" + config.Components.Monitoring.Prometheus.Retention,
+				"--set", "prometheus.prometheusSpec.resources.requests.cpu=" + config.Components.Monitoring.Resources.Prometheus.CPU,
+				"--set", "prometheus.prometheusSpec.resources.requests.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
+				"--set", "prometheus.prometheusSpec.resources.limits.cpu=" + config.Components.Monitoring.Resources.Prometheus.CPU,
+				"--set", "prometheus.prometheusSpec.resources.limits.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
+
+				"--set", "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false",
+				"--set", "prometheus.prometheusSpec.serviceMonitorSelector=",
+				"--set", "prometheus.prometheusSpec.serviceMonitorNamespaceSelector=",
+				"--set", "prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false",
+				"--set", "prometheus.prometheusSpec.podMonitorSelector=",
+				"--set", "prometheus.prometheusSpec.podMonitorNamespaceSelector=",
+				"--set", "prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues=false",
+				"--set", "prometheus.prometheusSpec.ruleSelector=",
+				"--set", "prometheus.prometheusSpec.ruleNamespaceSelector=",
+				"--set", "prometheus.service.type=ClusterIP",
+				"--set", "prometheusOperator.enabled=true",
+				"--set", "nodeExporter.enabled=true",
+				"--set", "kubeStateMetrics.enabled=true",
+				"--set", "kubeProxy.enabled=false",
+				"--set", "windowsMonitoring.enabled=false",
+				"--set", "defaultRules.create=true",
+			}
+
+			// Redirect all component images through Harbor when enabled, matching the
+			// pattern used by MySQL, Redis, and RabbitMQ for air-gapped Kind clusters.
+			if config.Images.UseHarbor {
+				harbor := config.Images.HarborRegistry
+				helmArgs = append(helmArgs,
+					// Prometheus Operator
+					"--set", fmt.Sprintf("prometheusOperator.image.registry=%s", harbor),
+					"--set", "prometheusOperator.image.repository=quay.io/prometheus-operator/prometheus-operator",
+					// Prometheus Config Reloader (sidecar injected by the operator)
+					"--set", fmt.Sprintf("prometheusOperator.prometheusConfigReloader.image.registry=%s", harbor),
+					"--set", "prometheusOperator.prometheusConfigReloader.image.repository=quay.io/prometheus-operator/prometheus-config-reloader",
+					// Grafana main image
+					"--set", fmt.Sprintf("grafana.image.registry=%s", harbor),
+					"--set", "grafana.image.repository=docker.io/grafana/grafana",
+					// Grafana k8s-sidecar (dashboard/datasource discovery)
+					"--set", fmt.Sprintf("grafana.sidecar.image.registry=%s", harbor),
+					"--set", "grafana.sidecar.image.repository=quay.io/kiwigrid/k8s-sidecar",
+					// Node Exporter (prometheus-node-exporter subchart)
+					"--set", fmt.Sprintf("prometheus-node-exporter.image.registry=%s", harbor),
+					"--set", "prometheus-node-exporter.image.repository=quay.io/prometheus/node-exporter",
+					// Kube State Metrics (kube-state-metrics subchart)
+					"--set", fmt.Sprintf("kube-state-metrics.image.registry=%s", harbor),
+					"--set", "kube-state-metrics.image.repository=registry.k8s.io/kube-state-metrics/kube-state-metrics",
+					// Prometheus server (deployed by the operator via PrometheusSpec)
+					"--set", fmt.Sprintf("prometheus.prometheusSpec.image.registry=%s", harbor),
+					"--set", "prometheus.prometheusSpec.image.repository=quay.io/prometheus/prometheus",
+				)
+			}
+
+			helmArgs = append(helmArgs, "--wait", "--timeout", "5m")
+
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			_, err = executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Monitoring Stack: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Monitoring Stack installation failure..."))
+			} else {
+				fmt.Printf("%s Monitoring stack installed successfully\n", green("✅"))
+				fmt.Printf("   Grafana dashboard: http://localhost:3000 (no login required)\n")
 			}
 		}
 
@@ -2514,6 +2637,9 @@ stringData:
 					if strings.Contains(cp, "mysql.nodePorts.mysql") && containerPort == config.Components.MySQL.NodePorts.MySQL {
 						return portMap.HostPort
 					}
+					if strings.Contains(cp, "monitoring.grafana.nodePort") && containerPort == config.Components.Monitoring.Grafana.NodePort {
+						return portMap.HostPort
+					}
 				}
 			}
 			return 0
@@ -2639,6 +2765,13 @@ stringData:
 				}
 			}
 		}
+		if config.Components.Monitoring.Enabled {
+			grafanaPort := findHostPort(config.Components.Monitoring.Grafana.NodePort)
+			if grafanaPort == 0 {
+				grafanaPort = 3000 // Default host port for Grafana
+			}
+			fmt.Printf("- Grafana: http://localhost:%d (no login required)\n", grafanaPort)
+		}
 	},
 }
 
@@ -2656,6 +2789,7 @@ func init() {
 	kindenvStartCmd.Flags().Bool("skip-indices-operator", false, "Skip deploying Indices Operator")
 	kindenvStartCmd.Flags().Bool("skip-metrics-server", false, "Skip deploying Metrics Server")
 	kindenvStartCmd.Flags().Bool("skip-keda", false, "Skip deploying KEDA")
+	kindenvStartCmd.Flags().Bool("skip-monitoring", false, "Skip deploying Monitoring Stack")
 	kindenvStartCmd.Flags().Bool("force-context", false, "Automatically switch to the correct Kubernetes context without prompting")
 
 	// Deprecated flag, kept for backward compatibility

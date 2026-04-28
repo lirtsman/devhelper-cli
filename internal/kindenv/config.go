@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -158,6 +159,27 @@ type KindEnvConfig struct {
 				Size    string `yaml:"size"`
 			} `yaml:"persistence"`
 		} `yaml:"rabbitmq"`
+		Monitoring struct {
+			Enabled      bool   `yaml:"enabled"`
+			Namespace    string `yaml:"namespace"`
+			ChartVersion string `yaml:"chartVersion"`
+			Grafana      struct {
+				NodePort int `yaml:"nodePort"`
+			} `yaml:"grafana"`
+			Prometheus struct {
+				Retention string `yaml:"retention"`
+			} `yaml:"prometheus"`
+			Resources struct {
+				Prometheus struct {
+					CPU    string `yaml:"cpu"`
+					Memory string `yaml:"memory"`
+				} `yaml:"prometheus"`
+				Grafana struct {
+					CPU    string `yaml:"cpu"`
+					Memory string `yaml:"memory"`
+				} `yaml:"grafana"`
+			} `yaml:"resources"`
+		} `yaml:"monitoring"`
 	} `yaml:"components"`
 	Images struct {
 		SkipPull  bool `yaml:"skipPull"`
@@ -449,6 +471,16 @@ func LoadConfig(configPath string) (*KindEnvConfig, error) {
 	config.Secrets.RabbitMQ.Password = "password"
 	config.Secrets.RabbitMQ.ErlangCookie = "" // Auto-generated if empty
 
+	config.Components.Monitoring.Enabled = false
+	config.Components.Monitoring.Namespace = "monitoring"
+	config.Components.Monitoring.ChartVersion = "72.6.2"
+	config.Components.Monitoring.Grafana.NodePort = 31300
+	config.Components.Monitoring.Prometheus.Retention = "24h"
+	config.Components.Monitoring.Resources.Prometheus.CPU = "500m"
+	config.Components.Monitoring.Resources.Prometheus.Memory = "512Mi"
+	config.Components.Monitoring.Resources.Grafana.CPU = "200m"
+	config.Components.Monitoring.Resources.Grafana.Memory = "256Mi"
+
 	// If configPath is empty, check if kindenv.yaml exists in the current directory
 	if configPath == "" {
 		if _, err := os.Stat("kindenv.yaml"); err == nil {
@@ -617,6 +649,19 @@ func generateDefaultPortMappings(config *KindEnvConfig) []struct {
 		Protocol:      "TCP",
 	})
 
+	// Add Grafana port mapping if monitoring is enabled
+	if config.Components.Monitoring.Enabled {
+		mappings = append(mappings, struct {
+			ContainerPort interface{} `yaml:"containerPort"`
+			HostPort      int         `yaml:"hostPort"`
+			Protocol      string      `yaml:"protocol"`
+		}{
+			ContainerPort: "${{ components.monitoring.grafana.nodePort }}",
+			HostPort:      3000,
+			Protocol:      "TCP",
+		})
+	}
+
 	return mappings
 }
 
@@ -696,6 +741,8 @@ func processVariableSubstitutions(config *KindEnvConfig) error {
 
 				// Replace the variable with the resolved value
 				config.Cluster.MapPorts[i].ContainerPort = value
+			} else if regexp.MustCompile(`\$\{\{\s*components\.monitoring\.grafana\.nodePort\s*\}\}`).MatchString(strValue) {
+				config.Cluster.MapPorts[i].ContainerPort = config.Components.Monitoring.Grafana.NodePort
 			} else if strValue != "" {
 				// If it's not a variable reference but a string, try to convert to int
 				intValue, err := strconv.Atoi(strValue)
@@ -906,6 +953,49 @@ func (c *KindEnvConfig) Validate() error {
 		}
 	}
 
+	// Validate Monitoring configuration
+	if c.Components.Monitoring.Enabled {
+		if strings.TrimSpace(c.Components.Monitoring.Namespace) == "" {
+			return errors.New("monitoring namespace cannot be empty when monitoring is enabled")
+		}
+		if strings.TrimSpace(c.Components.Monitoring.ChartVersion) == "" {
+			return errors.New("monitoring chartVersion cannot be empty when monitoring is enabled")
+		}
+		if c.Components.Monitoring.Grafana.NodePort < 30000 || c.Components.Monitoring.Grafana.NodePort > 32767 {
+			return errors.New("monitoring grafana nodePort must be in range 30000-32767")
+		}
+		if c.Components.Monitoring.Resources.Prometheus.CPU != "" {
+			cpuRegex := regexp.MustCompile(`^[0-9]+m?$`)
+			if !cpuRegex.MatchString(c.Components.Monitoring.Resources.Prometheus.CPU) {
+				return errors.New("monitoring prometheus cpu resource must be in valid format (e.g., 500m, 1)")
+			}
+		}
+		if c.Components.Monitoring.Resources.Prometheus.Memory != "" {
+			memoryRegex := regexp.MustCompile(`^[0-9]+[KMGT]i$`)
+			if !memoryRegex.MatchString(c.Components.Monitoring.Resources.Prometheus.Memory) {
+				return errors.New("monitoring prometheus memory resource must be in valid format (e.g., 512Mi, 1Gi)")
+			}
+		}
+		if c.Components.Monitoring.Resources.Grafana.CPU != "" {
+			cpuRegex := regexp.MustCompile(`^[0-9]+m?$`)
+			if !cpuRegex.MatchString(c.Components.Monitoring.Resources.Grafana.CPU) {
+				return errors.New("monitoring grafana cpu resource must be in valid format (e.g., 200m, 1)")
+			}
+		}
+		if c.Components.Monitoring.Resources.Grafana.Memory != "" {
+			memoryRegex := regexp.MustCompile(`^[0-9]+[KMGT]i$`)
+			if !memoryRegex.MatchString(c.Components.Monitoring.Resources.Grafana.Memory) {
+				return errors.New("monitoring grafana memory resource must be in valid format (e.g., 256Mi, 1Gi)")
+			}
+		}
+		if c.Components.Monitoring.Prometheus.Retention != "" {
+			retentionRegex := regexp.MustCompile(`^[0-9]+[hdwmy]$`)
+			if !retentionRegex.MatchString(c.Components.Monitoring.Prometheus.Retention) {
+				return errors.New("monitoring prometheus retention must be in valid format (e.g., 24h, 7d, 4w)")
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -982,6 +1072,16 @@ func CreateDefaultConfig() *KindEnvConfig {
 	config.Components.Keda.Enabled = false
 	config.Components.Keda.Namespace = "keda"
 	config.Components.Keda.ChartVersion = "2.16.0"
+
+	config.Components.Monitoring.Enabled = false
+	config.Components.Monitoring.Namespace = "monitoring"
+	config.Components.Monitoring.ChartVersion = "72.6.2"
+	config.Components.Monitoring.Grafana.NodePort = 31300
+	config.Components.Monitoring.Prometheus.Retention = "24h"
+	config.Components.Monitoring.Resources.Prometheus.CPU = "500m"
+	config.Components.Monitoring.Resources.Prometheus.Memory = "512Mi"
+	config.Components.Monitoring.Resources.Grafana.CPU = "200m"
+	config.Components.Monitoring.Resources.Grafana.Memory = "256Mi"
 
 	// Images section
 	config.Images.SkipPull = false

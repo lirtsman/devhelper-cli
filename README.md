@@ -238,6 +238,13 @@ DevHelper CLI supports several key components for local development:
 - Scale to zero when idle for efficient resource usage
 - Support for 50+ event sources
 
+### Monitoring (Prometheus Operator + Grafana)
+Optional monitoring stack based on [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack). Deploys Prometheus Operator and Grafana with:
+- **30+ pre-built dashboards** for Kubernetes cluster, nodes, pods, and namespaces
+- **Automatic metrics collection** from all cluster components (node-exporter, kube-state-metrics)
+- **Auto-discovery** of application metrics via ServiceMonitor CRDs
+- **No-login Grafana** accessible at `http://localhost:3000` (anonymous access enabled)
+
 ## Kind-based Environment Management
 
 DevHelper CLI includes the `kindenv` command for provisioning and managing a local Kind-based Kubernetes development environment. This environment comes with all necessary components for Shield application development.
@@ -420,6 +427,21 @@ components:
   temporalWorkerOperator:
     enabled: true
     chartVersion: 0.1.46-dev
+  monitoring:
+    enabled: false                   # Set to true to deploy Prometheus + Grafana
+    namespace: monitoring
+    chartVersion: "72.6.2"
+    grafana:
+      nodePort: 31300
+    prometheus:
+      retention: "24h"
+    resources:
+      prometheus:
+        cpu: "500m"
+        memory: "512Mi"
+      grafana:
+        cpu: "200m"
+        memory: "256Mi"
 images:
   skipPull: false
   dockerHub:

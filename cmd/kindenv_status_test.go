@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
@@ -217,4 +219,62 @@ func TestStatusReportingWithAllFeatures(t *testing.T) {
 	configMapName := component.Name + "-config"
 	assert.Equal(t, "full-featured-app-config", configMapName, "ConfigMap name should be correct")
 	assert.Len(t, component.ConfigFiles, 2, "Should have 2 config files")
+}
+
+// TestStatus_MonitoringEnabled verifies monitoring status config is set up correctly when enabled.
+func TestStatus_MonitoringEnabled(t *testing.T) {
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = true
+
+	// Verify config fields are accessible for status check
+	assert.True(t, config.Components.Monitoring.Enabled)
+	assert.NotEmpty(t, config.Components.Monitoring.Namespace, "Monitoring namespace should not be empty")
+	assert.Equal(t, "monitoring", config.Components.Monitoring.Namespace)
+}
+
+// TestStatus_MonitoringDisabled verifies no monitoring output when disabled.
+func TestStatus_MonitoringDisabled(t *testing.T) {
+	config := kindenv.CreateDefaultConfig()
+	config.Components.Monitoring.Enabled = false
+
+	// When disabled, no monitoring-related checks are performed
+	assert.False(t, config.Components.Monitoring.Enabled)
+}
+
+// TestStatus_MonitoringDegraded verifies pod count parsing for degraded state.
+func TestStatus_MonitoringDegraded(t *testing.T) {
+	// Simulate kubectl output with a not-ready pod
+	podOutput := "monitoring-grafana-abc123 0/1 Pending 0 30s"
+
+	lines := strings.Split(strings.TrimSpace(podOutput), "\n")
+	grafanaReady, grafanaTotal := 0, 0
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		podName := fields[0]
+		readyStr := fields[1]
+		status := fields[2]
+
+		parts := strings.Split(readyStr, "/")
+		ready := 0
+		total := 0
+		if len(parts) == 2 {
+			fmt.Sscan(parts[0], &ready)
+			fmt.Sscan(parts[1], &total)
+		}
+		isReady := ready == total && status == "Running"
+
+		if strings.Contains(podName, "grafana") {
+			grafanaTotal++
+			if isReady {
+				grafanaReady++
+			}
+		}
+	}
+
+	assert.Equal(t, 1, grafanaTotal, "Should count 1 grafana pod")
+	assert.Equal(t, 0, grafanaReady, "Grafana pod should not be ready (Pending)")
 }

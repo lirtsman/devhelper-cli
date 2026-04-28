@@ -308,6 +308,81 @@ It uses native Go libraries instead of external CLI tools for improved reliabili
 				fmt.Printf("- %s KEDA is disabled in config\n", yellow("ℹ️"))
 			}
 
+			// Check Monitoring Stack status
+			if config.Components.Monitoring.Enabled {
+				monitoringCmd := exec.Command("kubectl", "get", "pods",
+					"-n", config.Components.Monitoring.Namespace,
+					"--no-headers",
+					"-l", "app.kubernetes.io/instance=monitoring")
+				monitoringOutput, err := monitoringCmd.CombinedOutput()
+				outputStr := strings.TrimSpace(string(monitoringOutput))
+
+				if err != nil || outputStr == "" {
+					fmt.Printf("- %s Monitoring Stack is not running or not installed\n", yellow("⚠️"))
+				} else {
+					lines := strings.Split(outputStr, "\n")
+					prometheusReady, prometheusTotal := 0, 0
+					grafanaReady, grafanaTotal := 0, 0
+					nodeExporterReady, nodeExporterTotal := 0, 0
+
+					for _, line := range lines {
+						fields := strings.Fields(line)
+						if len(fields) < 3 {
+							continue
+						}
+						podName := fields[0]
+						readyStr := fields[1] // e.g. "1/1"
+						status := fields[2]   // e.g. "Running"
+
+						parts := strings.Split(readyStr, "/")
+						ready := 0
+						total := 0
+						if len(parts) == 2 {
+							fmt.Sscan(parts[0], &ready)
+							fmt.Sscan(parts[1], &total)
+						}
+						isReady := ready == total && status == "Running"
+
+						switch {
+						case strings.Contains(podName, "grafana"):
+							grafanaTotal++
+							if isReady {
+								grafanaReady++
+							}
+						case strings.Contains(podName, "prometheus-monitoring") || strings.Contains(podName, "monitoring-kube-prometheus-stack-prometheus"):
+							prometheusTotal++
+							if isReady {
+								prometheusReady++
+							}
+						case strings.Contains(podName, "node-exporter"):
+							nodeExporterTotal++
+							if isReady {
+								nodeExporterReady++
+							}
+						}
+					}
+
+					allReady := grafanaReady == grafanaTotal && grafanaTotal > 0 &&
+						prometheusReady == prometheusTotal && prometheusTotal > 0 &&
+						nodeExporterReady == nodeExporterTotal && nodeExporterTotal > 0
+
+					if allReady {
+						fmt.Printf("- %s Monitoring Stack is installed and running\n", green("✅"))
+					} else {
+						fmt.Printf("- %s Monitoring Stack is partially running\n", yellow("⚠️"))
+					}
+					fmt.Printf("     Prometheus: %d/%d pods ready\n", prometheusReady, prometheusTotal)
+					fmt.Printf("     Grafana: %d/%d pods ready", grafanaReady, grafanaTotal)
+					if grafanaReady > 0 {
+						fmt.Printf(" (http://localhost:3000)")
+					}
+					fmt.Println()
+					fmt.Printf("     Node Exporter: %d/%d pods ready\n", nodeExporterReady, nodeExporterTotal)
+				}
+			} else {
+				fmt.Printf("- %s Monitoring Stack is disabled in config\n", yellow("ℹ️"))
+			}
+
 			// Check MySQL status
 			if config.Components.MySQL.Enabled {
 				// Check MySQL pod status

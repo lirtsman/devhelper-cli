@@ -230,6 +230,40 @@ env:
         key: password
 ```
 
+### Monitoring Custom Application Metrics
+
+When the monitoring stack is enabled (`components.monitoring.enabled: true`), your custom components can expose metrics for automatic scraping by Prometheus.
+
+**Requirements**: Your component must serve a [Prometheus-compatible](https://prometheus.io/docs/instrumenting/exposition_formats/) `/metrics` endpoint.
+
+**Create a ServiceMonitor** to tell Prometheus where to scrape:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: my-app-metrics
+  namespace: default
+  labels:
+    release: monitoring           # Must match the Helm release label selector
+spec:
+  selector:
+    matchLabels:
+      app: my-app                 # Must match your Service's labels
+  endpoints:
+    - port: http                  # Named port on your Service
+      path: /metrics
+      interval: 15s
+```
+
+```bash
+kubectl apply -f my-app-servicemonitor.yaml
+```
+
+Within 1–2 minutes, metrics appear in Grafana's **Explore** view (data source: Prometheus).
+
+> **Note**: The monitoring stack auto-discovers ServiceMonitors across all namespaces (`serviceMonitorNamespaceSelector: {}`), so no additional configuration is needed beyond creating the ServiceMonitor with the `release: monitoring` label.
+
 ## Managing Components
 
 ### Check Status
