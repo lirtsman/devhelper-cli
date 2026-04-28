@@ -862,10 +862,10 @@ Use --force-context to automatically switch without prompting.`,
 				"--set", "alertmanager.enabled=false",
 				"--set", "thanosRuler.enabled=false",
 				"--set", "grafana.enabled=true",
-				"--set", `grafana."grafana\.ini"."auth\.anonymous".enabled=true`,
-				"--set", `grafana."grafana\.ini"."auth\.anonymous".org_role=Admin`,
-				"--set", `grafana."grafana\.ini".auth.disable_login_form=true`,
-				"--set", `grafana."grafana\.ini".security.allow_embedding=true`,
+				"--set", `grafana.grafana\.ini.auth\.anonymous.enabled=true`,
+				"--set", `grafana.grafana\.ini.auth\.anonymous.org_role=Admin`,
+				"--set", `grafana.grafana\.ini.auth.disable_login_form=true`,
+				"--set", `grafana.grafana\.ini.security.allow_embedding=true`,
 				"--set", "grafana.service.type=NodePort",
 				"--set", "grafana.service.nodePort=" + grafanaNodePort,
 				"--set", "grafana.resources.requests.cpu=" + config.Components.Monitoring.Resources.Grafana.CPU,
@@ -883,7 +883,7 @@ Use --force-context to automatically switch without prompting.`,
 				"--set", "prometheus.prometheusSpec.resources.requests.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
 				"--set", "prometheus.prometheusSpec.resources.limits.cpu=" + config.Components.Monitoring.Resources.Prometheus.CPU,
 				"--set", "prometheus.prometheusSpec.resources.limits.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
-				"--set", `prometheus.prometheusSpec.storageSpec.emptyDir.medium=""`,
+
 				"--set", "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false",
 				"--set", "prometheus.prometheusSpec.serviceMonitorSelector=",
 				"--set", "prometheus.prometheusSpec.serviceMonitorNamespaceSelector=",
@@ -900,9 +900,38 @@ Use --force-context to automatically switch without prompting.`,
 				"--set", "kubeProxy.enabled=false",
 				"--set", "windowsMonitoring.enabled=false",
 				"--set", "defaultRules.create=true",
-				"--wait",
-				"--timeout", "5m",
 			}
+
+			// Redirect all component images through Harbor when enabled, matching the
+			// pattern used by MySQL, Redis, and RabbitMQ for air-gapped Kind clusters.
+			if config.Images.UseHarbor {
+				harbor := config.Images.HarborRegistry
+				helmArgs = append(helmArgs,
+					// Prometheus Operator
+					"--set", fmt.Sprintf("prometheusOperator.image.registry=%s", harbor),
+					"--set", "prometheusOperator.image.repository=quay.io/prometheus-operator/prometheus-operator",
+					// Prometheus Config Reloader (sidecar injected by the operator)
+					"--set", fmt.Sprintf("prometheusOperator.prometheusConfigReloader.image.registry=%s", harbor),
+					"--set", "prometheusOperator.prometheusConfigReloader.image.repository=quay.io/prometheus-operator/prometheus-config-reloader",
+					// Grafana main image
+					"--set", fmt.Sprintf("grafana.image.registry=%s", harbor),
+					"--set", "grafana.image.repository=docker.io/grafana/grafana",
+					// Grafana k8s-sidecar (dashboard/datasource discovery)
+					"--set", fmt.Sprintf("grafana.sidecar.image.registry=%s", harbor),
+					"--set", "grafana.sidecar.image.repository=quay.io/kiwigrid/k8s-sidecar",
+					// Node Exporter (prometheus-node-exporter subchart)
+					"--set", fmt.Sprintf("prometheus-node-exporter.image.registry=%s", harbor),
+					"--set", "prometheus-node-exporter.image.repository=quay.io/prometheus/node-exporter",
+					// Kube State Metrics (kube-state-metrics subchart)
+					"--set", fmt.Sprintf("kube-state-metrics.image.registry=%s", harbor),
+					"--set", "kube-state-metrics.image.repository=registry.k8s.io/kube-state-metrics/kube-state-metrics",
+					// Prometheus server (deployed by the operator via PrometheusSpec)
+					"--set", fmt.Sprintf("prometheus.prometheusSpec.image.registry=%s", harbor),
+					"--set", "prometheus.prometheusSpec.image.repository=quay.io/prometheus/prometheus",
+				)
+			}
+
+			helmArgs = append(helmArgs, "--wait", "--timeout", "5m")
 
 			if verbose {
 				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
@@ -2608,6 +2637,9 @@ stringData:
 					if strings.Contains(cp, "mysql.nodePorts.mysql") && containerPort == config.Components.MySQL.NodePorts.MySQL {
 						return portMap.HostPort
 					}
+					if strings.Contains(cp, "monitoring.grafana.nodePort") && containerPort == config.Components.Monitoring.Grafana.NodePort {
+						return portMap.HostPort
+					}
 				}
 			}
 			return 0
@@ -2732,6 +2764,13 @@ stringData:
 					fmt.Printf("  Username: user, Virtual Host: %s\n", config.Components.RabbitMQ.VirtualHost)
 				}
 			}
+		}
+		if config.Components.Monitoring.Enabled {
+			grafanaPort := findHostPort(config.Components.Monitoring.Grafana.NodePort)
+			if grafanaPort == 0 {
+				grafanaPort = 3000 // Default host port for Grafana
+			}
+			fmt.Printf("- Grafana: http://localhost:%d (no login required)\n", grafanaPort)
 		}
 	},
 }
