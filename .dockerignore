@@ -1,0 +1,44 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# Build artifacts
+*.exe
+*.test
+*.out
+devhelper-cli
+vendor/
+
+# Coverage
+*.coverprofile
+coverage/
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config
+.env*
+*.local.yaml
+*.local.yml
+localenv.yaml
+
+# Logs
+*.log
+
+# Temporary
+*.tmp
+*.bak

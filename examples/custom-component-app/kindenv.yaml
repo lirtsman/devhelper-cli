@@ -1,0 +1,81 @@
+# Example kindenv.yaml for custom-component-app
+# This demonstrates how to deploy a custom component alongside infrastructure
+
+# Include your standard kindenv configuration here
+# (cluster settings, MySQL, OpenSearch, etc.)
+
+# Custom Component Configuration
+customComponents:
+  - name: custom-component-app
+    image: custom-component-app:latest  # Build and load into Kind: docker build -t custom-component-app:latest . && kind load docker-image custom-component-app:latest
+    namespace: default
+    enabled: true
+    replicas: 1
+    
+    # Environment variables
+    env:
+      - name: SERVER_PORT
+        value: "8080"
+      - name: APP_ENV
+        value: "development"
+      - name: DB_HOST
+        value: "mysql.mysql.svc.cluster.local"
+      - name: DB_PORT
+        value: "3306"
+      # Uncomment to use MySQL secrets:
+      # - name: DB_USERNAME
+      #   valueFrom:
+      #     secretKeyRef:
+      #       name: mysql-secret
+      #       key: username
+      # - name: DB_PASSWORD
+      #   valueFrom:
+      #     secretKeyRef:
+      #       name: mysql-secret
+      #       key: password
+      - name: CONFIG_FILE
+        value: "/config/application.yaml"
+    
+    # Port mapping - expose service on localhost
+    ports:
+      - containerPort: 8080
+        protocol: TCP
+        nodePort: 30088
+    
+    # Resource limits
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    
+    # Configuration files - mounted from ConfigMap
+    configFiles:
+      - name: application.yaml
+        path: /config/application.yaml
+        contents: |
+          server:
+            port: 8080
+          database:
+            host: mysql.mysql.svc.cluster.local
+            port: 3306
+          logging:
+            level: INFO
+            format: json
+      
+      - name: logback.xml
+        path: /config/logback.xml
+        contents: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <configuration>
+            <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+              <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+              </encoder>
+            </appender>
+            <root level="INFO">
+              <appender-ref ref="STDOUT" />
+            </root>
+          </configuration>

@@ -1,0 +1,296 @@
+# RabbitMQ Configuration Schema for KindEnv
+# This file documents the expected structure of RabbitMQ configuration in kindenv.yaml
+
+# Components section - add RabbitMQ to components
+components:
+  rabbitmq:
+    # Enable or disable RabbitMQ deployment
+    # Type: boolean
+    # Default: false
+    # Required: yes
+    enabled: false
+
+    # Kubernetes namespace for RabbitMQ deployment
+    # Type: string
+    # Default: "rabbitmq"
+    # Required: yes
+    # Validation: Must be valid Kubernetes namespace name
+    namespace: "rabbitmq"
+
+    # Bitnami RabbitMQ Helm chart version
+    # Type: string
+    # Default: "11.0.0"
+    # Required: yes when enabled=true
+    # Validation: Must be valid semantic version (e.g., "11.0.0")
+    chartVersion: "11.0.0"
+
+    # Default RabbitMQ virtual host
+    # Type: string
+    # Default: "/"
+    # Required: no
+    # Validation: Must start with "/" or be alphanumeric
+    # Note: Additional virtual hosts can be created via Management UI
+    virtualHost: "/"
+
+    # NodePort mappings for RabbitMQ services
+    nodePorts:
+      # AMQP protocol NodePort (maps to host port 5672)
+      # Type: integer
+      # Default: 30672
+      # Required: yes when enabled=true
+      # Validation: Must be in range 30000-32767
+      amqp: 30672
+
+      # Management UI NodePort (maps to host port 15672)
+      # Type: integer
+      # Default: 31672
+      # Required: yes when enabled=true
+      # Validation: Must be in range 30000-32767, different from amqp
+      management: 31672
+
+    # Resource requests and limits
+    resources:
+      # CPU resource specification
+      # Type: string
+      # Default: "500m"
+      # Required: no
+      # Validation: Must match pattern ^[0-9]+m?$ (e.g., "500m", "1", "2000m")
+      # Note: Used as both request and limit (guaranteed resources)
+      cpu: "500m"
+
+      # Memory resource specification
+      # Type: string
+      # Default: "1Gi"
+      # Required: no
+      # Validation: Must match pattern ^[0-9]+[KMGT]i$ (e.g., "1Gi", "512Mi")
+      # Note: Used as both request and limit (guaranteed resources)
+      memory: "1Gi"
+
+    # Data persistence configuration
+    persistence:
+      # Enable or disable persistent storage
+      # Type: boolean
+      # Default: false
+      # Required: no
+      # Note: When disabled, data is lost on pod restart (faster startup)
+      enabled: false
+
+      # PersistentVolume size
+      # Type: string
+      # Default: "8Gi"
+      # Required: yes when persistence.enabled=true
+      # Validation: Must match pattern ^[0-9]+[KMGT]i$ (e.g., "8Gi", "10Gi")
+      size: "8Gi"
+
+# Secrets section - add RabbitMQ credentials
+secrets:
+  rabbitmq:
+    # Enable or disable secret creation
+    # Type: boolean
+    # Default: true
+    # Required: yes
+    # Note: Secret is required for RabbitMQ deployment
+    enabled: true
+
+    # Kubernetes secret name
+    # Type: string
+    # Default: "rabbitmq-credentials"
+    # Required: yes when enabled=true
+    # Validation: Must be valid Kubernetes resource name
+    name: "rabbitmq-credentials"
+
+    # Kubernetes namespace for secret
+    # Type: string
+    # Default: "rabbitmq"
+    # Required: yes when enabled=true
+    # Validation: Must match components.rabbitmq.namespace
+    namespace: "rabbitmq"
+
+    # RabbitMQ admin username
+    # Type: string
+    # Default: "user"
+    # Required: yes when enabled=true
+    # Validation: Must be non-empty
+    # Security: Change default in production
+    username: "user"
+
+    # RabbitMQ admin password
+    # Type: string
+    # Default: "password"
+    # Required: yes when enabled=true
+    # Validation: Must be non-empty
+    # Security: Change default in production, use strong password
+    password: "password"
+
+    # Erlang cluster authentication cookie
+    # Type: string
+    # Default: "" (auto-generated)
+    # Required: no
+    # Validation: If provided, must be at least 20 characters
+    # Security: Auto-generated with crypto-random string if empty
+    # Note: Required for clustering, even for single-node setup
+    erlangCookie: ""
+
+# Cluster section - add RabbitMQ port mappings
+cluster:
+  name: "kindenv-cluster"
+  createIfNotExists: true
+  
+  # Port mappings for Kind cluster
+  # Note: These map NodePorts to host ports for localhost access
+  mapPorts:
+    # AMQP protocol port mapping
+    # Container Port: NodePort from components.rabbitmq.nodePorts.amqp
+    # Host Port: 5672 (standard AMQP port)
+    # Protocol: TCP
+    - containerPort: ${{ components.rabbitmq.nodePorts.amqp }}
+      hostPort: 5672
+      protocol: TCP
+
+    # Management UI port mapping
+    # Container Port: NodePort from components.rabbitmq.nodePorts.management
+    # Host Port: 15672 (standard RabbitMQ Management UI port)
+    # Protocol: TCP
+    - containerPort: ${{ components.rabbitmq.nodePorts.management }}
+      hostPort: 15672
+      protocol: TCP
+
+# Configuration Examples
+
+# Example 1: Basic RabbitMQ with defaults
+# components:
+#   rabbitmq:
+#     enabled: true
+#     namespace: "rabbitmq"
+#     chartVersion: "11.0.0"
+#     virtualHost: "/"
+#     nodePorts:
+#       amqp: 30672
+#       management: 31672
+#     resources:
+#       cpu: "500m"
+#       memory: "1Gi"
+#     persistence:
+#       enabled: false
+#       size: "8Gi"
+
+# Example 2: RabbitMQ with custom virtual host and persistence
+# components:
+#   rabbitmq:
+#     enabled: true
+#     namespace: "rabbitmq"
+#     chartVersion: "11.0.0"
+#     virtualHost: "/dev"
+#     nodePorts:
+#       amqp: 30672
+#       management: 31672
+#     resources:
+#       cpu: "1"
+#       memory: "2Gi"
+#     persistence:
+#       enabled: true
+#       size: "10Gi"
+# secrets:
+#   rabbitmq:
+#     enabled: true
+#     name: "rabbitmq-credentials"
+#     namespace: "rabbitmq"
+#     username: "admin"
+#     password: "secure-password-here"
+#     erlangCookie: "my-secure-cookie-string-at-least-20-chars"
+
+# Example 3: Multiple applications with separate virtual hosts
+# Note: Configure one virtual host via kindenv.yaml, create others via Management UI
+# components:
+#   rabbitmq:
+#     enabled: true
+#     namespace: "rabbitmq"
+#     chartVersion: "11.0.0"
+#     virtualHost: "/app1"  # Primary app virtual host
+#     # Additional virtual hosts (/app2, /app3) can be created via Management UI at http://localhost:15672
+#     nodePorts:
+#       amqp: 30672
+#       management: 31672
+#     resources:
+#       cpu: "500m"
+#       memory: "1Gi"
+#     persistence:
+#       enabled: false
+
+# Connection Information After Deployment
+# After successful deployment, RabbitMQ will be accessible at:
+# - AMQP Protocol: amqp://user:password@localhost:5672/
+# - Management UI: http://localhost:15672 (login with configured username/password)
+# - Default Virtual Host: / (or configured virtualHost)
+# - API Endpoint: http://localhost:15672/api/
+
+# Management UI Features
+# - Monitor queues, exchanges, and bindings
+# - Create and manage virtual hosts
+# - Manage users and permissions
+# - View message rates and statistics
+# - Inspect and publish messages
+# - Configure policies and parameters
+
+# Client Connection Examples
+# Python (pika):
+#   import pika
+#   connection = pika.BlockingConnection(
+#       pika.ConnectionParameters(host='localhost', port=5672, virtual_host='/')
+#   )
+# Go (amqp091-go):
+#   conn, err := amqp.Dial("amqp://user:password@localhost:5672/")
+# Node.js (amqplib):
+#   const connection = await amqp.connect('amqp://user:password@localhost:5672');
+# Java (RabbitMQ Java Client):
+#   ConnectionFactory factory = new ConnectionFactory();
+#   factory.setHost("localhost");
+#   factory.setPort(5672);
+#   factory.setVirtualHost("/");
+#   Connection connection = factory.newConnection();
+
+# Troubleshooting
+# If RabbitMQ is not accessible after installation:
+# 1. Check pod status: kubectl get pods -n rabbitmq
+# 2. Check pod logs: kubectl logs -n rabbitmq rabbitmq-0
+# 3. Check services: kubectl get svc -n rabbitmq
+# 4. Verify port mappings: kind get clusters && docker ps
+# 5. Test AMQP connection: telnet localhost 5672
+# 6. Test Management UI: curl http://localhost:15672/api/overview
+# 7. Check Kind cluster port mappings: docker inspect <kind-cluster-container>
+
+# Performance Tuning
+# For high-throughput scenarios, consider:
+# - Increasing CPU: "1" or "2"
+# - Increasing Memory: "2Gi" or "4Gi"
+# - Enabling persistence with larger size: "20Gi" or "50Gi"
+# - Configuring additional RabbitMQ parameters via Helm values
+
+# Security Best Practices
+# 1. Change default credentials (username/password)
+# 2. Use strong passwords (minimum 16 characters)
+# 3. Generate unique erlangCookie for each environment
+# 4. Limit access to Management UI (firewall rules, network policies)
+# 5. Use TLS for production deployments (configure via Helm values)
+# 6. Regularly rotate credentials
+# 7. Monitor failed authentication attempts
+# 8. Review and update user permissions periodically
+
+# Resource Planning
+# Typical resource requirements by workload:
+# - Light (< 1000 msg/sec): cpu: "250m", memory: "512Mi"
+# - Medium (1000-10000 msg/sec): cpu: "500m", memory: "1Gi"  [DEFAULT]
+# - Heavy (> 10000 msg/sec): cpu: "1", memory: "2Gi"
+# Note: Actual requirements depend on message size, queue depth, and durability settings
+
+# Persistence Considerations
+# - Enabled: Data survives pod restarts, slower startup (~90-120s)
+# - Disabled: Fast startup (~60s), data lost on pod termination
+# Use persistence for:
+#   - Integration testing requiring state preservation
+#   - Development scenarios needing message durability
+#   - Multi-day development workflows
+# Disable persistence for:
+#   - Fast iteration development
+#   - Ephemeral testing environments
+#   - CI/CD pipeline test runs

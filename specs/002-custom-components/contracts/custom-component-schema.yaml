@@ -1,0 +1,457 @@
+# Custom Component Configuration Schema
+# This schema defines the structure and validation rules for custom components in kindenv.yaml
+
+# REQUIRED FIELDS: Only 'name' and 'image' are required
+# OPTIONAL FIELDS: All other fields have defaults or are truly optional
+
+customComponents:
+  type: array
+  description: List of custom services to deploy in the Kind cluster
+  items:
+    type: object
+    required:
+      - name   # REQUIRED
+      - image  # REQUIRED
+    properties:
+      # Identity
+      name:
+        type: string
+        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+        minLength: 1
+        maxLength: 63
+        description: >
+          Unique DNS-compatible name for the component.
+          Must start and end with alphanumeric, can contain hyphens.
+        examples:
+          - my-spring-app
+          - api-service
+          - background-worker
+      
+      enabled:
+        type: boolean
+        default: true
+        description: Whether to deploy this component (allows temporary disabling)
+      
+      namespace:
+        type: string
+        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+        default: default
+        description: Kubernetes namespace for deployment
+      
+      # Container Specification
+      image:
+        type: string
+        pattern: '^([a-zA-Z0-9._-]+/)?[a-zA-Z0-9._-]+(:[a-zA-Z0-9._-]+)?$'
+        description: >
+          Container image in format: [registry/]repository[:tag]
+          If tag is omitted, 'latest' is assumed.
+        examples:
+          - nginx:1.21
+          - gcr.io/my-project/my-app:v1.2.3
+          - harbor.example.com/apps/api-service:develop
+      
+      command:
+        type: array
+        items:
+          type: string
+        description: Override the container's ENTRYPOINT
+        examples:
+          - ["/bin/sh"]
+          - ["java", "-jar", "app.jar"]
+      
+      args:
+        type: array
+        items:
+          type: string
+        description: Arguments to pass to the container command
+        examples:
+          - ["-c", "sleep 3600"]
+          - ["--config", "/etc/app/config.yaml"]
+      
+      # Environment Variables
+      env:
+        type: array
+        description: Environment variables for the container
+        items:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+              pattern: '^[A-Z_][A-Z0-9_]*$'
+              description: Environment variable name (uppercase, underscores allowed)
+              examples:
+                - APP_ENV
+                - DATABASE_URL
+                - API_KEY
+            
+            value:
+              type: string
+              description: Direct string value (mutually exclusive with valueFrom)
+              examples:
+                - "production"
+                - "jdbc:mysql://mysql:3306/mydb"
+            
+            valueFrom:
+              type: object
+              description: Reference to external value source (mutually exclusive with value)
+              properties:
+                secretKeyRef:
+                  type: object
+                  required:
+                    - name
+                    - key
+                  properties:
+                    name:
+                      type: string
+                      description: Name of the Kubernetes Secret
+                      examples:
+                        - mysql-secret
+                        - app-credentials
+                    
+                    key:
+                      type: string
+                      description: Key within the secret
+                      examples:
+                        - password
+                        - api-token
+          
+          # Mutual exclusivity validation (enforced in Go code)
+          oneOf:
+            - required: [value]
+            - required: [valueFrom]
+      
+      # Port Mappings
+      ports:
+        type: array
+        description: Port mappings for external access
+        items:
+          type: object
+          required:
+            - containerPort
+          properties:
+            containerPort:
+              type: integer
+              minimum: 1
+              maximum: 65535
+              description: Port exposed by the container
+              examples:
+                - 8080
+                - 3000
+                - 5432
+            
+            hostPort:
+              type: integer
+              minimum: 1024
+              maximum: 65535
+              description: >
+                Port on the host machine (for Kind port mapping).
+                If not specified, defaults to containerPort.
+              examples:
+                - 8080
+                - 9000
+            
+            protocol:
+              type: string
+              enum: [TCP, UDP]
+              default: TCP
+              description: Network protocol
+            
+            nodePort:
+              type: integer
+              minimum: 30000
+              maximum: 32767
+              description: >
+                NodePort for Kubernetes Service.
+                If not specified, automatically assigned from available range.
+              examples:
+                - 30080
+                - 31234
+            
+            serviceName:
+              type: string
+              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              description: >
+                Name for the Kubernetes Service.
+                If not specified, defaults to component name + "-service".
+      
+      # Resource Management
+      resources:
+        type: object
+        description: CPU and memory resource requirements
+        properties:
+          requests:
+            type: object
+            description: Guaranteed resources allocated to the container
+            properties:
+              cpu:
+                type: string
+                pattern: '^[0-9]+m?$'
+                description: >
+                  CPU request in cores or millicores.
+                  Examples: "500m" (500 millicores), "1" (1 core)
+                default: "100m"
+              
+              memory:
+                type: string
+                pattern: '^[0-9]+[KMGT]i$'
+                description: >
+                  Memory request in bytes with unit.
+                  Examples: "128Mi", "1Gi", "512M"
+                default: "128Mi"
+          
+          limits:
+            type: object
+            description: Maximum resources the container can consume
+            properties:
+              cpu:
+                type: string
+                pattern: '^[0-9]+m?$'
+                description: CPU limit in cores or millicores
+                default: "500m"
+              
+              memory:
+                type: string
+                pattern: '^[0-9]+[KMGT]i$'
+                description: Memory limit in bytes with unit
+                default: "512Mi"
+      
+      # Scaling
+      replicas:
+        type: integer
+        minimum: 1
+        default: 1
+        description: Number of pod replicas to run
+      
+      # Metadata
+      labels:
+        type: object
+        additionalProperties:
+          type: string
+          pattern: '^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'
+        description: >
+          Kubernetes labels for the deployment.
+          Standard labels (app, managed-by) are auto-generated.
+        examples:
+          - tier: backend
+            version: v1.2.3
+            environment: dev
+      
+      annotations:
+        type: object
+        additionalProperties:
+          type: string
+        description: Kubernetes annotations for the deployment
+        examples:
+          - description: "My custom application"
+            contact: "team@example.com"
+      
+      # Configuration Files
+      configFiles:
+        type: array
+        description: Custom configuration files to mount in the container
+        items:
+          type: object
+          required:
+            - name
+            - path
+            - contents
+          properties:
+            name:
+              type: string
+              pattern: '^[a-zA-Z0-9._-]+$'
+              description: >
+                Filename (no directory separators).
+                Used as the key in the ConfigMap.
+              examples:
+                - application.yaml
+                - logging.xml
+                - database.properties
+            
+            path:
+              type: string
+              pattern: '^/.*'
+              description: >
+                Absolute mount path in the container.
+                Must start with / and be unique per component.
+              examples:
+                - /config/application.yaml
+                - /etc/app/config.xml
+                - /app/config/database.properties
+            
+            contents:
+              type: string
+              minLength: 1
+              maxLength: 1048576  # 1MB limit
+              description: >
+                Inline file contents (YAML, JSON, XML, properties, etc.).
+                Formatting and special characters are preserved.
+                Total size of all config files must not exceed 1MB.
+              examples:
+                - |
+                  server:
+                    port: 8080
+                  database:
+                    host: mysql
+                - |
+                  <configuration>
+                    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+                      <encoder>
+                        <pattern>%d{HH:mm:ss.SSS} - %msg%n</pattern>
+                      </encoder>
+                    </appender>
+                  </configuration>
+      
+      # Health Checks (Future Enhancement)
+      readinessProbe:
+        type: object
+        description: Readiness probe configuration (future enhancement)
+        properties:
+          httpGet:
+            type: object
+            properties:
+              path:
+                type: string
+                default: /health
+              port:
+                type: integer
+              scheme:
+                type: string
+                enum: [HTTP, HTTPS]
+                default: HTTP
+          
+          initialDelaySeconds:
+            type: integer
+            minimum: 0
+            default: 5
+          
+          periodSeconds:
+            type: integer
+            minimum: 1
+            default: 10
+      
+      livenessProbe:
+        type: object
+        description: Liveness probe configuration (future enhancement)
+        properties:
+          httpGet:
+            type: object
+            properties:
+              path:
+                type: string
+                default: /health
+              port:
+                type: integer
+          
+          initialDelaySeconds:
+            type: integer
+            minimum: 0
+            default: 15
+          
+          periodSeconds:
+            type: integer
+            minimum: 1
+            default: 10
+
+# Example Complete Configuration
+examples:
+  - name: complete-example
+    description: Full-featured custom component with all options
+    config:
+      customComponents:
+        - name: my-spring-app
+          enabled: true
+          namespace: default
+          image: registry.example.com/my-app:v1.2.3
+          replicas: 2
+          command: ["java"]
+          args: ["-jar", "/app/application.jar", "--spring.profiles.active=local"]
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "local"
+            - name: SERVER_PORT
+              value: "8080"
+            - name: DB_HOST
+              value: "mysql.mysql.svc.cluster.local"
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: password
+          ports:
+            - containerPort: 8080
+              hostPort: 8080
+              protocol: TCP
+              nodePort: 30800
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          labels:
+            tier: backend
+            version: v1.2.3
+          annotations:
+            description: "Spring Boot API service"
+          configFiles:
+            - name: application.yaml
+              path: /config/application.yaml
+              contents: |
+                server:
+                  port: 8080
+                spring:
+                  datasource:
+                    url: jdbc:mysql://mysql:3306/mydb
+                logging:
+                  level:
+                    root: INFO
+            - name: logback.xml
+              path: /config/logback.xml
+              contents: |
+                <configuration>
+                  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+                    <encoder>
+                      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+                    </encoder>
+                  </appender>
+                  <root level="INFO">
+                    <appender-ref ref="STDOUT" />
+                  </root>
+                </configuration>
+  
+  - name: minimal-example
+    description: Minimal custom component with only required fields
+    config:
+      customComponents:
+        - name: nginx-test
+          image: nginx:latest
+  
+  - name: multiple-components
+    description: Multiple custom components with dependencies
+    config:
+      customComponents:
+        - name: api-service
+          image: myregistry/api:v2.0
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://postgres:5432/mydb"
+          ports:
+            - containerPort: 3000
+              hostPort: 3000
+        
+        - name: worker-service
+          image: myregistry/worker:v2.0
+          replicas: 3
+          env:
+            - name: QUEUE_URL
+              value: "redis://redis:6379"
+            - name: API_URL
+              value: "http://api-service:3000"

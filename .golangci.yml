@@ -30,7 +30,7 @@ linters-settings:
     
   goimports:
     # Put imports beginning with prefix after 3rd-party packages.
-    local-prefixes: github.com/lirtsman/devhelper-cli
+    local-prefixes: github.com/ShieldFC-RD/devhelper-cli
     
   govet:
     # Report about shadowed variables.

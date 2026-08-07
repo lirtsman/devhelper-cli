@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/lirtsman/devhelper-cli/internal/test"
+	"github.com/ShieldFC-RD/devhelper-cli/internal/test"
 	"github.com/stretchr/testify/assert"
 )
 

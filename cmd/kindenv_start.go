@@ -1,0 +1,2805 @@
+/*
+Copyright © 2023 Shield
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	// Import necessary packages
+	"bufio"
+	"time"
+
+	"github.com/ShieldFC-RD/devhelper-cli/internal/kindenv"
+	"github.com/fatih/color"
+	"github.com/spf13/cobra"
+)
+
+// Define the setupECRCreds function at the file level, outside of any function
+
+// setupECRCreds creates ECR pull secrets in a given namespace
+func setupECRCreds(namespace, registry, password string) error {
+	fmt.Printf("Creating ECR pull secret in the %s namespace\n", namespace)
+
+	// Ensure namespace exists
+	namespaceYaml, err := executeCommand("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+
+	// Apply the namespace using stdin
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(namespaceYaml)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply namespace: %w", err)
+	}
+
+	// Create ECR credentials secret
+	secretYaml, err := executeCommand("kubectl", "create", "secret", "docker-registry",
+		"ecr-credentials",
+		fmt.Sprintf("--docker-server=%s", registry),
+		"--docker-username=AWS",
+		fmt.Sprintf("--docker-password=%s", password),
+		fmt.Sprintf("--namespace=%s", namespace),
+		"--dry-run=client", "-o", "yaml")
+	if err != nil {
+		return fmt.Errorf("failed to create secret: %w", err)
+	}
+
+	// Apply the secret using stdin
+	cmd = exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(secretYaml)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply secret: %w", err)
+	}
+
+	green := color.New(color.FgGreen).SprintFunc()
+	fmt.Printf("%s ECR pull secret created in the %s namespace\n", green("✅"), namespace)
+	return nil
+}
+
+// executeCommand runs a shell command and returns the combined output and error
+func executeCommand(name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("command failed: %v\nOutput: %s\nError: %s", err, stdout.String(), stderr.String())
+	}
+	return stdout.String(), nil
+}
+
+// commandExists checks if a command exists in the system
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+// waitForDeployment waits for a deployment to be available
+func waitForDeployment(namespace, deployment string, timeout int) error {
+	fmt.Printf("Waiting for deployment %s in namespace %s to be ready...\n", deployment, namespace)
+	_, err := executeCommand("kubectl", "wait", "--for=condition=Available",
+		fmt.Sprintf("--timeout=%dm", timeout),
+		fmt.Sprintf("deployment/%s", deployment),
+		"-n", namespace)
+	return err
+}
+
+// kindenvStartCmd represents the kindenv start command
+var kindenvStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start a Kind-based development environment",
+	Long: `Start a Kind-based development environment for Shield applications.
+
+This command creates a Kind cluster if it doesn't exist and installs required components:
+- Temporal
+- Redis
+- Dapr
+- OpenSearch
+- OpenSearch Dashboards
+- Temporal Worker Operator
+
+By default, the command will use the cluster name from kindenv.yaml.
+You can override this with the --name flag.
+
+When AWS ECR is enabled, you can specify an AWS profile in the config file (images.aws.profile)
+or override it with the --aws-profile flag.
+
+It also verifies and switches to the correct Kubernetes context if needed, and creates
+required namespaces for component installation.
+
+Note: When starting the environment, the command ensures you're using the correct Kubernetes
+context for the kind cluster. If you're using a different context, it will prompt you to switch.
+Use --force-context to automatically switch without prompting.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Create colored output helpers
+		green := color.New(color.FgGreen).SprintFunc()
+		yellow := color.New(color.FgYellow).SprintFunc()
+		red := color.New(color.FgRed).SprintFunc()
+
+		// Get flags
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		configPath, _ := cmd.Flags().GetString("config")
+		clusterName, _ := cmd.Flags().GetString("name")
+		useAwsEcr, _ := cmd.Flags().GetBool("use-aws-ecr")
+		skipTemporal, _ := cmd.Flags().GetBool("skip-temporal")
+		skipDapr, _ := cmd.Flags().GetBool("skip-dapr")
+		skipRedis, _ := cmd.Flags().GetBool("skip-redis")
+		skipOpenSearch, _ := cmd.Flags().GetBool("skip-opensearch")
+		skipOpenSearchDashboards, _ := cmd.Flags().GetBool("skip-opensearch-dashboards")
+		skipOpenSearchIndexManagement, _ := cmd.Flags().GetBool("skip-opensearch-index-management")
+		skipTemporalWorkerOperator, _ := cmd.Flags().GetBool("skip-temporal-worker-operator")
+		skipIndicesOperator, _ := cmd.Flags().GetBool("skip-indices-operator")
+		skipMetricsServer, _ := cmd.Flags().GetBool("skip-metrics-server")
+		skipKeda, _ := cmd.Flags().GetBool("skip-keda")
+		skipMonitoring, _ := cmd.Flags().GetBool("skip-monitoring")
+		awsProfile, _ := cmd.Flags().GetString("aws-profile")
+		forceContext, _ := cmd.Flags().GetBool("force-context")
+
+		// Load config file
+		fmt.Println(green("Setting up Kind-based development environment..."))
+
+		// Load config
+		config, err := kindenv.LoadConfig(configPath)
+		if err != nil {
+			fmt.Printf("%s Error loading config: %v\n", red("❌"), err)
+			os.Exit(1)
+		}
+
+		// Override cluster name only if explicitly provided with --name flag
+		if cmd.Flags().Changed("name") {
+			config.Cluster.Name = clusterName
+			fmt.Printf("%s Using specified cluster name: %s\n", yellow("⚙️"), clusterName)
+		} else {
+			fmt.Printf("%s Using cluster name from config: %s\n", yellow("📄"), config.Cluster.Name)
+		}
+
+		// Override config with command line args
+		if useAwsEcr {
+			config.Images.UseAwsEcr = true
+		}
+
+		// Set component enabled/disabled based on skip flags
+		// Override config values with flags
+		if skipTemporal {
+			config.Components.Temporal.Enabled = false
+		}
+		if skipDapr {
+			config.Components.Dapr.Enabled = false
+		}
+		if skipRedis {
+			config.Components.Redis.Enabled = false
+		}
+		if skipOpenSearch {
+			config.Components.OpenSearch.Enabled = false
+		}
+		if skipOpenSearchDashboards {
+			config.Components.OpenSearchDashboards.Enabled = false
+		}
+		if skipOpenSearchIndexManagement {
+			config.Components.OpenSearch.IndexManagement.Enabled = false
+		}
+		if skipTemporalWorkerOperator {
+			config.Components.TemporalWorkerOperator.Enabled = false
+		}
+		if skipIndicesOperator {
+			config.Components.IndicesOperator.Enabled = false
+		}
+		if skipMetricsServer {
+			config.Components.MetricsServer.Enabled = false
+		}
+		if skipKeda {
+			config.Components.Keda.Enabled = false
+		}
+		if skipMonitoring {
+			config.Components.Monitoring.Enabled = false
+		}
+
+		// Show warning if deprecated operator-namespace flag is used
+		if cmd.Flags().Changed("operator-namespace") {
+			fmt.Printf("%s The --operator-namespace flag is deprecated. The operator will be installed in the default namespace.\n", yellow("⚠️"))
+		}
+
+		// Print component configuration
+		fmt.Println(green("Component configuration:"))
+		fmt.Printf("- Temporal: %v\n", config.Components.Temporal.Enabled)
+		fmt.Printf("- Redis: %v\n", config.Components.Redis.Enabled)
+		fmt.Printf("- Dapr: %v\n", config.Components.Dapr.Enabled)
+		fmt.Printf("- OpenSearch: %v\n", config.Components.OpenSearch.Enabled)
+		fmt.Printf("  - Index Management: %v\n", config.Components.OpenSearch.IndexManagement.Enabled)
+		fmt.Printf("- OpenSearch Dashboards: %v\n", config.Components.OpenSearchDashboards.Enabled)
+		fmt.Printf("- Temporal Worker Operator: %v\n", config.Components.TemporalWorkerOperator.Enabled)
+		if config.Components.TemporalWorkerOperator.Enabled {
+			fmt.Printf("  - Temporal namespace: '%s'\n", config.Components.TemporalWorkerOperator.TemporalNamespace)
+			fmt.Printf("    (To modify namespace, edit temporalNamespace in kindenv.yaml)\n")
+		}
+		fmt.Printf("- Indices Operator: %v\n", config.Components.IndicesOperator.Enabled)
+		fmt.Printf("- Metrics Server: %v\n", config.Components.MetricsServer.Enabled)
+		fmt.Printf("- KEDA: %v\n", config.Components.Keda.Enabled)
+		if skipKeda {
+			fmt.Printf("  (skipped via --skip-keda flag)\n")
+		}
+		fmt.Printf("- Monitoring: %v\n", config.Components.Monitoring.Enabled)
+		if skipMonitoring {
+			fmt.Printf("  (skipped via --skip-monitoring flag)\n")
+		}
+		fmt.Printf("- MySQL: %v\n", config.Components.MySQL.Enabled)
+		fmt.Printf("- RabbitMQ: %v\n", config.Components.RabbitMQ.Enabled)
+		if config.Images.UseHarbor {
+			fmt.Printf("- Harbor Registry: %v (%s) - for third-party components\n", config.Images.UseHarbor, config.Images.HarborRegistry)
+		}
+		if config.Images.UseAwsEcr {
+			fmt.Printf("- AWS ECR: %v - for custom services\n", config.Images.UseAwsEcr)
+		}
+
+		if verbose {
+			fmt.Println(yellow("Verbose mode enabled"))
+		}
+
+		// Check for required tools
+		requiredTools := []string{"kind", "kubectl", "helm"}
+		for _, tool := range requiredTools {
+			if !commandExists(tool) {
+				fmt.Printf("%s Error: %s is not installed. Please install it first.\n", red("❌"), tool)
+				os.Exit(1)
+			}
+		}
+
+		// Detect container engine
+		containerEngine := ""
+		if commandExists("podman") {
+			containerEngine = "podman"
+			fmt.Println(green("Using podman as container engine"))
+		} else if commandExists("docker") {
+			containerEngine = "docker"
+			fmt.Println(green("Using docker as container engine"))
+		} else {
+			fmt.Printf("%s Error: Neither docker nor podman found. Please install one of them.\n", red("❌"))
+			os.Exit(1)
+		}
+
+		// Create a Kind cluster if it doesn't exist
+		clusterExists := false
+		clusterOutput, err := executeCommand("kind", "get", "clusters")
+		if err == nil && strings.Contains(clusterOutput, config.Cluster.Name) {
+			clusterExists = true
+			fmt.Printf("%s Kind cluster %s already exists, reusing it\n", yellow("🔄"), config.Cluster.Name)
+
+			// Warn about port mappings: Kind port mappings cannot be changed after cluster creation
+			if len(config.Cluster.MapPorts) > 0 {
+				fmt.Printf("%s Note: Port mappings are only applied during cluster creation.\n", yellow("ℹ️"))
+				fmt.Printf("%s If you've added or changed port mappings, you may need to recreate the cluster:\n", yellow("ℹ️"))
+				fmt.Printf("   %s\n", yellow("devhelper-cli kindenv stop && devhelper-cli kindenv start"))
+
+				// Check if there are custom components with ports that might be affected
+				hasCustomComponentPorts := false
+				for _, component := range config.CustomComponents {
+					if len(component.Ports) > 0 {
+						hasCustomComponentPorts = true
+						break
+					}
+				}
+				if hasCustomComponentPorts {
+					fmt.Printf("%s Custom component NodePorts will work, but Kind port mappings (for accessing via localhost) require cluster recreation.\n", yellow("ℹ️"))
+				}
+
+				if verbose {
+					fmt.Println(yellow("Configured port mappings:"))
+					for _, portMap := range config.Cluster.MapPorts {
+						var containerPortStr string
+						switch cp := portMap.ContainerPort.(type) {
+						case int:
+							containerPortStr = strconv.Itoa(cp)
+						case float64:
+							containerPortStr = strconv.Itoa(int(cp))
+						case string:
+							containerPortStr = cp
+						default:
+							containerPortStr = fmt.Sprintf("%v", cp)
+						}
+						fmt.Printf("  - Container: %s → Host: %d (%s)\n",
+							containerPortStr, portMap.HostPort, portMap.Protocol)
+					}
+				}
+			}
+		}
+
+		if !clusterExists && config.Cluster.CreateIfNotExists {
+			fmt.Printf("%s Creating Kind cluster: %s\n", yellow("⚙️"), config.Cluster.Name)
+
+			// Create Kind cluster configuration
+			kindConfig := "kind: Cluster\napiVersion: kind.x-k8s.io/v1alpha4\nnodes:\n- role: control-plane\n  kubeadmConfigPatches:\n  - |\n    kind: InitConfiguration\n    nodeRegistration:\n      kubeletExtraArgs:\n        node-labels: \"ingress-ready=true\"\n  extraPortMappings:\n"
+
+			// Track mapped ports to avoid duplicates
+			mappedPorts := make(map[string]bool)
+
+			// Helper function to add port mapping and track it to avoid duplicates
+			addPortMapping := func(containerPort, hostPort int, protocol string) {
+				portKey := fmt.Sprintf("%d/%s", containerPort, protocol)
+				if _, exists := mappedPorts[portKey]; !exists {
+					kindConfig += fmt.Sprintf("  - containerPort: %d\n    hostPort: %d\n    protocol: %s\n",
+						containerPort, hostPort, protocol)
+					mappedPorts[portKey] = true
+					if verbose {
+						fmt.Printf("%s Added port mapping: container %d -> host %d (%s)\n",
+							yellow("📡"), containerPort, hostPort, protocol)
+					}
+				} else if verbose {
+					fmt.Printf("%s Skipping duplicate port mapping: container port %d/%s\n",
+						yellow("ℹ️"), containerPort, protocol)
+				}
+			}
+
+			// Process port mappings from config.Cluster.MapPorts
+			if verbose {
+				fmt.Println(yellow("Processing port mappings from configuration"))
+			}
+
+			for _, portMap := range config.Cluster.MapPorts {
+				// Convert containerPort to int (it could be an interface{})
+				var containerPort int
+				switch cp := portMap.ContainerPort.(type) {
+				case int:
+					containerPort = cp
+				case float64:
+					containerPort = int(cp)
+				case string:
+					// If it's a string, it might be a variable reference or a numeric string
+					// Try to parse as a number first
+					if val, err := strconv.Atoi(cp); err == nil {
+						containerPort = val
+					} else {
+						// Skip this port mapping if containerPort is not a valid number
+						fmt.Printf("%s Skipping invalid containerPort: %v (cannot be converted to a number)\n", yellow("⚠️"), cp)
+						continue
+					}
+				default:
+					// Skip this port mapping if containerPort is not a valid number or convertible type
+					fmt.Printf("%s Skipping invalid containerPort: %v (unsupported type)\n", yellow("⚠️"), portMap.ContainerPort)
+					continue
+				}
+
+				// Add the port mapping
+				addPortMapping(containerPort, portMap.HostPort, portMap.Protocol)
+			}
+
+			// Make sure we don't miss any essential component port mappings
+			if verbose {
+				fmt.Println(yellow("Verifying essential component port mappings"))
+			}
+
+			// Ensure Temporal ports are mapped if enabled
+			if config.Components.Temporal.Enabled {
+				// Check if Temporal Web UI port is already mapped
+				webPortKey := fmt.Sprintf("%d/TCP", config.Components.Temporal.NodePorts.Web)
+				if !mappedPorts[webPortKey] {
+					fmt.Printf("%s Adding missing Temporal Web UI port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.Temporal.NodePorts.Web, 8080, "TCP")
+				}
+
+				// Check if Temporal Frontend port is already mapped
+				frontendPortKey := fmt.Sprintf("%d/TCP", config.Components.Temporal.NodePorts.Frontend)
+				if !mappedPorts[frontendPortKey] {
+					fmt.Printf("%s Adding missing Temporal Frontend port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.Temporal.NodePorts.Frontend, 7233, "TCP")
+				}
+			}
+
+			// Ensure Redis port is mapped if enabled
+			if config.Components.Redis.Enabled {
+				redisPortKey := fmt.Sprintf("%d/TCP", config.Components.Redis.NodePorts.Redis)
+				if !mappedPorts[redisPortKey] {
+					fmt.Printf("%s Adding missing Redis port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.Redis.NodePorts.Redis, 6379, "TCP")
+				}
+			}
+
+			// Ensure MySQL port is mapped if enabled
+			if config.Components.MySQL.Enabled {
+				mysqlPortKey := fmt.Sprintf("%d/TCP", config.Components.MySQL.NodePorts.MySQL)
+				if !mappedPorts[mysqlPortKey] {
+					fmt.Printf("%s Adding missing MySQL port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.MySQL.NodePorts.MySQL, 3306, "TCP")
+				}
+			}
+
+			// Ensure RabbitMQ ports are mapped if enabled
+			if config.Components.RabbitMQ.Enabled {
+				amqpPortKey := fmt.Sprintf("%d/TCP", config.Components.RabbitMQ.NodePorts.AMQP)
+				if !mappedPorts[amqpPortKey] {
+					fmt.Printf("%s Adding missing RabbitMQ AMQP port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.RabbitMQ.NodePorts.AMQP, 5672, "TCP")
+				}
+				mgmtPortKey := fmt.Sprintf("%d/TCP", config.Components.RabbitMQ.NodePorts.Management)
+				if !mappedPorts[mgmtPortKey] {
+					fmt.Printf("%s Adding missing RabbitMQ Management port mapping\n", yellow("➕"))
+					addPortMapping(config.Components.RabbitMQ.NodePorts.Management, 15672, "TCP")
+				}
+			}
+
+			if verbose {
+				fmt.Println(yellow("Port mapping configuration complete"))
+			}
+
+			// Create the cluster using the configuration
+			kindConfigFile, err := os.CreateTemp("", "kind-config-*.yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating temporary file for Kind config: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+			defer os.Remove(kindConfigFile.Name())
+
+			_, err = kindConfigFile.WriteString(kindConfig)
+			if err != nil {
+				fmt.Printf("%s Error writing Kind config: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+			kindConfigFile.Close()
+
+			// Handle kind cluster creation differently based on container engine
+			if containerEngine == "podman" {
+				fmt.Println(yellow("Using podman provider for Kind..."))
+
+				// Create the command with proper environment variables
+				cmd := exec.Command("kind", "create", "cluster", "--name", config.Cluster.Name, "--config", kindConfigFile.Name())
+
+				// Set the environment properly for podman
+				env := os.Environ()
+				cmd.Env = append(env, "KIND_EXPERIMENTAL_PROVIDER=podman")
+
+				// Capture output
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
+
+				// Run the command
+				fmt.Println(yellow("Running kind create cluster with podman provider..."))
+				err := cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating Kind cluster: %v\n", red("❌"), err)
+					fmt.Println("Output:", stdout.String())
+					fmt.Println("Error:", stderr.String())
+					os.Exit(1)
+				}
+
+				fmt.Println(stdout.String())
+			} else {
+				// For docker, use the standard executeCommand function
+				_, err = executeCommand("kind", "create", "cluster", "--name", config.Cluster.Name, "--config", kindConfigFile.Name())
+				if err != nil {
+					fmt.Printf("%s Error creating Kind cluster: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			fmt.Printf("%s Kind cluster created successfully\n", green("✅"))
+		} else if !clusterExists && !config.Cluster.CreateIfNotExists {
+			fmt.Printf("%s Error: Cluster %s does not exist and createIfNotExists is false\n", red("❌"), config.Cluster.Name)
+			os.Exit(1)
+		}
+
+		// Check current kubectl context before proceeding
+		expectedContext := fmt.Sprintf("kind-%s", config.Cluster.Name)
+		currentContextCmd := exec.Command("kubectl", "config", "current-context")
+		currentContextOutput, err := currentContextCmd.CombinedOutput()
+		currentContext := strings.TrimSpace(string(currentContextOutput))
+
+		if err == nil && currentContext != expectedContext {
+			fmt.Printf("%s Current kubectl context is: %s\n", yellow("⚠️"), currentContext)
+			fmt.Printf("%s Expected kubectl context for this environment is: %s\n", yellow("ℹ️"), expectedContext)
+
+			shouldSwitch := forceContext
+			if !forceContext {
+				fmt.Print("Switch to the correct context? (y/n): ")
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.TrimSpace(response)
+
+				shouldSwitch = strings.ToLower(response) == "y" || strings.ToLower(response) == "yes"
+				if !shouldSwitch {
+					fmt.Println(yellow("Context switch declined. This may cause issues with deployment."))
+					fmt.Println(yellow("You can manually switch context with:"))
+					fmt.Printf("  kubectl config use-context %s\n", expectedContext)
+					fmt.Println(yellow("Or run this command with --force-context to switch automatically."))
+					os.Exit(1)
+				}
+			} else {
+				fmt.Printf("%s Automatically switching kubectl context from %s to %s\n",
+					yellow("⚙️"), currentContext, expectedContext)
+			}
+
+			// Explicitly switch context
+			switchCmd := exec.Command("kubectl", "config", "use-context", expectedContext)
+			switchOutput, err := switchCmd.CombinedOutput()
+			if err != nil {
+				fmt.Printf("%s Error switching kubectl context: %v\n", red("❌"), err)
+				if len(switchOutput) > 0 {
+					fmt.Println(string(switchOutput))
+				}
+				os.Exit(1)
+			}
+		}
+
+		// Verify we're using the right context
+		_, err = executeCommand("kubectl", "cluster-info", "--context", expectedContext)
+		if err != nil {
+			fmt.Printf("%s Error connecting to cluster with context %s: %v\n", red("❌"), expectedContext, err)
+			os.Exit(1)
+		}
+		fmt.Printf("%s Using kubectl context: %s\n", green("✅"), expectedContext)
+
+		// Setup AWS ECR if needed (for custom services, Harbor is used for third-party components)
+		var ecrPassword string
+		var ecrRegistry string
+		if config.Images.UseAwsEcr {
+			fmt.Println(yellow("Setting up AWS ECR credentials (for custom services)"))
+
+			if !commandExists("aws") {
+				fmt.Printf("%s Error: AWS CLI is not installed. Please install it first.\n", red("❌"))
+				os.Exit(1)
+			}
+
+			// Determine AWS profile to use - command line flag takes precedence over config file
+			awsProfileToUse := config.Images.AWS.Profile
+			if cmd.Flags().Changed("aws-profile") {
+				awsProfileToUse = awsProfile
+				fmt.Printf("%s Overriding AWS profile from command line: %s\n", yellow("🔑"), awsProfile)
+			} else if awsProfileToUse != "" {
+				fmt.Printf("%s Using AWS profile from config: %s\n", yellow("🔑"), awsProfileToUse)
+			} else {
+				// No profile provided in config or command line, prompt the user
+				fmt.Printf("%s AWS ECR is enabled but no AWS profile specified\n", yellow("⚠️"))
+				fmt.Println(yellow("You can:"))
+				fmt.Println("  1. Add a profile field to the images.aws section in kindenv.yaml:")
+				fmt.Println("     images:")
+				fmt.Println("       aws:")
+				fmt.Println("         profile: \"your-profile-name\"")
+				fmt.Println("  2. Run this command with --aws-profile flag:")
+				fmt.Println("     kindenv start --aws-profile your-profile-name")
+				fmt.Println("  3. Ensure your default AWS credentials are configured and continue")
+				fmt.Println("")
+
+				// Ask if user wants to continue with default credentials
+				fmt.Print("Do you want to continue with default AWS credentials? (y/n): ")
+				var response string
+				fmt.Scanln(&response)
+				if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+					fmt.Println(yellow("Exiting as requested."))
+					os.Exit(0)
+				}
+				fmt.Println(yellow("Continuing with default AWS credentials..."))
+			}
+
+			// Use AWS profile if specified
+			awsArgs := []string{"sts", "get-caller-identity", "--query", "Account", "--output", "text"}
+			if awsProfileToUse != "" {
+				awsArgs = append([]string{"--profile", awsProfileToUse}, awsArgs...)
+			}
+
+			// Get AWS account ID and ECR credentials
+			accountOutput, err := executeCommand("aws", awsArgs...)
+			if err != nil {
+				fmt.Printf("%s Error getting AWS account ID: %v\n", red("❌"), err)
+				fmt.Println(yellow("Authentication failed with AWS CLI."))
+
+				// Check if this is an SSO profile
+				isSSOProfile := false
+				if awsProfileToUse != "" {
+					// Try to check if profile uses SSO (don't fail if command errors)
+					profileCheckArgs := []string{"configure", "get", "sso_start_url", "--profile", awsProfileToUse}
+					checkCmd := exec.Command("aws", profileCheckArgs...)
+					var stdout bytes.Buffer
+					checkCmd.Stdout = &stdout
+					checkCmd.Stderr = &bytes.Buffer{} // Ignore stderr
+					if checkCmd.Run() == nil {
+						ssoCheckOutput := strings.TrimSpace(stdout.String())
+						if ssoCheckOutput != "" {
+							isSSOProfile = true
+						}
+					}
+				}
+
+				if awsProfileToUse != "" {
+					if isSSOProfile {
+						fmt.Printf(yellow("The AWS SSO profile '%s' has expired tokens.\n"), awsProfileToUse)
+						fmt.Printf(yellow("Please run: aws sso login --profile %s\n\n"), awsProfileToUse)
+					} else {
+						fmt.Printf(yellow("The profile '%s' may not be correctly configured or has expired tokens.\n"), awsProfileToUse)
+					}
+				} else {
+					fmt.Println(yellow("No AWS profile was specified, and default credentials failed."))
+				}
+
+				fmt.Println(yellow("You can resolve this by:"))
+				if isSSOProfile && awsProfileToUse != "" {
+					fmt.Printf("  1. Run 'aws sso login --profile %s' to refresh your SSO session\n", awsProfileToUse)
+					fmt.Println("  2. Then retry this command")
+				} else {
+					fmt.Println("  1. Run 'aws configure' to set up your credentials")
+					if awsProfileToUse != "" {
+						fmt.Printf("  2. Run 'aws sso login --profile %s' if using AWS SSO\n", awsProfileToUse)
+					} else {
+						fmt.Println("  2. Run 'aws sso login' if using AWS SSO")
+					}
+					fmt.Println("  3. Set up environment variables AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
+					fmt.Println("  4. Use --aws-profile flag to specify a valid profile")
+					fmt.Println("  5. Add a valid profile in your kindenv.yaml configuration:")
+					fmt.Println("     images:")
+					fmt.Println("       aws:")
+					fmt.Println("         profile: \"your-profile-name\"")
+				}
+
+				// List available profiles to help the user
+				fmt.Println("")
+				fmt.Println(yellow("Available AWS profiles:"))
+				profileOutput, profileErr := executeCommand("aws", "configure", "list-profiles")
+				if profileErr == nil && profileOutput != "" {
+					profiles := strings.Split(strings.TrimSpace(profileOutput), "\n")
+					for _, profile := range profiles {
+						fmt.Printf("  - %s\n", profile)
+					}
+				} else {
+					fmt.Println("  No profiles found or unable to list profiles")
+				}
+
+				os.Exit(1)
+			}
+			accountID := strings.TrimSpace(accountOutput)
+
+			// Use provided region or default
+			awsRegion := config.Images.AWS.Region
+			if awsRegion == "" {
+				awsRegion = "eu-west-1"
+			}
+
+			// Set or validate ECR registry
+			if config.Images.AWS.EcrRegistry == "" {
+				config.Images.AWS.EcrRegistry = fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com", accountID, awsRegion)
+			}
+
+			// Set ecrRegistry to the config value
+			ecrRegistry = config.Images.AWS.EcrRegistry
+
+			// Get ecrPassword from AWS with profile if specified
+			ecrPasswordArgs := []string{"ecr", "get-login-password", "--region", awsRegion}
+			if awsProfileToUse != "" {
+				ecrPasswordArgs = append([]string{"--profile", awsProfileToUse}, ecrPasswordArgs...)
+			}
+
+			ecrPasswordOutput, err := executeCommand("aws", ecrPasswordArgs...)
+			if err != nil {
+				fmt.Printf("%s Error getting ECR credentials: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+			ecrPassword = strings.TrimSpace(ecrPasswordOutput)
+
+			// Create ECR credentials in default namespace
+			err = setupECRCreds("default", ecrRegistry, ecrPassword)
+			if err != nil {
+				fmt.Printf("%s Error setting up ECR credentials: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s AWS ECR credentials configured\n", green("✅"))
+		}
+
+		// Install Metrics Server
+		if config.Components.MetricsServer.Enabled {
+			fmt.Println(yellow("Installing Metrics Server"))
+
+			// Define Helm arguments
+			helmArgs := []string{
+				"upgrade",
+				"--install",
+				"metrics-server", "metrics-server/metrics-server",
+				"--namespace", "kube-system",
+				"--version", config.Components.MetricsServer.ChartVersion,
+				"--set", "args={--kubelet-insecure-tls}",
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Metrics Server: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Output:")
+					fmt.Println(helmOutput)
+				}
+				fmt.Println(yellow("Continuing despite Metrics Server installation failure..."))
+			} else {
+				fmt.Printf("%s Metrics Server installed successfully\n", green("✅"))
+
+				// Wait for Metrics Server to be ready
+				fmt.Println(yellow("Waiting for Metrics Server to be ready..."))
+
+				// Wait a moment for resources to be created
+				time.Sleep(5 * time.Second)
+
+				err = waitForDeployment("kube-system", "metrics-server", 2)
+				if err != nil {
+					fmt.Printf("%s Error waiting for Metrics Server: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite Metrics Server not being ready..."))
+				} else {
+					fmt.Printf("%s Metrics Server is ready\n", green("✅"))
+					fmt.Println(yellow("You can now use these commands to view resource usage:"))
+					fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
+					fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
+					fmt.Println(yellow("Note: It may take a few minutes for metrics to be available after installation"))
+				}
+			}
+		}
+
+		// Install KEDA
+		if config.Components.Keda.Enabled {
+			fmt.Println(yellow("Installing KEDA"))
+
+			// Create namespace
+			fmt.Printf("Creating namespace: %s\n", config.Components.Keda.Namespace)
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.Keda.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating KEDA namespace: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite KEDA namespace creation failure..."))
+			} else {
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(namespaceYaml)
+				if err := cmd.Run(); err != nil {
+					fmt.Printf("%s Error applying KEDA namespace: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite KEDA namespace apply failure..."))
+				} else {
+					fmt.Printf("%s Namespace %s created\n", green("✅"), config.Components.Keda.Namespace)
+				}
+			}
+
+			// Define Helm arguments
+			helmArgs := []string{
+				"upgrade",
+				"--install",
+				"keda", "kedacore/keda",
+				"--namespace", config.Components.Keda.Namespace,
+				"--version", config.Components.Keda.ChartVersion,
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+				fmt.Printf("Installing KEDA chart version: %s\n", config.Components.Keda.ChartVersion)
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing KEDA: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Output:")
+					fmt.Println(helmOutput)
+
+					// Check if error is related to chart version
+					if strings.Contains(helmOutput, "chart version") || strings.Contains(helmOutput, "not found") || strings.Contains(helmOutput, "version") {
+						fmt.Println(yellow("💡 Troubleshooting tips:"))
+						fmt.Printf("  - Verify chart version %s exists: helm search repo kedacore/keda --versions\n", config.Components.Keda.ChartVersion)
+						fmt.Println("  - Update Helm repositories: helm repo update")
+						fmt.Println("  - Check available versions: https://github.com/kedacore/charts/releases")
+						fmt.Println("  - Try a different version by updating chartVersion in kindenv.yaml")
+					}
+				}
+				fmt.Println(yellow("Continuing despite KEDA installation failure..."))
+			} else {
+				fmt.Printf("%s KEDA installed successfully\n", green("✅"))
+
+				// Wait for KEDA operator to be ready
+				fmt.Println(yellow("Waiting for KEDA operator to be ready..."))
+
+				// Wait a moment for resources to be created
+				time.Sleep(5 * time.Second)
+
+				err = waitForDeployment(config.Components.Keda.Namespace, "keda-operator", 2)
+				if err != nil {
+					fmt.Printf("%s Error waiting for KEDA operator: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite KEDA operator not being ready..."))
+				} else {
+					fmt.Printf("%s KEDA operator is ready\n", green("✅"))
+					fmt.Println(yellow("You can now create ScaledObject and ScaledJob resources for event-driven autoscaling:"))
+					fmt.Println("  kubectl apply -f <your-scaledobject.yaml>")
+					fmt.Println("  kubectl get scaledobjects -A    - Shows all ScaledObject resources")
+					fmt.Println(yellow("Note: KEDA supports 50+ event sources including RabbitMQ, Kafka, Prometheus, and more"))
+				}
+			}
+		}
+
+		// Install Monitoring Stack (kube-prometheus-stack)
+		if config.Components.Monitoring.Enabled {
+			fmt.Println(yellow("Installing Monitoring Stack (kube-prometheus-stack)"))
+
+			// Create namespace idempotently
+			fmt.Printf("Creating namespace: %s\n", config.Components.Monitoring.Namespace)
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.Monitoring.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating monitoring namespace: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite monitoring namespace creation failure..."))
+			} else {
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(namespaceYaml)
+				if err := cmd.Run(); err != nil {
+					fmt.Printf("%s Error applying monitoring namespace: %v\n", red("❌"), err)
+					fmt.Println(yellow("Continuing despite monitoring namespace apply failure..."))
+				} else {
+					fmt.Printf("%s Namespace %s created\n", green("✅"), config.Components.Monitoring.Namespace)
+				}
+			}
+
+			// Build Helm args
+			grafanaNodePort := strconv.Itoa(config.Components.Monitoring.Grafana.NodePort)
+			helmArgs := []string{
+				"upgrade", "--install", "monitoring", "prometheus-community/kube-prometheus-stack",
+				"--namespace", config.Components.Monitoring.Namespace,
+				"--version", config.Components.Monitoring.ChartVersion,
+				"--set", "alertmanager.enabled=false",
+				"--set", "thanosRuler.enabled=false",
+				"--set", "grafana.enabled=true",
+				"--set", `grafana.grafana\.ini.auth\.anonymous.enabled=true`,
+				"--set", `grafana.grafana\.ini.auth\.anonymous.org_role=Admin`,
+				"--set", `grafana.grafana\.ini.auth.disable_login_form=true`,
+				"--set", `grafana.grafana\.ini.security.allow_embedding=true`,
+				"--set", "grafana.service.type=NodePort",
+				"--set", "grafana.service.nodePort=" + grafanaNodePort,
+				"--set", "grafana.resources.requests.cpu=" + config.Components.Monitoring.Resources.Grafana.CPU,
+				"--set", "grafana.resources.requests.memory=" + config.Components.Monitoring.Resources.Grafana.Memory,
+				"--set", "grafana.resources.limits.cpu=" + config.Components.Monitoring.Resources.Grafana.CPU,
+				"--set", "grafana.resources.limits.memory=" + config.Components.Monitoring.Resources.Grafana.Memory,
+				"--set", "grafana.defaultDashboardsEnabled=true",
+				"--set", "grafana.persistence.enabled=false",
+				"--set", "grafana.sidecar.dashboards.enabled=true",
+				"--set", "grafana.sidecar.dashboards.searchNamespace=ALL",
+				"--set", "grafana.sidecar.datasources.enabled=true",
+				"--set", "grafana.sidecar.datasources.defaultDatasourceEnabled=true",
+				"--set", "prometheus.prometheusSpec.retention=" + config.Components.Monitoring.Prometheus.Retention,
+				"--set", "prometheus.prometheusSpec.resources.requests.cpu=" + config.Components.Monitoring.Resources.Prometheus.CPU,
+				"--set", "prometheus.prometheusSpec.resources.requests.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
+				"--set", "prometheus.prometheusSpec.resources.limits.cpu=" + config.Components.Monitoring.Resources.Prometheus.CPU,
+				"--set", "prometheus.prometheusSpec.resources.limits.memory=" + config.Components.Monitoring.Resources.Prometheus.Memory,
+
+				"--set", "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false",
+				"--set", "prometheus.prometheusSpec.serviceMonitorSelector=",
+				"--set", "prometheus.prometheusSpec.serviceMonitorNamespaceSelector=",
+				"--set", "prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false",
+				"--set", "prometheus.prometheusSpec.podMonitorSelector=",
+				"--set", "prometheus.prometheusSpec.podMonitorNamespaceSelector=",
+				"--set", "prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues=false",
+				"--set", "prometheus.prometheusSpec.ruleSelector=",
+				"--set", "prometheus.prometheusSpec.ruleNamespaceSelector=",
+				"--set", "prometheus.service.type=ClusterIP",
+				"--set", "prometheusOperator.enabled=true",
+				"--set", "nodeExporter.enabled=true",
+				"--set", "kubeStateMetrics.enabled=true",
+				"--set", "kubeProxy.enabled=false",
+				"--set", "windowsMonitoring.enabled=false",
+				"--set", "defaultRules.create=true",
+			}
+
+			// Redirect all component images through Harbor when enabled, matching the
+			// pattern used by MySQL, Redis, and RabbitMQ for air-gapped Kind clusters.
+			if config.Images.UseHarbor {
+				harbor := config.Images.HarborRegistry
+				helmArgs = append(helmArgs,
+					// Prometheus Operator
+					"--set", fmt.Sprintf("prometheusOperator.image.registry=%s", harbor),
+					"--set", "prometheusOperator.image.repository=quay.io/prometheus-operator/prometheus-operator",
+					// Prometheus Config Reloader (sidecar injected by the operator)
+					"--set", fmt.Sprintf("prometheusOperator.prometheusConfigReloader.image.registry=%s", harbor),
+					"--set", "prometheusOperator.prometheusConfigReloader.image.repository=quay.io/prometheus-operator/prometheus-config-reloader",
+					// Grafana main image
+					"--set", fmt.Sprintf("grafana.image.registry=%s", harbor),
+					"--set", "grafana.image.repository=docker.io/grafana/grafana",
+					// Grafana k8s-sidecar (dashboard/datasource discovery)
+					"--set", fmt.Sprintf("grafana.sidecar.image.registry=%s", harbor),
+					"--set", "grafana.sidecar.image.repository=quay.io/kiwigrid/k8s-sidecar",
+					// Node Exporter (prometheus-node-exporter subchart)
+					"--set", fmt.Sprintf("prometheus-node-exporter.image.registry=%s", harbor),
+					"--set", "prometheus-node-exporter.image.repository=quay.io/prometheus/node-exporter",
+					// Kube State Metrics (kube-state-metrics subchart)
+					"--set", fmt.Sprintf("kube-state-metrics.image.registry=%s", harbor),
+					"--set", "kube-state-metrics.image.repository=registry.k8s.io/kube-state-metrics/kube-state-metrics",
+					// Prometheus server (deployed by the operator via PrometheusSpec)
+					"--set", fmt.Sprintf("prometheus.prometheusSpec.image.registry=%s", harbor),
+					"--set", "prometheus.prometheusSpec.image.repository=quay.io/prometheus/prometheus",
+				)
+			}
+
+			helmArgs = append(helmArgs, "--wait", "--timeout", "5m")
+
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			_, err = executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Monitoring Stack: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Monitoring Stack installation failure..."))
+			} else {
+				fmt.Printf("%s Monitoring stack installed successfully\n", green("✅"))
+				fmt.Printf("   Grafana dashboard: http://localhost:3000 (no login required)\n")
+			}
+		}
+
+		// Note: MySQL secret is created later when MySQL namespace is created
+
+		// Install Redis
+		if config.Components.Redis.Enabled {
+			fmt.Println(yellow("Installing Redis"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", "redis", "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating Redis namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying Redis namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			// ECR credentials are still set up if needed for custom services in this namespace
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
+				err = setupECRCreds("redis", ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for Redis namespace: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Build Redis Helm arguments
+			redisHelmArgs := []string{
+				"upgrade", "--install",
+				"redis", "bitnami/redis",
+				"--namespace", "redis",
+				"--version", config.Components.Redis.ChartVersion,
+				"--set", "master.service.type=NodePort",
+				"--set", fmt.Sprintf("master.service.nodePorts.redis=%d", config.Components.Redis.NodePorts.Redis),
+				"--set", fmt.Sprintf("auth.enabled=%t", config.Components.Redis.Auth.Enabled),
+				"--set", "replica.replicaCount=0",
+			}
+
+			// Image registry configuration for third-party components (use Harbor by default)
+			if config.Images.UseHarbor {
+				// Use global.imageRegistry for Harbor to avoid docker.io prefix being added
+				redisHelmArgs = append(redisHelmArgs,
+					"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+					"--set", "image.repository=docker.io/bitnamilegacy/redis")
+			} else if config.Images.UseAwsEcr {
+				// Fallback to ECR if Harbor is not enabled
+				redisHelmArgs = append(redisHelmArgs, "--set", "image.repository=bitnamilegacy/redis")
+			}
+
+			// Install Redis with Helm
+			_, err = executeCommand("helm", redisHelmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Redis: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for Redis to be ready using label selectors
+			fmt.Println(yellow("Waiting for Redis to be ready..."))
+
+			// Give resources a moment to be created
+			fmt.Println(yellow("Pausing briefly to allow resources to be created..."))
+			time.Sleep(10 * time.Second) // Increased wait time to ensure pod is created
+
+			// Wait specifically for the redis-master-0 pod
+			fmt.Println(yellow("Waiting for redis-master-0 pod to be created..."))
+			// First check if the pod exists
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "redis-master-0", "-n", "redis", "--no-headers")
+
+			// Retry a few times for the pod to appear
+			var podExists bool
+			for i := 0; i < 6; i++ { // Try for up to 30 seconds (6 * 5s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 5 { // Don't sleep on the last iteration
+					fmt.Printf("Waiting for redis-master-0 pod to appear (attempt %d/6)...\n", i+1)
+					time.Sleep(5 * time.Second)
+				}
+			}
+
+			if podExists {
+				fmt.Println(yellow("Found redis-master-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/redis-master-0", "-n", "redis", "--timeout=2m")
+				if err != nil {
+					fmt.Printf("%s Warning: Redis master pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite Redis not being fully ready..."))
+				} else {
+					fmt.Printf("%s Redis is ready\n", green("✅"))
+				}
+			} else {
+				fmt.Printf("%s Redis master pod (redis-master-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite Redis pod not being detected..."))
+			}
+
+			// Create kvv2-redis secret with redis address
+			redisPassword := ""
+			// If Redis auth is enabled, use default password
+			if config.Components.Redis.Auth.Enabled {
+				redisPassword = "redis"
+			}
+
+			kvv2RedisSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-redis
+  namespace: redis
+type: Opaque
+stringData:
+  address: "redis-master.redis.svc.cluster.local:6379"
+  redis-password: "%s"
+`, redisPassword)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(kvv2RedisSecretYaml)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("%s Error creating Redis secret in redis namespace: %v\n", red("❌"), err)
+			} else {
+				fmt.Printf("%s Redis secret created successfully in redis namespace\n", green("✅"))
+			}
+
+			// Also create kvv2-redis secret in default namespace for other components
+			defaultRedisSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-redis
+  namespace: default
+type: Opaque
+stringData:
+  address: "redis-master.redis.svc.cluster.local:6379"
+  redis-password: "%s"
+`, redisPassword)
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(defaultRedisSecretYaml)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("%s Error creating Redis secret in default namespace: %v\n", red("❌"), err)
+			} else {
+				fmt.Printf("%s Redis secret created successfully in default namespace\n", green("✅"))
+			}
+		}
+
+		// Install MySQL
+		if config.Components.MySQL.Enabled {
+			fmt.Println(yellow("Installing MySQL"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.MySQL.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating MySQL namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying MySQL namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			// ECR credentials are still set up if needed for custom services in this namespace
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
+				err = setupECRCreds(config.Components.MySQL.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for MySQL namespace: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Create MySQL secret in the component namespace if MySQL secrets are enabled
+			// Note: The secret must be in the same namespace as the MySQL deployment for Helm to find it
+			if config.Secrets.MySQL.Enabled {
+				// Warn if secret namespace differs from component namespace (Helm won't find it)
+				if config.Secrets.MySQL.Namespace != config.Components.MySQL.Namespace {
+					fmt.Printf("%s Warning: MySQL secret namespace (%s) differs from component namespace (%s). Helm will look for the secret in the component namespace.\n",
+						yellow("⚠️"), config.Secrets.MySQL.Namespace, config.Components.MySQL.Namespace)
+				}
+
+				fmt.Println(yellow("Creating MySQL credentials secret"))
+
+				// Create secret in component namespace (where Helm release will be deployed)
+				// Include username and password keys for custom components to reference
+				mysqlSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: "%s"
+  password: "%s"
+  mysql-root-password: "%s"
+  mysql-password: "%s"
+`, config.Secrets.MySQL.Name, config.Components.MySQL.Namespace,
+					config.Secrets.MySQL.Username, config.Secrets.MySQL.Password,
+					config.Secrets.MySQL.Password, config.Secrets.MySQL.Password)
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(mysqlSecretYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating MySQL secret: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+
+				fmt.Printf("%s MySQL credentials secret created\n", green("✅"))
+			}
+
+			// Create ConfigMap for init scripts if provided
+			initScriptsConfigMapName := "mysql-init-scripts"
+			if len(config.Components.MySQL.InitScripts) > 0 {
+				fmt.Println(yellow("Creating MySQL initialization scripts ConfigMap"))
+
+				// Get the directory of the config file to resolve relative paths
+				// Resolve the actual config file path (handles empty/default case)
+				actualConfigPath := configPath
+				if actualConfigPath == "" {
+					actualConfigPath = "kindenv.yaml" // Default config file name
+				}
+				// Get absolute path to resolve relative paths correctly
+				absConfigPath, err := filepath.Abs(actualConfigPath)
+				if err != nil {
+					// Fallback to current directory if we can't resolve
+					absConfigPath, _ = os.Getwd()
+					if absConfigPath == "" {
+						absConfigPath = "."
+					}
+				}
+				configDir := filepath.Dir(absConfigPath)
+
+				// Build ConfigMap YAML with proper literal block scalars for multi-line SQL
+				var configMapBuilder strings.Builder
+				configMapBuilder.WriteString(fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: %s
+  namespace: %s
+data:
+`, initScriptsConfigMapName, config.Components.MySQL.Namespace))
+
+				// Add each init script with proper YAML literal block scalar
+				for filename, contentOrPath := range config.Components.MySQL.InitScripts {
+					var content string
+
+					// Check if contentOrPath looks like a file path
+					// File paths typically contain '/' or '\' or start with './' or '../' or are absolute paths
+					looksLikePath := strings.Contains(contentOrPath, "/") ||
+						strings.Contains(contentOrPath, "\\") ||
+						strings.HasPrefix(contentOrPath, "./") ||
+						strings.HasPrefix(contentOrPath, "../") ||
+						filepath.IsAbs(contentOrPath)
+
+					if looksLikePath {
+						// Resolve file path relative to config file directory
+						filePath := contentOrPath
+						if !filepath.IsAbs(filePath) {
+							filePath = filepath.Join(configDir, filePath)
+						}
+
+						// Check if file exists
+						if _, err := os.Stat(filePath); err == nil {
+							// File exists, read it
+							fileContent, err := os.ReadFile(filePath)
+							if err != nil {
+								fmt.Printf("%s Error reading init script file '%s': %v\n", red("❌"), filePath, err)
+								os.Exit(1)
+							}
+							content = string(fileContent)
+
+							if verbose {
+								fmt.Printf("  Loaded init script from file: %s\n", filePath)
+							}
+						} else {
+							// File doesn't exist, treat as inline content (might be a SQL statement with slashes)
+							content = contentOrPath
+							if verbose {
+								fmt.Printf("  Warning: '%s' looks like a path but file not found, treating as inline content\n", contentOrPath)
+							}
+						}
+					} else {
+						// Treat as inline content
+						content = contentOrPath
+					}
+
+					// Use literal block scalar (|) to preserve newlines
+					// Indent each line of content
+					lines := strings.Split(content, "\n")
+					configMapBuilder.WriteString(fmt.Sprintf("  %s: |\n", filename))
+					for _, line := range lines {
+						configMapBuilder.WriteString(fmt.Sprintf("    %s\n", line))
+					}
+				}
+
+				configMapYaml := configMapBuilder.String()
+
+				// Apply the ConfigMap
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(configMapYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating MySQL init scripts ConfigMap: %v\n", red("❌"), err)
+					if verbose {
+						fmt.Printf("ConfigMap YAML:\n%s\n", configMapYaml)
+					}
+					os.Exit(1)
+				}
+
+				fmt.Printf("%s MySQL initialization scripts ConfigMap created with %d script(s)\n", green("✅"), len(config.Components.MySQL.InitScripts))
+			}
+
+			// Build Helm arguments for MySQL installation
+			helmArgs := []string{
+				"upgrade", "--install",
+				"mysql", "bitnami/mysql",
+				"--namespace", config.Components.MySQL.Namespace,
+				"--version", config.Components.MySQL.ChartVersion,
+				"--set", "primary.service.type=NodePort",
+				"--set", fmt.Sprintf("primary.service.nodePorts.mysql=%d", config.Components.MySQL.NodePorts.MySQL),
+				"--set", fmt.Sprintf("auth.database=%s", config.Components.MySQL.Database),
+				"--set", fmt.Sprintf("primary.persistence.enabled=%t", config.Components.MySQL.Persistence.Enabled),
+				"--set", fmt.Sprintf("primary.resources.requests.cpu=%s", config.Components.MySQL.Resources.CPU),
+				"--set", fmt.Sprintf("primary.resources.requests.memory=%s", config.Components.MySQL.Resources.Memory),
+				"--set", "replica.replicaCount=0",
+				"--set", "networkPolicy.enabled=false",
+			}
+
+			// Add secret configuration if MySQL secrets are enabled
+			if config.Secrets.MySQL.Enabled {
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("auth.existingSecret=%s", config.Secrets.MySQL.Name))
+
+				// If username is "root", don't set auth.username (root already exists)
+				// Only set auth.username for non-root users (which creates a new user)
+				if config.Secrets.MySQL.Username != "root" {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("auth.username=%s", config.Secrets.MySQL.Username))
+				}
+				// For root user, the chart will use mysql-root-password from the secret automatically
+			} else {
+				// Use default credentials
+				helmArgs = append(helmArgs,
+					"--set", "auth.rootPassword=password",
+					"--set", "auth.username=mysql",
+					"--set", "auth.password=password")
+			}
+
+			// Image registry configuration for third-party components (use Harbor by default)
+			if config.Images.UseHarbor {
+				// Use global.imageRegistry for Harbor to avoid docker.io prefix being added
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+					"--set", "image.repository=docker.io/bitnamilegacy/mysql")
+			} else if config.Images.UseAwsEcr {
+				// Fallback to ECR if Harbor is not enabled
+				helmArgs = append(helmArgs,
+					"--set", fmt.Sprintf("global.imageRegistry=%s", ecrRegistry),
+					"--set", "image.repository=bitnamilegacy/mysql")
+			}
+
+			// Add persistence size if enabled
+			if config.Components.MySQL.Persistence.Enabled {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("primary.persistence.size=%s", config.Components.MySQL.Persistence.Size))
+			}
+
+			// Add init scripts ConfigMap if provided
+			// Note: initdbScriptsConfigMap is at root level, not under primary
+			if len(config.Components.MySQL.InitScripts) > 0 {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("initdbScriptsConfigMap=%s", initScriptsConfigMapName))
+			}
+
+			_, err = executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing MySQL: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for MySQL to be ready
+			fmt.Println(yellow("Waiting for MySQL to be ready..."))
+			time.Sleep(10 * time.Second)
+
+			// Wait for MySQL pod
+			// Bitnami MySQL Helm chart creates a StatefulSet named "mysql" (same as release name)
+			// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "mysql-0"
+			fmt.Println(yellow("Waiting for mysql-0 pod to be created..."))
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "mysql-0", "-n", config.Components.MySQL.Namespace, "--no-headers")
+
+			var podExists bool
+			for i := 0; i < 10; i++ { // Try for up to 5 minutes (10 * 30s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 9 {
+					fmt.Printf("Waiting for mysql-0 pod to appear (attempt %d/10)...\n", i+1)
+					time.Sleep(30 * time.Second)
+				}
+			}
+
+			if podExists {
+				fmt.Println(yellow("Found mysql-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/mysql-0", "-n", config.Components.MySQL.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: MySQL pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite MySQL not being fully ready..."))
+				} else {
+					fmt.Printf("%s MySQL installed successfully\n", green("✅"))
+				}
+			} else {
+				fmt.Printf("%s MySQL pod (mysql-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite MySQL pod not being detected..."))
+			}
+		}
+
+		// Install RabbitMQ
+		if config.Components.RabbitMQ.Enabled {
+			fmt.Println(yellow("Installing RabbitMQ"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.RabbitMQ.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating RabbitMQ namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying RabbitMQ namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
+				err = setupECRCreds(config.Components.RabbitMQ.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for RabbitMQ namespace: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Generate erlang cookie if not provided
+			erlangCookie := config.Secrets.RabbitMQ.ErlangCookie
+			if erlangCookie == "" {
+				// Generate a secure random erlang cookie (20+ characters)
+				cookieBytes := make([]byte, 24)
+				if _, err := rand.Read(cookieBytes); err != nil {
+					fmt.Printf("%s Error generating erlang cookie: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+				erlangCookie = base64.URLEncoding.EncodeToString(cookieBytes)
+				if verbose {
+					fmt.Printf("Generated erlang cookie: %s\n", erlangCookie)
+				}
+			}
+
+			// Create RabbitMQ secret in the component namespace if RabbitMQ secrets are enabled
+			if config.Secrets.RabbitMQ.Enabled {
+				// Warn if secret namespace differs from component namespace
+				if config.Secrets.RabbitMQ.Namespace != config.Components.RabbitMQ.Namespace {
+					fmt.Printf("%s Warning: RabbitMQ secret namespace (%s) differs from component namespace (%s). Helm will look for the secret in the component namespace.\n",
+						yellow("⚠️"), config.Secrets.RabbitMQ.Namespace, config.Components.RabbitMQ.Namespace)
+				}
+
+				fmt.Println(yellow("Creating RabbitMQ credentials secret"))
+
+				// Create secret in component namespace (where Helm release will be deployed)
+				// Bitnami chart expects: rabbitmq-password and rabbitmq-erlang-cookie keys
+				rabbitmqSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: "%s"
+  rabbitmq-password: "%s"
+  rabbitmq-erlang-cookie: "%s"
+`, config.Secrets.RabbitMQ.Name, config.Components.RabbitMQ.Namespace,
+					config.Secrets.RabbitMQ.Username, config.Secrets.RabbitMQ.Password, erlangCookie)
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(rabbitmqSecretYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating RabbitMQ secret: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+
+				fmt.Printf("%s RabbitMQ credentials secret created\n", green("✅"))
+			}
+
+			// Build Helm arguments for RabbitMQ installation
+			helmArgs := []string{
+				"upgrade", "--install",
+				"rabbitmq", "bitnami/rabbitmq",
+				"--namespace", config.Components.RabbitMQ.Namespace,
+				"--version", config.Components.RabbitMQ.ChartVersion,
+				"--set", "service.type=NodePort",
+				"--set", fmt.Sprintf("service.nodePorts.amqp=%d", config.Components.RabbitMQ.NodePorts.AMQP),
+				"--set", fmt.Sprintf("service.nodePorts.manager=%d", config.Components.RabbitMQ.NodePorts.Management),
+				"--set", fmt.Sprintf("auth.vhost=%s", config.Components.RabbitMQ.VirtualHost),
+				"--set", fmt.Sprintf("persistence.enabled=%t", config.Components.RabbitMQ.Persistence.Enabled),
+				"--set", fmt.Sprintf("resources.requests.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
+				"--set", fmt.Sprintf("resources.requests.memory=%s", config.Components.RabbitMQ.Resources.Memory),
+				"--set", fmt.Sprintf("resources.limits.cpu=%s", config.Components.RabbitMQ.Resources.CPU),
+				"--set", fmt.Sprintf("resources.limits.memory=%s", config.Components.RabbitMQ.Resources.Memory),
+				"--set", "replicaCount=1",
+				"--set", "networkPolicy.enabled=false",
+				"--set", "plugins=rabbitmq_management",
+				"--set", "memoryHighWatermark.enabled=false", // Disable to avoid memory parsing issues that can cause segfaults
+				// Add Erlang-specific environment variables to prevent segfaults
+				// These disable watchdog timers that can cause segfaults in containerized environments
+				"--set", "extraEnvVars[0].name=RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS",
+				"--set", "extraEnvVars[0].value=+sbwt none +sbwtdcpu none +sbwtdio none",
+				// Enable privileged mode for ARM64 compatibility (workaround for Bitnami RabbitMQ segfaults on ARM64)
+				"--set", "containerSecurityContext.privileged=true",
+			}
+
+			// Add secret configuration if RabbitMQ secrets are enabled
+			// Note: When using official RabbitMQ image, auth.username/auth.existingPasswordSecret
+			// don't work - we use RABBITMQ_DEFAULT_USER/RABBITMQ_DEFAULT_PASS env vars instead
+			if config.Components.RabbitMQ.ImageTag == "" {
+				// Only set Bitnami auth settings when using Bitnami image
+				if config.Secrets.RabbitMQ.Enabled {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("auth.username=%s", config.Secrets.RabbitMQ.Username),
+						"--set", fmt.Sprintf("auth.existingPasswordSecret=%s", config.Secrets.RabbitMQ.Name),
+						"--set", fmt.Sprintf("auth.existingErlangSecret=%s", config.Secrets.RabbitMQ.Name))
+				} else {
+					// Use default credentials if secrets are disabled
+					helmArgs = append(helmArgs,
+						"--set", "auth.username=user",
+						"--set", "auth.password=password",
+						"--set", "auth.erlangCookie=secretcookie")
+				}
+			}
+			// When using official RabbitMQ image (imageTag is set), auth settings are handled via env vars
+
+			// Add persistence size if enabled
+			if config.Components.RabbitMQ.Persistence.Enabled {
+				helmArgs = append(helmArgs, "--set", fmt.Sprintf("persistence.size=%s", config.Components.RabbitMQ.Persistence.Size))
+			}
+
+			// Image registry configuration for third-party components (use Harbor by default)
+			// For ARM64 compatibility, use official RabbitMQ image instead of Bitnami
+			// Official RabbitMQ images have much better ARM64 support
+			if config.Components.RabbitMQ.ImageTag != "" {
+				// Custom image tag specified - use official RabbitMQ image for ARM64 compatibility
+				// The official RabbitMQ image works much better on ARM64 than Bitnami images
+				if config.Images.UseHarbor {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+						"--set", "image.repository=docker.io/library/rabbitmq",
+						"--set", fmt.Sprintf("image.tag=%s", config.Components.RabbitMQ.ImageTag))
+				} else if config.Images.UseAwsEcr {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", ecrRegistry),
+						"--set", "image.repository=rabbitmq",
+						"--set", fmt.Sprintf("image.tag=%s", config.Components.RabbitMQ.ImageTag))
+				} else {
+					// Default to official RabbitMQ image from Docker Hub
+					helmArgs = append(helmArgs,
+						"--set", "image.repository=rabbitmq",
+						"--set", fmt.Sprintf("image.tag=%s", config.Components.RabbitMQ.ImageTag))
+				}
+				// When using official RabbitMQ image, we need to use official image environment variables
+				// The official image uses RABBITMQ_DEFAULT_USER and RABBITMQ_DEFAULT_PASS
+				// instead of Bitnami's RABBITMQ_USERNAME and RABBITMQ_PASSWORD
+				// Clear any existing extraEnvVars first, then add the official image env vars
+				helmArgs = append(helmArgs,
+					"--set", "containerSecurityContext.privileged=false", // Not needed for official image
+					"--set", "extraEnvVars[0].name=RABBITMQ_DEFAULT_USER",
+					"--set", fmt.Sprintf("extraEnvVars[0].value=%s", config.Secrets.RabbitMQ.Username),
+					"--set", "extraEnvVars[1].name=RABBITMQ_DEFAULT_PASS",
+					"--set", fmt.Sprintf("extraEnvVars[1].value=%s", config.Secrets.RabbitMQ.Password))
+			} else {
+				// Default to Bitnami image (for x86_64 compatibility)
+				if config.Images.UseHarbor {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", config.Images.HarborRegistry),
+						"--set", "image.repository=docker.io/bitnamilegacy/rabbitmq")
+				} else if config.Images.UseAwsEcr {
+					helmArgs = append(helmArgs,
+						"--set", fmt.Sprintf("global.imageRegistry=%s", ecrRegistry),
+						"--set", "image.repository=bitnamilegacy/rabbitmq")
+				}
+			}
+
+			_, err = executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing RabbitMQ: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for RabbitMQ to be ready
+			fmt.Println(yellow("Waiting for RabbitMQ to be ready..."))
+			time.Sleep(10 * time.Second)
+
+			// Wait for RabbitMQ pod
+			// Bitnami RabbitMQ Helm chart creates a StatefulSet named "rabbitmq" (same as release name)
+			// Pods follow the pattern: <statefulset-name>-<ordinal>, so it's "rabbitmq-0"
+			fmt.Println(yellow("Waiting for rabbitmq-0 pod to be created..."))
+			podCheckCmd := exec.Command("kubectl", "get", "pod", "rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--no-headers")
+
+			var podExists bool
+			for i := 0; i < 10; i++ { // Try for up to 5 minutes (10 * 30s)
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 {
+					podExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					break
+				}
+				if i < 9 {
+					fmt.Printf("Waiting for rabbitmq-0 pod to appear (attempt %d/10)...\n", i+1)
+					time.Sleep(30 * time.Second)
+				}
+			}
+
+			if podExists {
+				fmt.Println(yellow("Found rabbitmq-0 pod, waiting for it to be ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod/rabbitmq-0", "-n", config.Components.RabbitMQ.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: RabbitMQ pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite RabbitMQ not being fully ready..."))
+				} else {
+					// Verify AMQP connectivity (SC-002)
+					fmt.Println(yellow("Verifying AMQP connectivity..."))
+					amqpVerified := false
+					for i := 0; i < 6; i++ { // Try for 30 seconds (6 * 5s)
+						amqpCmd := exec.Command("nc", "-z", "-v", "localhost", "5672")
+						if amqpOutput, err := amqpCmd.CombinedOutput(); err == nil || bytes.Contains(amqpOutput, []byte("succeeded")) {
+							amqpVerified = true
+							if verbose {
+								fmt.Printf("AMQP connectivity check: %s\n", string(amqpOutput))
+							}
+							break
+						}
+						if i < 5 {
+							time.Sleep(5 * time.Second)
+						}
+					}
+
+					// Verify Management UI connectivity (SC-003)
+					fmt.Println(yellow("Verifying Management UI connectivity..."))
+					managementVerified := false
+					for i := 0; i < 6; i++ { // Try for 30 seconds (6 * 5s)
+						mgmtCmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+							fmt.Sprintf("http://localhost:15672/api/overview"),
+							"-u", fmt.Sprintf("%s:%s", config.Secrets.RabbitMQ.Username, config.Secrets.RabbitMQ.Password))
+						if output, err := mgmtCmd.Output(); err == nil && string(output) == "200" {
+							managementVerified = true
+							if verbose {
+								fmt.Printf("Management UI HTTP status: %s\n", string(output))
+							}
+							break
+						}
+						if i < 5 {
+							time.Sleep(5 * time.Second)
+						}
+					}
+
+					// Report results
+					if amqpVerified && managementVerified {
+						fmt.Printf("%s RabbitMQ installed successfully\n", green("✅"))
+						fmt.Printf("%s AMQP is accessible at amqp://%s:***@localhost:%d%s\n",
+							green("✅"), config.Secrets.RabbitMQ.Username, 5672, config.Components.RabbitMQ.VirtualHost)
+						fmt.Printf("%s Management UI is accessible at http://localhost:%d\n",
+							green("✅"), 15672)
+					} else {
+						fmt.Printf("%s RabbitMQ pod is ready but connectivity checks failed\n", yellow("⚠️"))
+						if !amqpVerified {
+							fmt.Printf("%s AMQP port (5672) not responding\n", yellow("⚠️"))
+						}
+						if !managementVerified {
+							fmt.Printf("%s Management UI (15672) not responding\n", yellow("⚠️"))
+						}
+						fmt.Println(yellow("Check port mappings and try: kubectl port-forward -n rabbitmq svc/rabbitmq 5672:5672 15672:15672"))
+					}
+				}
+			} else {
+				fmt.Printf("%s RabbitMQ pod (rabbitmq-0) not found\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite RabbitMQ pod not being detected..."))
+			}
+		}
+
+		// Install Dapr
+		if config.Components.Dapr.Enabled {
+			fmt.Println(yellow("Installing Dapr"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", "dapr-system", "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating Dapr namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying Dapr namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				err = setupECRCreds("dapr-system", ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for Dapr: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Install Dapr with Helm
+			_, err = executeCommand("helm", "upgrade", "--install",
+				"dapr", "dapr/dapr",
+				"--namespace", "dapr-system",
+				"--version", config.Components.Dapr.ChartVersion,
+				"--set", fmt.Sprintf("global.logLevel=%s", config.Components.Dapr.LogLevel),
+				"--set", fmt.Sprintf("global.ha.enabled=%t", config.Components.Dapr.Ha.Enabled),
+				"--set", fmt.Sprintf("global.mtls.enabled=%t", config.Components.Dapr.Mtls.Enabled),
+				"--wait", "--timeout", "5m")
+			if err != nil {
+				fmt.Printf("%s Error installing Dapr: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for Dapr components to be ready
+			err = waitForDeployment("dapr-system", "dapr-operator", 2)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Dapr operator: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Dapr operator not being ready..."))
+			}
+
+			err = waitForDeployment("dapr-system", "dapr-sentry", 2)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Dapr sentry: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Dapr sentry not being ready..."))
+			}
+
+			err = waitForDeployment("dapr-system", "dapr-sidecar-injector", 2)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Dapr sidecar injector: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Dapr sidecar injector not being ready..."))
+			} else {
+				fmt.Printf("%s Dapr installed successfully\n", green("✅"))
+			}
+		}
+
+		// Install OpenSearch
+		if config.Components.OpenSearch.Enabled {
+			fmt.Println(yellow("Installing OpenSearch"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.OpenSearch.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating OpenSearch namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying OpenSearch namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials only if not using Harbor (Harbor is used for third-party components)
+			// ECR credentials are still set up if needed for custom services in this namespace
+			if config.Images.UseAwsEcr && !config.Images.UseHarbor {
+				err = setupECRCreds(config.Components.OpenSearch.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for OpenSearch namespace: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Determine OpenSearch image (use Harbor for third-party components)
+			opensearchImage := fmt.Sprintf("opensearchproject/opensearch:%s", config.Components.OpenSearch.Version)
+			if config.Images.UseHarbor {
+				opensearchImage = fmt.Sprintf("%s/docker.io/opensearchproject/opensearch:%s", config.Images.HarborRegistry, config.Components.OpenSearch.Version)
+			}
+
+			// Deploy OpenSearch using direct Kubernetes manifests
+			opensearchYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: %s
+  labels:
+    app: opensearch
+spec:
+  type: NodePort
+  ports:
+  - port: 9200
+    targetPort: 9200
+    nodePort: %d
+    name: rest
+  - port: 9300
+    name: inter-node
+  selector:
+    app: opensearch
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  namespace: %s
+spec:
+  serviceName: opensearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch
+    spec:
+      containers:
+      - name: opensearch
+        image: %s
+        command:
+        - bash
+        - -c
+        - |
+          echo "Starting OpenSearch..."
+          until [ -f /usr/share/opensearch/config/opensearch.yml ]; do sleep 1; done
+
+          # Create snapshots directory with proper permissions
+          mkdir -p /tmp/opensearch-snapshots
+          chmod 777 /tmp/opensearch-snapshots
+
+          # Configure repository paths and plugin settings
+          echo "path.repo: [\"/tmp/opensearch-snapshots\"]" >> /usr/share/opensearch/config/opensearch.yml
+          echo "plugins.security.disabled: %t" >> /usr/share/opensearch/config/opensearch.yml
+          echo "action.auto_create_index: true" >> /usr/share/opensearch/config/opensearch.yml
+
+          # Enable index management plugin (includes snapshot management functionality)
+          echo "plugins.index_state_management.enabled: %t" >> /usr/share/opensearch/config/opensearch.yml
+
+          # Configure disk watermarks to prevent automatic read-only mode in development
+          # These high thresholds prevent OpenSearch from blocking index creation due to disk space
+          echo "cluster.routing.allocation.disk.watermark.low: 95%%" >> /usr/share/opensearch/config/opensearch.yml
+          echo "cluster.routing.allocation.disk.watermark.high: 98%%" >> /usr/share/opensearch/config/opensearch.yml
+          echo "cluster.routing.allocation.disk.watermark.flood_stage: 99%%" >> /usr/share/opensearch/config/opensearch.yml
+
+          # Start OpenSearch in foreground
+          /usr/share/opensearch/opensearch-docker-entrypoint.sh
+        env:
+        - name: discovery.type
+          value: single-node
+        - name: bootstrap.memory_lock
+          value: "true"
+        - name: OPENSEARCH_JAVA_OPTS
+          value: "-Xms512m -Xmx512m"
+        - name: _JAVA_OPTIONS
+          value: "-XX:UseSVE=0"
+        - name: DISABLE_SECURITY_PLUGIN
+          value: "%t"
+        ports:
+        - containerPort: 9200
+          name: rest
+        - containerPort: 9300
+          name: inter-node
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 1Gi
+        readinessProbe:
+          httpGet:
+            path: /_cluster/health?local=true
+            port: 9200
+          initialDelaySeconds: 90
+          periodSeconds: 15
+          failureThreshold: 15
+          timeoutSeconds: 10
+`, config.Components.OpenSearch.Namespace, config.Components.OpenSearch.NodePorts.Rest,
+				config.Components.OpenSearch.Namespace, opensearchImage,
+				config.Components.OpenSearch.Security.Disabled,
+				config.Components.OpenSearch.Security.Disabled,
+				config.Components.OpenSearch.IndexManagement.Enabled)
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(opensearchYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error deploying OpenSearch: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for OpenSearch pod to be created
+			fmt.Println(yellow("Waiting for OpenSearch pod to be created..."))
+			maxPodCreateRetries := 20
+			podCreateRetryCount := 0
+			var opensearchPodExists bool
+
+			for podCreateRetryCount < maxPodCreateRetries {
+				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch",
+					"-n", config.Components.OpenSearch.Namespace, "--no-headers")
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 && !strings.Contains(string(podOutput), "No resources found") {
+					opensearchPodExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					fmt.Printf("%s OpenSearch pod is created\n", green("✅"))
+					break
+				}
+				podCreateRetryCount++
+				fmt.Print(".")
+				time.Sleep(3 * time.Second)
+			}
+
+			if !opensearchPodExists {
+				fmt.Printf("%s Timed out waiting for OpenSearch pod to be created\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite OpenSearch pod not being detected..."))
+			} else {
+				// Wait for OpenSearch pod to be ready
+				fmt.Println(yellow("Waiting for OpenSearch pod to become ready..."))
+				_, err = executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch",
+					"-n", config.Components.OpenSearch.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: OpenSearch pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite OpenSearch not being fully ready..."))
+				} else {
+					fmt.Printf("%s OpenSearch is ready\n", green("✅"))
+
+					// Find the proper host port for OpenSearch
+					var openSearchHostPort int
+					for _, portMap := range config.Cluster.MapPorts {
+						// Handle different types of containerPort values
+						switch cp := portMap.ContainerPort.(type) {
+						case int:
+							if cp == config.Components.OpenSearch.NodePorts.Rest {
+								openSearchHostPort = portMap.HostPort
+								break
+							}
+						}
+					}
+
+					// Use the mapped host port or default to 9200 if not found
+					if openSearchHostPort == 0 {
+						openSearchHostPort = 9200
+					}
+
+					fmt.Printf("%s OpenSearch is accessible at http://localhost:%d\n",
+						green("✅"), openSearchHostPort)
+
+					// Ensure index creation is not blocked (idempotent operation)
+					fmt.Println(yellow("Ensuring index creation is not blocked..."))
+					podNameCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch",
+						"-n", config.Components.OpenSearch.Namespace, "-o", "jsonpath={.items[0].metadata.name}")
+					podNameOutput, err := podNameCmd.Output()
+					if err == nil && len(podNameOutput) > 0 {
+						podName := strings.TrimSpace(string(podNameOutput))
+
+						// Unblock index creation by setting cluster.blocks.create to null
+						// This is idempotent - if not blocked, it does nothing
+						unblockCmd := exec.Command("kubectl", "exec", "-n", config.Components.OpenSearch.Namespace, podName,
+							"--", "curl", "-s", "-X", "PUT", "http://localhost:9200/_cluster/settings",
+							"-H", "Content-Type: application/json",
+							"-d", `{"persistent":{"cluster.blocks.create":null}}`)
+						unblockOutput, err := unblockCmd.CombinedOutput()
+						if err == nil {
+							fmt.Printf("%s Index creation is unblocked\n", green("✅"))
+							if verbose && len(unblockOutput) > 0 {
+								fmt.Printf("Response: %s\n", string(unblockOutput))
+							}
+						} else {
+							fmt.Printf("%s Warning: Could not verify/unblock index creation: %v\n", yellow("⚠️"), err)
+							if len(unblockOutput) > 0 {
+								fmt.Printf("Output: %s\n", string(unblockOutput))
+							}
+							fmt.Println(yellow("You may need to manually unblock index creation:"))
+							fmt.Printf("  kubectl exec -n %s %s -- curl -X PUT http://localhost:9200/_cluster/settings -H 'Content-Type: application/json' -d '{\"persistent\":{\"cluster.blocks.create\":null}}'\n",
+								config.Components.OpenSearch.Namespace, podName)
+						}
+					}
+				}
+			}
+		}
+
+		// Install OpenSearch Dashboards
+		if config.Components.OpenSearchDashboards.Enabled && config.Components.OpenSearch.Enabled {
+			fmt.Println(yellow("Installing OpenSearch Dashboards"))
+
+			// Determine OpenSearch Dashboards image (use Harbor for third-party components)
+			dashboardsImage := fmt.Sprintf("opensearchproject/opensearch-dashboards:%s", config.Components.OpenSearchDashboards.Version)
+			if config.Images.UseHarbor {
+				dashboardsImage = fmt.Sprintf("%s/docker.io/opensearchproject/opensearch-dashboards:%s", config.Images.HarborRegistry, config.Components.OpenSearchDashboards.Version)
+			}
+
+			// OpenSearch Dashboards uses the same namespace as OpenSearch
+			// Deploy OpenSearch Dashboards using direct Kubernetes manifests
+			dashboardsYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch-dashboards
+  namespace: %s
+  labels:
+    app: opensearch-dashboards
+spec:
+  type: NodePort
+  ports:
+  - port: 5601
+    targetPort: 5601
+    nodePort: %d
+    name: http
+  selector:
+    app: opensearch-dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensearch-dashboards
+  namespace: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opensearch-dashboards
+  template:
+    metadata:
+      labels:
+        app: opensearch-dashboards
+    spec:
+      containers:
+      - name: opensearch-dashboards
+        image: %s
+        env:
+        - name: OPENSEARCH_HOSTS
+          value: '["http://opensearch:9200"]'
+        - name: DISABLE_SECURITY_DASHBOARDS_PLUGIN
+          value: "%t"
+        ports:
+        - containerPort: 5601
+          name: http
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 512Mi
+        readinessProbe:
+          httpGet:
+            path: /api/status
+            port: 5601
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          failureThreshold: 10
+          timeoutSeconds: 10
+`, config.Components.OpenSearchDashboards.Namespace, config.Components.OpenSearchDashboards.NodePorts.Http,
+				config.Components.OpenSearchDashboards.Namespace, dashboardsImage,
+				config.Components.OpenSearch.Security.Disabled)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(dashboardsYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error deploying OpenSearch Dashboards: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for OpenSearch Dashboards pod to be created
+			fmt.Println(yellow("Waiting for OpenSearch Dashboards pod to be created..."))
+			maxPodCreateRetries := 20
+			podCreateRetryCount := 0
+			var dashboardsPodExists bool
+
+			for podCreateRetryCount < maxPodCreateRetries {
+				podCheckCmd := exec.Command("kubectl", "get", "pod", "-l", "app=opensearch-dashboards",
+					"-n", config.Components.OpenSearchDashboards.Namespace, "--no-headers")
+				podOutput, err := podCheckCmd.CombinedOutput()
+				if err == nil && len(podOutput) > 0 && !strings.Contains(string(podOutput), "No resources found") {
+					dashboardsPodExists = true
+					if verbose {
+						fmt.Println(string(podOutput))
+					}
+					fmt.Printf("%s OpenSearch Dashboards pod is created\n", green("✅"))
+					break
+				}
+				podCreateRetryCount++
+				fmt.Print(".")
+				time.Sleep(3 * time.Second)
+			}
+
+			if !dashboardsPodExists {
+				fmt.Printf("%s Timed out waiting for OpenSearch Dashboards pod to be created\n", yellow("⚠️"))
+				fmt.Println(yellow("Continuing despite OpenSearch Dashboards pod not being detected..."))
+			} else {
+				// Wait for OpenSearch Dashboards pod to be ready
+				fmt.Println(yellow("Waiting for OpenSearch Dashboards pod to become ready..."))
+				_, err := executeCommand("kubectl", "wait", "--for=condition=Ready", "pod", "-l", "app=opensearch-dashboards",
+					"-n", config.Components.OpenSearchDashboards.Namespace, "--timeout=5m")
+				if err != nil {
+					fmt.Printf("%s Warning: OpenSearch Dashboards pod is not ready: %v\n", yellow("⚠️"), err)
+					fmt.Println(yellow("Continuing despite OpenSearch Dashboards not being fully ready..."))
+				} else {
+					fmt.Printf("%s OpenSearch Dashboards is ready\n", green("✅"))
+
+					// Find the proper host port for OpenSearch Dashboards
+					var dashboardsHostPort int
+					for _, portMap := range config.Cluster.MapPorts {
+						// Handle different types of containerPort values
+						switch cp := portMap.ContainerPort.(type) {
+						case int:
+							if cp == config.Components.OpenSearchDashboards.NodePorts.Http {
+								dashboardsHostPort = portMap.HostPort
+								break
+							}
+						}
+					}
+
+					// Use the mapped host port or default to 5601 if not found
+					if dashboardsHostPort == 0 {
+						dashboardsHostPort = 5601
+					}
+
+					fmt.Printf("%s OpenSearch Dashboards is accessible at http://localhost:%d\n",
+						green("✅"), dashboardsHostPort)
+				}
+			}
+		}
+
+		// Install Temporal
+		if config.Components.Temporal.Enabled {
+			fmt.Println(yellow("Installing Temporal"))
+
+			// Create namespace
+			namespaceYaml, err := executeCommand("kubectl", "create", "namespace", config.Components.Temporal.Namespace, "--dry-run=client", "-o", "yaml")
+			if err != nil {
+				fmt.Printf("%s Error creating Temporal namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(namespaceYaml)
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("%s Error applying Temporal namespace: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Set up ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				err = setupECRCreds(config.Components.Temporal.Namespace, ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for Temporal: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Install Temporal with Helm
+			_, err = executeCommand("helm", "upgrade", "--install",
+				"temporal", "temporalio/temporal",
+				"--namespace", config.Components.Temporal.Namespace,
+				"--version", config.Components.Temporal.ChartVersion,
+				"--set", "server.replicaCount=1",
+				"--set", "cassandra.config.cluster_size=1",
+				"--set", "elasticsearch.replicas=1",
+				"--set", "prometheus.enabled=false",
+				"--set", "grafana.enabled=false",
+				"--set", "server.frontend.service.type=NodePort",
+				"--set", fmt.Sprintf("server.frontend.service.nodePort=%d", config.Components.Temporal.NodePorts.Frontend),
+				"--set", "web.enabled=true",
+				"--set", "web.service.type=NodePort",
+				"--set", fmt.Sprintf("web.service.nodePort=%d", config.Components.Temporal.NodePorts.Web),
+				"--timeout", "15m")
+			if err != nil {
+				fmt.Printf("%s Error installing Temporal: %v\n", red("❌"), err)
+				os.Exit(1)
+			}
+
+			// Wait for Temporal to be ready
+			err = waitForDeployment(config.Components.Temporal.Namespace, "temporal-frontend", 5)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Temporal frontend: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Temporal frontend not being ready..."))
+			}
+
+			err = waitForDeployment(config.Components.Temporal.Namespace, "temporal-web", 5)
+			if err != nil {
+				fmt.Printf("%s Error waiting for Temporal web: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite Temporal web not being ready..."))
+			} else {
+				fmt.Printf("%s Temporal installed successfully\n", green("✅"))
+			}
+		}
+
+		// Install Temporal Worker Operator
+		if config.Components.TemporalWorkerOperator.Enabled {
+			fmt.Println(yellow("Installing Temporal Worker Operator"))
+
+			// Set up ECR credentials if needed (default namespace already has them)
+			if config.Images.UseAwsEcr {
+				fmt.Println(yellow("Setting up ECR credentials in shield-system namespace"))
+				err = setupECRCreds("shield-system", ecrRegistry, ecrPassword)
+				if err != nil {
+					fmt.Printf("%s Error setting up ECR credentials for shield-system: %v\n", red("❌"), err)
+					os.Exit(1)
+				}
+			}
+
+			// Install Temporal Worker Operator with CRDs first
+			fmt.Println(yellow("Installing Temporal Worker Operator (with CRDs)..."))
+
+			var helmArgs []string
+			if config.Components.Redis.Enabled {
+				// Create kvv2-redis secret with redis address
+				redisPassword := ""
+				// If Redis auth is enabled, use default password
+				if config.Components.Redis.Auth.Enabled {
+					redisPassword = "redis"
+				}
+
+				kvv2RedisSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-redis
+  namespace: shield-system
+type: Opaque
+stringData:
+  address: "redis-master.redis.svc.cluster.local:6379"
+  redis-password: "%s"
+`, redisPassword)
+
+				cmd := exec.Command("kubectl", "apply", "-f", "-")
+				cmd.Stdin = strings.NewReader(kvv2RedisSecretYaml)
+				err = cmd.Run()
+				if err != nil {
+					fmt.Printf("%s Error creating Redis secret: %v\n", red("❌"), err)
+				}
+				helmArgs = []string{
+					"upgrade",
+					"--install",
+					"temporal-worker-operator", "shield/temporal-worker-operator",
+					"--namespace", "shield-system",
+					"--version", config.Components.TemporalWorkerOperator.ChartVersion,
+					"--create-namespace",
+					"--set", "imagePullSecrets[0].name=ecr-credentials",
+					"--set", "redis.deployChart=false",
+					"--set", "redis.external.secretName=kvv2-redis",
+					"--set", "redis.auth.enabled=false",
+					"--set", fmt.Sprintf("temporal.namespaces.items[0].name=%s", config.Components.TemporalWorkerOperator.TemporalNamespace),
+					"--set", "temporal.namespaces.items[0].description=Default namespace for general workloads",
+					"--set", "temporal.namespaces.items[0].retentionPeriod=7d",
+					"--set", "temporal.namespaces.enabled=true",
+				}
+			} else {
+				helmArgs = []string{
+					"upgrade",
+					"--install",
+					"temporal-worker-operator", "shield/temporal-worker-operator",
+					"--namespace", "shield-system",
+					"--version", config.Components.TemporalWorkerOperator.ChartVersion,
+					"--create-namespace",
+					"--set", "imagePullSecrets[0].name=ecr-credentials",
+					"--set", "redis.deployChart=true",
+					"--set", "redis.global.imageRegistry=docker.io",
+					"--set", fmt.Sprintf("temporal.namespaces.items[0].name=%s", config.Components.TemporalWorkerOperator.TemporalNamespace),
+					"--set", "temporal.namespaces.items[0].description=Default namespace for general workloads",
+					"--set", "temporal.namespaces.items[0].retentionPeriod=7d",
+					"--set", "temporal.namespaces.enabled=true",
+				}
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Temporal Worker Operator: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Helm output:")
+					fmt.Println(helmOutput)
+				}
+
+				// Check if the error is due to chart not found
+				if strings.Contains(err.Error(), "chart not found") ||
+					strings.Contains(helmOutput, "chart not found") {
+					fmt.Println(yellow("The chart was not found. Make sure:"))
+					fmt.Println("1. The Shield Helm repository is properly added: helm repo add shield https://harbor.shieldfis.com/chartrepo/stable")
+					fmt.Println("2. The Helm repositories are updated: helm repo update")
+					fmt.Println("3. The chart exists: helm search repo shield/temporal-worker-operator")
+				}
+
+				// Exit since we can't continue without the operator
+				fmt.Println(red("Unable to continue without the Temporal Worker Operator."))
+				os.Exit(1)
+			}
+
+			fmt.Printf("%s Temporal Worker Operator installed successfully\n", green("✅"))
+			fmt.Printf("%s Temporal namespace '%s' will be created by the operator\n", green("✅"), config.Components.TemporalWorkerOperator.TemporalNamespace)
+
+			// Wait for Temporal Worker Operator to be ready
+			fmt.Println(yellow("Waiting for Temporal Worker Operator to be ready..."))
+
+			// Wait a moment for CRDs to be established and resources to be created
+			fmt.Println(yellow("Waiting for resources to be established..."))
+			time.Sleep(10 * time.Second)
+
+			// First check if there's a deployment for the operator
+			deploymentOutput, _ := executeCommand("kubectl", "get", "deployment",
+				"-n", "default", "--no-headers")
+
+			if deploymentOutput != "" {
+				// Try to find the operator deployment name
+				operatorDeployments := strings.Split(strings.TrimSpace(deploymentOutput), "\n")
+				if len(operatorDeployments) > 0 {
+					for _, deploymentLine := range operatorDeployments {
+						parts := strings.Fields(deploymentLine)
+						if len(parts) > 0 {
+							deploymentName := parts[0]
+							if strings.Contains(deploymentName, "temporal-worker-operator") {
+								err = waitForDeployment("default", deploymentName, 5)
+								if err != nil {
+									fmt.Printf("%s Error waiting for Temporal Worker Operator: %v\n", red("❌"), err)
+									fmt.Println(yellow("Continuing despite Temporal Worker Operator not being ready..."))
+								}
+							}
+						}
+					}
+				}
+			}
+
+			fmt.Printf("%s Temporal Worker Operator installation completed\n", green("✅"))
+		}
+
+		// Install Indices Operator
+		if config.Components.IndicesOperator.Enabled && config.Components.OpenSearch.Enabled {
+			fmt.Println(yellow("Installing Indices Operator"))
+
+			// Create kvv2-opensearch secret with opensearch connection information
+			// This will be used by the indices operator
+			kvv2OpenSearchSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kvv2-opensearch
+  namespace: default
+type: Opaque
+stringData:
+  address: "http://opensearch.%s.svc.cluster.local:9200"
+  username: "admin"
+  password: "admin"
+`, config.Components.OpenSearch.Namespace)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(kvv2OpenSearchSecretYaml)
+			err = cmd.Run()
+			if err != nil {
+				fmt.Printf("%s Error creating OpenSearch secret: %v\n", red("❌"), err)
+			} else {
+				fmt.Printf("%s OpenSearch secret created successfully\n", green("✅"))
+			}
+
+			// Install Indices Operator with Helm
+			fmt.Println(yellow("Installing Indices Operator..."))
+
+			// Define Helm arguments
+			helmArgs := []string{
+				"upgrade",
+				"--install",
+				"indices-operator", "shield/indices-operator",
+				"--namespace", "shield-system",
+				"--version", config.Components.IndicesOperator.ChartVersion,
+				"--set", "opensearch.skipTlsVerify=true",
+				"--set", "opensearch.secretName=kvv2-opensearch",
+				"--set", "global.dapr.enabled=false", // Disable Dapr for this operator
+			}
+
+			// Add ECR credentials if needed
+			if config.Images.UseAwsEcr {
+				helmArgs = append(helmArgs, "--set", "imagePullSecrets[0].name=ecr-credentials")
+			}
+
+			// Execute Helm command
+			if verbose {
+				fmt.Printf("Command: helm %s\n", strings.Join(helmArgs, " "))
+			}
+
+			helmOutput, err := executeCommand("helm", helmArgs...)
+			if err != nil {
+				fmt.Printf("%s Error installing Indices Operator: %v\n", red("❌"), err)
+				if helmOutput != "" {
+					fmt.Println("Helm output:")
+					fmt.Println(helmOutput)
+				}
+
+				// Check if the error is due to chart not found
+				if strings.Contains(err.Error(), "chart not found") ||
+					strings.Contains(helmOutput, "chart not found") {
+					fmt.Println(yellow("The chart was not found. Make sure:"))
+					fmt.Println("1. The Shield Helm repository is properly added: helm repo add shield https://harbor.shieldfis.com/chartrepo/stable")
+					fmt.Println("2. The Helm repositories are updated: helm repo update")
+					fmt.Println("3. The chart exists: helm search repo shield/indices-operator")
+				}
+
+				// Continue despite errors, as the operator is optional
+				fmt.Println(yellow("Continuing despite Indices Operator installation failure..."))
+			} else {
+				fmt.Printf("%s Indices Operator installed successfully\n", green("✅"))
+
+				// Wait for Indices Operator to be ready
+				fmt.Println(yellow("Waiting for Indices Operator to be ready..."))
+
+				// Wait a moment for CRDs to be established and resources to be created
+				fmt.Println(yellow("Waiting for resources to be established..."))
+				time.Sleep(10 * time.Second)
+
+				// Check if there's a deployment for the operator
+				deploymentOutput, _ := executeCommand("kubectl", "get", "deployment",
+					"-n", "default", "--no-headers")
+
+				if deploymentOutput != "" {
+					// Try to find the operator deployment name
+					operatorDeployments := strings.Split(strings.TrimSpace(deploymentOutput), "\n")
+					if len(operatorDeployments) > 0 {
+						for _, deploymentLine := range operatorDeployments {
+							parts := strings.Fields(deploymentLine)
+							if len(parts) > 0 {
+								deploymentName := parts[0]
+								if strings.Contains(deploymentName, "indices-operator") {
+									err = waitForDeployment("default", deploymentName, 5)
+									if err != nil {
+										fmt.Printf("%s Error waiting for Indices Operator: %v\n", red("❌"), err)
+										fmt.Println(yellow("Continuing despite Indices Operator not being ready..."))
+									}
+								}
+							}
+						}
+					}
+				}
+
+				fmt.Printf("%s Indices Operator installation completed\n", green("✅"))
+			}
+		}
+
+		// Check if metrics are available now that all components are installed
+		if config.Components.MetricsServer.Enabled {
+			fmt.Println(yellow("Checking if metrics are available..."))
+
+			// Try to run kubectl top nodes to verify it's working
+			topCmd := exec.Command("kubectl", "top", "nodes")
+			topOutput, topErr := topCmd.CombinedOutput()
+			if topErr == nil {
+				fmt.Printf("%s Resource metrics are now available\n", green("✅"))
+				if verbose {
+					fmt.Println(string(topOutput))
+				}
+			} else {
+				fmt.Printf("%s Resource metrics are not available yet (may need a few more minutes)\n", yellow("⚠️"))
+				fmt.Println(yellow("You can check again later with:"))
+				fmt.Println("  kubectl top nodes    - Shows CPU and memory usage for each node")
+				fmt.Println("  kubectl top pods -A  - Shows CPU and memory usage for all pods")
+			}
+		}
+
+		// Deploy custom components
+		if len(config.CustomComponents) > 0 {
+			fmt.Println(yellow("Deploying custom components..."))
+
+			// Create MySQL secret in namespaces where custom components need it
+			if config.Secrets.MySQL.Enabled {
+				// Collect unique namespaces from custom components that reference MySQL secret
+				mysqlSecretNamespaces := make(map[string]bool)
+				mysqlSecretNamespaces[config.Components.MySQL.Namespace] = true // Always include MySQL namespace
+
+				for _, component := range config.CustomComponents {
+					if component.Enabled == nil || *component.Enabled {
+						// Check if component references MySQL secret
+						for _, envVar := range component.Env {
+							if envVar.ValueFrom != nil && envVar.ValueFrom.SecretKeyRef != nil {
+								if envVar.ValueFrom.SecretKeyRef.Name == config.Secrets.MySQL.Name {
+									namespace := component.Namespace
+									if namespace == "" {
+										namespace = "default"
+									}
+									mysqlSecretNamespaces[namespace] = true
+									break
+								}
+							}
+						}
+					}
+				}
+
+				// Create MySQL secret in each namespace that needs it
+				for namespace := range mysqlSecretNamespaces {
+					// Skip if secret already exists in MySQL namespace (created earlier)
+					if namespace == config.Components.MySQL.Namespace {
+						continue
+					}
+
+					// Create namespace if it doesn't exist
+					namespaceYaml, err := executeCommand("kubectl", "create", "namespace", namespace, "--dry-run=client", "-o", "yaml")
+					if err == nil {
+						cmd := exec.Command("kubectl", "apply", "-f", "-")
+						cmd.Stdin = strings.NewReader(namespaceYaml)
+						cmd.Run() // Ignore error if namespace already exists
+					}
+
+					// Create MySQL secret in this namespace
+					mysqlSecretYaml := fmt.Sprintf(`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: "%s"
+  password: "%s"
+  mysql-root-password: "%s"
+  mysql-password: "%s"
+`, config.Secrets.MySQL.Name, namespace,
+						config.Secrets.MySQL.Username, config.Secrets.MySQL.Password,
+						config.Secrets.MySQL.Password, config.Secrets.MySQL.Password)
+
+					cmd := exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = strings.NewReader(mysqlSecretYaml)
+					if err := cmd.Run(); err != nil {
+						fmt.Printf("%s Warning: Failed to create MySQL secret '%s' in namespace '%s': %v\n", yellow("⚠️"), config.Secrets.MySQL.Name, namespace, err)
+					} else if verbose {
+						fmt.Printf("%s MySQL secret '%s' created in namespace '%s'\n", green("✅"), config.Secrets.MySQL.Name, namespace)
+					}
+				}
+			}
+
+			deploymentInfos, err := kindenv.DeployCustomComponents(context.Background(), config)
+			if err != nil {
+				fmt.Printf("%s Error preparing custom components: %v\n", red("❌"), err)
+				fmt.Println(yellow("Continuing despite custom component preparation errors..."))
+			} else if len(deploymentInfos) > 0 {
+				for _, deploymentInfo := range deploymentInfos {
+					component := deploymentInfo.Component
+
+					// Create namespace if it doesn't exist
+					namespaceYaml, err := executeCommand("kubectl", "create", "namespace", deploymentInfo.Namespace, "--dry-run=client", "-o", "yaml")
+					if err != nil {
+						fmt.Printf("%s Error creating namespace %s: %v\n", red("❌"), deploymentInfo.Namespace, err)
+						continue
+					}
+
+					cmd := exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = strings.NewReader(namespaceYaml)
+					if err := cmd.Run(); err != nil {
+						fmt.Printf("%s Error applying namespace %s: %v\n", red("❌"), deploymentInfo.Namespace, err)
+						continue
+					}
+
+					// Set up ECR credentials if needed
+					if config.Images.UseAwsEcr {
+						err = setupECRCreds(deploymentInfo.Namespace, ecrRegistry, ecrPassword)
+						if err != nil {
+							fmt.Printf("%s Warning: Error setting up ECR credentials for %s: %v\n", yellow("⚠️"), deploymentInfo.Namespace, err)
+							fmt.Println(yellow("Continuing despite ECR credential setup error..."))
+						}
+					}
+
+					// Apply ConfigMap YAML if config files are configured
+					if deploymentInfo.ConfigMapYAML != "" {
+						// Check for mount path overrides and warn
+						for _, configFile := range component.ConfigFiles {
+							if kindenv.DetectMountPathOverride(configFile.Path) {
+								fmt.Printf("%s Warning: Config file '%s' mounted at '%s' may override existing files in the container image\n", yellow("⚠️"), configFile.Name, configFile.Path)
+							}
+						}
+
+						fmt.Printf("Creating ConfigMap for custom component '%s'...\n", component.Name)
+						cmd = exec.Command("kubectl", "apply", "-f", "-")
+						cmd.Stdin = strings.NewReader(deploymentInfo.ConfigMapYAML)
+						if err := cmd.Run(); err != nil {
+							fmt.Printf("%s Warning: Error creating ConfigMap for '%s': %v\n", yellow("⚠️"), component.Name, err)
+							fmt.Println(yellow("Continuing despite ConfigMap creation error..."))
+						}
+					}
+
+					// Apply deployment YAML
+					fmt.Printf("Deploying custom component '%s' to namespace '%s'...\n", component.Name, deploymentInfo.Namespace)
+					cmd = exec.Command("kubectl", "apply", "-f", "-")
+					cmd.Stdin = strings.NewReader(deploymentInfo.DeploymentYAML)
+					if err := cmd.Run(); err != nil {
+						fmt.Printf("%s Error deploying custom component '%s': %v\n", red("❌"), component.Name, err)
+						continue
+					}
+
+					// Apply service YAML if ports are configured
+					if deploymentInfo.ServiceYAML != "" {
+						fmt.Printf("Creating service for custom component '%s'...\n", component.Name)
+						cmd = exec.Command("kubectl", "apply", "-f", "-")
+						cmd.Stdin = strings.NewReader(deploymentInfo.ServiceYAML)
+						if err := cmd.Run(); err != nil {
+							fmt.Printf("%s Warning: Error creating service for '%s': %v\n", yellow("⚠️"), component.Name, err)
+							fmt.Println(yellow("Continuing despite service creation error..."))
+						} else {
+							// Show port information
+							if len(component.Ports) > 0 {
+								for _, port := range component.Ports {
+									if port.NodePort != 0 {
+										fmt.Printf("  Service exposed on NodePort %d (container port %d)\n", port.NodePort, port.ContainerPort)
+									}
+								}
+							}
+						}
+					}
+
+					// Wait for deployment to be available
+					err = waitForDeployment(deploymentInfo.Namespace, component.Name, 5)
+					if err != nil {
+						fmt.Printf("%s Warning: Custom component '%s' deployment not ready: %v\n", yellow("⚠️"), component.Name, err)
+						fmt.Println(yellow("Continuing despite deployment not being ready..."))
+					} else {
+						fmt.Printf("%s Custom component '%s' deployed successfully\n", green("✅"), component.Name)
+					}
+				}
+			}
+		}
+
+		fmt.Println(green("Kind-based development environment setup complete!"))
+
+		// Find host ports from the port mappings and component configuration
+		var temporalWebPort, temporalFrontendPort, redisPort, mysqlPort, rabbitmqAMQPPort, rabbitmqManagementPort int
+
+		if verbose {
+			fmt.Println(yellow("Port mapping details for accessing services:"))
+			for _, portMap := range config.Cluster.MapPorts {
+				fmt.Printf("  - Container: %v → Host: %d (%s)\n",
+					portMap.ContainerPort, portMap.HostPort, portMap.Protocol)
+			}
+		}
+
+		// Helper function to find a host port for a given container port
+		findHostPort := func(containerPort int) int {
+			for _, portMap := range config.Cluster.MapPorts {
+				// Handle different types of containerPort values
+				switch cp := portMap.ContainerPort.(type) {
+				case int:
+					if cp == containerPort {
+						return portMap.HostPort
+					}
+				case float64:
+					if int(cp) == containerPort {
+						return portMap.HostPort
+					}
+				case string:
+					// If it's a string, it might be a variable reference
+					// Check if it directly evaluates to our container port
+					if val, err := strconv.Atoi(cp); err == nil && val == containerPort {
+						return portMap.HostPort
+					}
+					// If it's a variable reference like ${{ components.temporal.nodePorts.web }},
+					// check for known patterns
+					if strings.Contains(cp, "temporal.nodePorts.web") && containerPort == config.Components.Temporal.NodePorts.Web {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "temporal.nodePorts.frontend") && containerPort == config.Components.Temporal.NodePorts.Frontend {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "redis.nodePorts.redis") && containerPort == config.Components.Redis.NodePorts.Redis {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "mysql.nodePorts.mysql") && containerPort == config.Components.MySQL.NodePorts.MySQL {
+						return portMap.HostPort
+					}
+					if strings.Contains(cp, "monitoring.grafana.nodePort") && containerPort == config.Components.Monitoring.Grafana.NodePort {
+						return portMap.HostPort
+					}
+				}
+			}
+			return 0
+		}
+
+		// Find host ports for the services
+		if config.Components.Temporal.Enabled {
+			temporalWebPort = findHostPort(config.Components.Temporal.NodePorts.Web)
+			temporalFrontendPort = findHostPort(config.Components.Temporal.NodePorts.Frontend)
+
+			// If ports are not found in the mappings, use defaults based on NodePorts
+			if temporalWebPort == 0 {
+				temporalWebPort = 8080 // Default host port for Temporal Web
+				if verbose {
+					fmt.Printf("%s Using default host port for Temporal Web: %d\n", yellow("ℹ️"), temporalWebPort)
+				}
+			}
+			if temporalFrontendPort == 0 {
+				temporalFrontendPort = 7233 // Default host port for Temporal Frontend
+				if verbose {
+					fmt.Printf("%s Using default host port for Temporal Frontend: %d\n", yellow("ℹ️"), temporalFrontendPort)
+				}
+			}
+		}
+
+		if config.Components.Redis.Enabled {
+			redisPort = findHostPort(config.Components.Redis.NodePorts.Redis)
+
+			// If port is not found in the mappings, use default
+			if redisPort == 0 {
+				redisPort = 6379 // Default host port for Redis
+				if verbose {
+					fmt.Printf("%s Using default host port for Redis: %d\n", yellow("ℹ️"), redisPort)
+				}
+			}
+		}
+
+		// Find OpenSearch host ports
+		var openSearchPort, openSearchDashboardsPort int
+		if config.Components.OpenSearch.Enabled {
+			openSearchPort = findHostPort(config.Components.OpenSearch.NodePorts.Rest)
+
+			// If port is not found in the mappings, use default
+			if openSearchPort == 0 {
+				openSearchPort = 9200 // Default host port for OpenSearch
+				if verbose {
+					fmt.Printf("%s Using default host port for OpenSearch: %d\n", yellow("ℹ️"), openSearchPort)
+				}
+			}
+		}
+
+		if config.Components.OpenSearchDashboards.Enabled {
+			openSearchDashboardsPort = findHostPort(config.Components.OpenSearchDashboards.NodePorts.Http)
+
+			// If port is not found in the mappings, use default
+			if openSearchDashboardsPort == 0 {
+				openSearchDashboardsPort = 5601 // Default host port for OpenSearch Dashboards
+				if verbose {
+					fmt.Printf("%s Using default host port for OpenSearch Dashboards: %d\n", yellow("ℹ️"), openSearchDashboardsPort)
+				}
+			}
+		}
+
+		// Display service access information
+		fmt.Println("\nKind-based development environment setup complete!")
+		if config.Components.Temporal.Enabled {
+			if temporalWebPort > 0 {
+				fmt.Printf("- Temporal Web UI: http://localhost:%d\n", temporalWebPort)
+			}
+			if temporalFrontendPort > 0 {
+				fmt.Printf("- Temporal Frontend: localhost:%d\n", temporalFrontendPort)
+			}
+		}
+		if config.Components.Redis.Enabled && redisPort > 0 {
+			fmt.Printf("- Redis: localhost:%d\n", redisPort)
+		}
+		if config.Components.MySQL.Enabled {
+			mysqlPort = findHostPort(config.Components.MySQL.NodePorts.MySQL)
+			if mysqlPort == 0 {
+				mysqlPort = 3306 // Default host port for MySQL
+				if verbose {
+					fmt.Printf("%s Using default host port for MySQL: %d\n", yellow("ℹ️"), mysqlPort)
+				}
+			}
+			if mysqlPort > 0 {
+				fmt.Printf("- MySQL: localhost:%d\n", mysqlPort)
+				fmt.Printf("  Database: %s\n", config.Components.MySQL.Database)
+				if config.Secrets.MySQL.Enabled {
+					fmt.Printf("  Username: %s\n", config.Secrets.MySQL.Username)
+				} else {
+					fmt.Printf("  Username: root\n")
+				}
+			}
+		}
+		if config.Components.OpenSearch.Enabled && openSearchPort > 0 {
+			fmt.Printf("- OpenSearch: http://localhost:%d\n", openSearchPort)
+		}
+		if config.Components.OpenSearchDashboards.Enabled && openSearchDashboardsPort > 0 {
+			fmt.Printf("- OpenSearch Dashboards: http://localhost:%d\n", openSearchDashboardsPort)
+		}
+		if config.Components.RabbitMQ.Enabled {
+			rabbitmqAMQPPort = findHostPort(config.Components.RabbitMQ.NodePorts.AMQP)
+			rabbitmqManagementPort = findHostPort(config.Components.RabbitMQ.NodePorts.Management)
+			if rabbitmqAMQPPort == 0 {
+				rabbitmqAMQPPort = 5672 // Default host port for AMQP
+				if verbose {
+					fmt.Printf("%s Using default host port for RabbitMQ AMQP: %d\n", yellow("ℹ️"), rabbitmqAMQPPort)
+				}
+			}
+			if rabbitmqManagementPort == 0 {
+				rabbitmqManagementPort = 15672 // Default host port for Management UI
+				if verbose {
+					fmt.Printf("%s Using default host port for RabbitMQ Management UI: %d\n", yellow("ℹ️"), rabbitmqManagementPort)
+				}
+			}
+			if rabbitmqAMQPPort > 0 && rabbitmqManagementPort > 0 {
+				fmt.Printf("- RabbitMQ AMQP: amqp://localhost:%d%s\n", rabbitmqAMQPPort, config.Components.RabbitMQ.VirtualHost)
+				fmt.Printf("- RabbitMQ Management UI: http://localhost:%d\n", rabbitmqManagementPort)
+				if config.Secrets.RabbitMQ.Enabled {
+					fmt.Printf("  Username: %s, Virtual Host: %s\n", config.Secrets.RabbitMQ.Username, config.Components.RabbitMQ.VirtualHost)
+				} else {
+					fmt.Printf("  Username: user, Virtual Host: %s\n", config.Components.RabbitMQ.VirtualHost)
+				}
+			}
+		}
+		if config.Components.Monitoring.Enabled {
+			grafanaPort := findHostPort(config.Components.Monitoring.Grafana.NodePort)
+			if grafanaPort == 0 {
+				grafanaPort = 3000 // Default host port for Grafana
+			}
+			fmt.Printf("- Grafana: http://localhost:%d (no login required)\n", grafanaPort)
+		}
+	},
+}
+
+func init() {
+	kindenvCmd.AddCommand(kindenvStartCmd)
+
+	// Add flags for kindenv start command
+	kindenvStartCmd.Flags().Bool("skip-temporal", false, "Skip deploying Temporal")
+	kindenvStartCmd.Flags().Bool("skip-dapr", false, "Skip deploying Dapr")
+	kindenvStartCmd.Flags().Bool("skip-redis", false, "Skip deploying Redis")
+	kindenvStartCmd.Flags().Bool("skip-opensearch", false, "Skip deploying OpenSearch")
+	kindenvStartCmd.Flags().Bool("skip-opensearch-dashboards", false, "Skip deploying OpenSearch Dashboards")
+	kindenvStartCmd.Flags().Bool("skip-opensearch-index-management", false, "Skip enabling OpenSearch Index Management plugin")
+	kindenvStartCmd.Flags().Bool("skip-temporal-worker-operator", false, "Skip deploying Temporal Worker Operator")
+	kindenvStartCmd.Flags().Bool("skip-indices-operator", false, "Skip deploying Indices Operator")
+	kindenvStartCmd.Flags().Bool("skip-metrics-server", false, "Skip deploying Metrics Server")
+	kindenvStartCmd.Flags().Bool("skip-keda", false, "Skip deploying KEDA")
+	kindenvStartCmd.Flags().Bool("skip-monitoring", false, "Skip deploying Monitoring Stack")
+	kindenvStartCmd.Flags().Bool("force-context", false, "Automatically switch to the correct Kubernetes context without prompting")
+
+	// Deprecated flag, kept for backward compatibility
+	kindenvStartCmd.Flags().String("operator-namespace", "default",
+		"Deprecated: Namespace for Temporal worker operator (now always uses default namespace)")
+	kindenvStartCmd.Flags().MarkDeprecated("operator-namespace", "The Temporal Worker Operator is now always installed in the default namespace")
+
+	kindenvStartCmd.Flags().Bool("use-aws-ecr", false, "Use AWS ECR for pulling images")
+	kindenvStartCmd.Flags().String("aws-profile", "", "AWS profile to use for ECR access")
+	kindenvStartCmd.Flags().String("name", "", "Cluster name (defaults to current directory name)")
+	kindenvStartCmd.Flags().StringP("config", "f", "", "Path to configuration file")
+	kindenvStartCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
+}

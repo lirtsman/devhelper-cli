@@ -1,7 +1,7 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.1.0")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
-LDFLAGS := -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=$(VERSION) -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=$(BUILD_DATE) -X github.com/lirtsman/devhelper-cli/cmd.Commit=$(COMMIT)"
+LDFLAGS := -ldflags "-X github.com/ShieldFC-RD/devhelper-cli/cmd.Version=$(VERSION) -X github.com/ShieldFC-RD/devhelper-cli/cmd.BuildDate=$(BUILD_DATE) -X github.com/ShieldFC-RD/devhelper-cli/cmd.Commit=$(COMMIT)"
 GOBIN := $(shell go env GOPATH)/bin
 COVERAGE_DIR := ./coverage
 COVERAGE_PROFILE := $(COVERAGE_DIR)/coverage.out

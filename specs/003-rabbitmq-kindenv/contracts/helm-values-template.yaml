@@ -1,0 +1,365 @@
+# Bitnami RabbitMQ Helm Chart Values Template
+# This template defines the Helm values structure for deploying RabbitMQ in Kind environments
+# Chart: bitnami/rabbitmq
+# Version: 11.x+
+# Reference: https://github.com/bitnami/charts/tree/main/bitnami/rabbitmq
+
+# Global configuration
+global:
+  # Image registry for all Bitnami images
+  # Set to bitnamilegacy registry for ECR compatibility
+  imageRegistry: {{ .ImageRegistry }}  # Example: "harbor.example.com" or "992979781608.dkr.ecr.eu-west-1.amazonaws.com/bitnamilegacy"
+
+# Image configuration
+image:
+  repository: rabbitmq  # Relative to global.imageRegistry
+  tag: {{ .RabbitMQVersion }}  # Example: "3.11.23-debian-11-r4" (chart default)
+  pullPolicy: IfNotPresent
+
+# Authentication configuration
+auth:
+  # Username for RabbitMQ admin user
+  username: {{ .Username }}  # From secrets.rabbitmq.username
+
+  # Password for RabbitMQ admin user
+  # This will be created as a Kubernetes secret
+  password: {{ .Password }}  # From secrets.rabbitmq.password
+
+  # Erlang cookie for cluster authentication
+  # Required even for single-node setup
+  erlangCookie: {{ .ErlangCookie }}  # From secrets.rabbitmq.erlangCookie or auto-generated
+
+  # Use existing secret for credentials (alternative to inline values)
+  # When using external secret management
+  existingPasswordSecret: ""  # Empty for inline configuration
+  existingErlangSecret: ""    # Empty for inline configuration
+
+# Replication configuration
+replicaCount: 1  # Single node for development environments
+# For production clustering, set to 3 or more with persistence enabled
+
+# Resource requirements
+resources:
+  requests:
+    # CPU request and limit (guaranteed resources)
+    cpu: {{ .Resources.CPU }}  # From components.rabbitmq.resources.cpu (e.g., "500m")
+    
+    # Memory request and limit (guaranteed resources)
+    memory: {{ .Resources.Memory }}  # From components.rabbitmq.resources.memory (e.g., "1Gi")
+  limits:
+    cpu: {{ .Resources.CPU }}
+    memory: {{ .Resources.Memory }}
+
+# Persistence configuration
+persistence:
+  # Enable or disable persistent storage
+  enabled: {{ .Persistence.Enabled }}  # From components.rabbitmq.persistence.enabled
+  
+  # Storage class for PersistentVolume
+  # Empty string uses cluster default storage class
+  storageClass: ""  # Default for Kind: standard (hostPath)
+  
+  # PersistentVolume size
+  size: {{ .Persistence.Size }}  # From components.rabbitmq.persistence.size (e.g., "8Gi")
+  
+  # Access mode for PersistentVolume
+  accessModes:
+    - ReadWriteOnce
+
+# Service configuration
+service:
+  # Service type for AMQP and Management ports
+  type: NodePort  # Required for Kind port mapping
+  
+  # AMQP protocol service configuration
+  ports:
+    amqp: 5672       # Internal ClusterIP port
+    amqpTls: 5671    # TLS port (disabled by default)
+    dist: 25672      # Erlang distribution port (clustering)
+    manager: 15672   # Management UI port
+    metrics: 15692   # Prometheus metrics port
+  
+  # NodePort mappings (required for Kind cluster access)
+  nodePorts:
+    amqp: {{ .NodePorts.AMQP }}        # From components.rabbitmq.nodePorts.amqp (e.g., 30672)
+    manager: {{ .NodePorts.Management }}  # From components.rabbitmq.nodePorts.management (e.g., 31672)
+    # metrics: 30692  # Optional: expose Prometheus metrics
+  
+  # Additional service annotations
+  annotations: {}
+  
+  # Session affinity for load balancing
+  sessionAffinity: None
+
+# Configuration parameters
+configuration: |-
+  ## RabbitMQ configuration
+  ## See: https://www.rabbitmq.com/configure.html
+  
+  ## Logging configuration
+  log.console.level = info
+  log.file.level = info
+  
+  ## Memory management
+  vm_memory_high_watermark.relative = 0.8
+  vm_memory_high_watermark_paging_ratio = 0.75
+  
+  ## Disk space monitoring
+  disk_free_limit.absolute = 2GB
+  
+  ## Connection and channel limits
+  channel_max = 2048
+  heartbeat = 60
+  
+  ## Default virtual host
+  default_vhost = {{ .VirtualHost }}  # From components.rabbitmq.virtualHost (e.g., "/")
+  
+  ## Default user permissions
+  default_user = {{ .Username }}
+  default_pass = {{ .Password }}
+  default_user_tags.administrator = true
+  default_permissions.configure = .*
+  default_permissions.read = .*
+  default_permissions.write = .*
+  
+  ## Queue and message TTL defaults
+  # queue_master_locator = min-masters
+  
+  ## Management plugin configuration
+  management.tcp.port = 15672
+  management.tcp.ip = 0.0.0.0
+  
+  ## Prometheus metrics
+  prometheus.tcp.port = 15692
+
+# Extra configuration for advanced use cases
+extraConfiguration: |-
+  ## Additional RabbitMQ configuration can be added here
+  ## Example: Federation, shovel, or custom policies
+  
+# Plugins configuration
+# Management plugin is enabled by default for UI access
+# community_plugins parameter example below:
+# communityPlugins: https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/releases/download/3.11.1/rabbitmq_delayed_message_exchange-3.11.1.ez
+plugins: "rabbitmq_management rabbitmq_prometheus"  # Space-separated list
+# Additional useful plugins:
+# - rabbitmq_federation: For message passing between brokers
+# - rabbitmq_shovel: For copying messages between queues/exchanges
+# - rabbitmq_delayed_message_exchange: For delayed message delivery
+# - rabbitmq_consistent_hash_exchange: For load balancing
+
+# Load definitions (queues, exchanges, bindings, policies)
+# Useful for pre-configuring RabbitMQ on startup
+loadDefinition:
+  enabled: false  # Set to true to load definitions from file
+  # Example definitions can be provided via ConfigMap or inline
+  # existingSecret: "rabbitmq-load-definition"
+
+# Extra environment variables
+extraEnvVars: []
+# Example:
+# - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
+#   value: "+sbwt none +sbwtdcpu none +sbwtdio none"
+
+# Security context
+containerSecurityContext:
+  enabled: true
+  runAsUser: 1001
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+podSecurityContext:
+  enabled: true
+  fsGroup: 1001
+
+# Liveness and readiness probes
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 120  # Wait 2 minutes before first check
+  periodSeconds: 30
+  timeoutSeconds: 20
+  successThreshold: 1
+  failureThreshold: 6
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 20
+  successThreshold: 1
+  failureThreshold: 3
+
+# Startup probe (Kubernetes 1.18+)
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 20
+  successThreshold: 1
+  failureThreshold: 30  # 5 minutes total (30 * 10s)
+
+# Pod disruption budget (for high availability)
+pdb:
+  create: false  # Disabled for single-node dev setup
+  minAvailable: 1  # For production clustering
+
+# Pod affinity and anti-affinity rules
+affinity: {}
+# Example for production clustering:
+# podAntiAffinity:
+#   requiredDuringSchedulingIgnoredDuringExecution:
+#     - labelSelector:
+#         matchLabels:
+#           app.kubernetes.io/name: rabbitmq
+#       topologyKey: kubernetes.io/hostname
+
+# Node selector for pod scheduling
+nodeSelector: {}
+
+# Tolerations for pod scheduling
+tolerations: []
+
+# Service account
+serviceAccount:
+  create: true
+  name: ""  # Auto-generated if empty
+  automountServiceAccountToken: true
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Network policies
+networkPolicy:
+  enabled: false  # Enable for production to restrict traffic
+  # allowExternal: true
+  # ingressNSMatchLabels: {}
+  # ingressNSPodMatchLabels: {}
+
+# Metrics and monitoring
+metrics:
+  enabled: true  # Enable Prometheus metrics
+  
+  # Service monitor for Prometheus Operator
+  serviceMonitor:
+    enabled: false  # Enable if using Prometheus Operator
+    interval: 30s
+    scrapeTimeout: 10s
+    # namespace: monitoring  # Prometheus Operator namespace
+    # labels: {}
+    # annotations: {}
+  
+  # Prometheus rules
+  prometheusRule:
+    enabled: false  # Enable for alerting rules
+    # namespace: monitoring
+    # labels: {}
+    # rules: []
+
+# Volume permissions init container
+volumePermissions:
+  enabled: false  # Enable if permissions issues occur
+  image:
+    registry: docker.io
+    repository: bitnami/bitnami-shell
+    tag: latest
+    pullPolicy: IfNotPresent
+
+# Clustering configuration (for multi-node setup)
+clustering:
+  enabled: false  # Disabled for single-node dev environment
+  addressType: hostname  # or "ip"
+  rebalance: false
+  forceBoot: false
+
+# Memory and resource management
+memoryHighWatermark:
+  enabled: true
+  type: "relative"  # or "absolute"
+  value: 0.8  # 80% of available memory
+
+# Advanced Kubernetes integration
+podLabels:
+  app.kubernetes.io/component: messaging
+  app.kubernetes.io/managed-by: kindenv
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "15692"
+  prometheus.io/path: "/metrics"
+
+# Extra volumes and volume mounts
+extraVolumes: []
+# Example for custom configuration:
+# - name: custom-config
+#   configMap:
+#     name: rabbitmq-custom-config
+
+extraVolumeMounts: []
+# - name: custom-config
+#   mountPath: /etc/rabbitmq/conf.d
+#   readOnly: true
+
+# Init containers for custom initialization
+initContainers: []
+# Example for database migration:
+# - name: init-migration
+#   image: busybox
+#   command: ['sh', '-c', 'echo "Initializing..."']
+
+# Sidecar containers
+sidecars: []
+# Example for log shipping:
+# - name: log-shipper
+#   image: fluent/fluent-bit
+#   volumeMounts:
+#     - name: logs
+#       mountPath: /var/log/rabbitmq
+
+# TLS/SSL configuration (for production)
+tls:
+  enabled: false  # Enable for production deployments
+  # existingSecret: rabbitmq-tls
+  # autoGenerated: false
+
+# Ingress configuration (alternative to NodePort)
+ingress:
+  enabled: false  # Use NodePort for Kind, Ingress for production
+  # hostname: rabbitmq.local
+  # path: /
+  # tls: true
+  # annotations:
+  #   kubernetes.io/ingress.class: nginx
+
+# LDAP authentication (for enterprise)
+ldap:
+  enabled: false  # Enable for LDAP integration
+  # server: "ldap.example.com"
+  # port: 389
+  # userDnPattern: "cn=${username},ou=users,dc=example,dc=com"
+
+# Template rendering notes:
+# - Replace {{ .Variable }} with actual values during Helm installation
+# - Use --set or --values to override defaults
+# - Example: helm install rabbitmq bitnami/rabbitmq --values custom-values.yaml
+
+# Deployment validation:
+# 1. Check pod status: kubectl get pods -n rabbitmq -w
+# 2. Check logs: kubectl logs -n rabbitmq rabbitmq-0
+# 3. Port forward: kubectl port-forward -n rabbitmq svc/rabbitmq 5672:5672 15672:15672
+# 4. Test AMQP: telnet localhost 5672
+# 5. Access Management UI: http://localhost:15672
+# 6. Check metrics: curl http://localhost:15692/metrics
+
+# Upgrade path:
+# helm upgrade rabbitmq bitnami/rabbitmq --values updated-values.yaml --namespace rabbitmq
+
+# Rollback path:
+# helm rollback rabbitmq --namespace rabbitmq
+
+# Uninstall:
+# helm uninstall rabbitmq --namespace rabbitmq
+# kubectl delete pvc -n rabbitmq --all  # If persistence was enabled

@@ -101,7 +101,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           echo "Building for $GOOS/$GOARCH"
-          go build -v -ldflags "-X github.com/lirtsman/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=${{ steps.get_version.outputs.BUILD_DATE }} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.get_version.outputs.COMMIT }}" -o ${{ matrix.output_name }}
+          go build -v -ldflags "-X github.com/ShieldFC-RD/devhelper-cli/cmd.Version=${{ steps.get_version.outputs.VERSION }} -X github.com/ShieldFC-RD/devhelper-cli/cmd.BuildDate=${{ steps.get_version.outputs.BUILD_DATE }} -X github.com/ShieldFC-RD/devhelper-cli/cmd.Commit=${{ steps.get_version.outputs.COMMIT }}" -o ${{ matrix.output_name }}
           # Make executable for Linux/macOS builds
           if [ "$GOOS" != "windows" ]; then chmod +x ${{ matrix.output_name }}; fi
           # Generate SHA256 checksum
@@ -278,7 +278,7 @@ jobs:
             ### Using Homebrew (macOS/Linux)
             ```bash
             # Add the tap (first time only)
-            brew tap lirtsman/devhelper-cli
+            brew tap ShieldFC-RD/devhelper-cli
             
             # Install the CLI
             brew install devhelper-cli
@@ -288,13 +288,13 @@ jobs:
             
             #### Linux
             ```bash
-            curl -L https://github.com/lirtsman/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-linux-amd64 -o /usr/local/bin/devhelper-cli
+            curl -L https://github.com/ShieldFC-RD/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-linux-amd64 -o /usr/local/bin/devhelper-cli
             chmod +x /usr/local/bin/devhelper-cli
             ```
             
             #### macOS
             ```bash
-            curl -L https://github.com/lirtsman/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-darwin-amd64 -o /usr/local/bin/devhelper-cli
+            curl -L https://github.com/ShieldFC-RD/devhelper-cli/releases/download/${{ github.ref_name }}/devhelper-cli-darwin-amd64 -o /usr/local/bin/devhelper-cli
             chmod +x /usr/local/bin/devhelper-cli
             ```
             
@@ -302,7 +302,7 @@ jobs:
             Download the `devhelper-cli-windows-amd64.exe` file and run it from the command line.
             
             ## Changes
-            Please refer to [CHANGELOG.md](https://github.com/lirtsman/devhelper-cli/blob/main/CHANGELOG.md) for details.
+            Please refer to [CHANGELOG.md](https://github.com/ShieldFC-RD/devhelper-cli/blob/main/CHANGELOG.md) for details.
             
             ## SHA256 Checksums
             SHA256 checksums for all binaries are provided in the checksums.txt file attached to this release.
@@ -327,7 +327,7 @@ jobs:
         id: sha256
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          TARBALL_URL="https://github.com/lirtsman/devhelper-cli/archive/refs/tags/${VERSION}.tar.gz"
+          TARBALL_URL="https://github.com/ShieldFC-RD/devhelper-cli/archive/refs/tags/${VERSION}.tar.gz"
           curl -sL "$TARBALL_URL" | shasum -a 256 | awk '{print $1}' > sha256.txt
           SHA256=$(cat sha256.txt)
           echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
@@ -340,7 +340,7 @@ jobs:
       - name: Checkout Homebrew tap repository
         uses: actions/checkout@v4
         with:
-          repository: lirtsman/homebrew-devhelper-cli
+          repository: ShieldFC-RD/homebrew-devhelper-cli
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
@@ -351,8 +351,8 @@ jobs:
           cat > devhelper-cli.rb << EOF
           class DevhelperCli < Formula
             desc "A comprehensive command-line interface for Shield operations"
-            homepage "https://github.com/lirtsman/devhelper-cli"
-            url "https://github.com/lirtsman/devhelper-cli/archive/refs/tags/${{ steps.sha256.outputs.VERSION }}.tar.gz"
+            homepage "https://github.com/ShieldFC-RD/devhelper-cli"
+            url "https://github.com/ShieldFC-RD/devhelper-cli/archive/refs/tags/${{ steps.sha256.outputs.VERSION }}.tar.gz"
             sha256 "${{ steps.sha256.outputs.SHA256 }}"
             
             depends_on "go" => :build
@@ -361,7 +361,7 @@ jobs:
               # Get version information and truncate tag prefix "v"
               version_no_v = version.to_s.sub(/^v/, "")
               system "go", "build", 
-                     "-ldflags", "-X github.com/lirtsman/devhelper-cli/cmd.Version=#{version_no_v} -X github.com/lirtsman/devhelper-cli/cmd.BuildDate=#{Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")} -X github.com/lirtsman/devhelper-cli/cmd.Commit=${{ steps.sha256.outputs.COMMIT }}",
+                     "-ldflags", "-X github.com/ShieldFC-RD/devhelper-cli/cmd.Version=#{version_no_v} -X github.com/ShieldFC-RD/devhelper-cli/cmd.BuildDate=#{Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")} -X github.com/ShieldFC-RD/devhelper-cli/cmd.Commit=${{ steps.sha256.outputs.COMMIT }}",
                      "-o", "devhelper-cli"
               bin.install "devhelper-cli"
             end
